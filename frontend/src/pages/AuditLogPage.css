@@ -1,0 +1,146 @@
+/* ── AuditLogPage ───────────────────────────────────────────────────────────── */
+.al-root {
+  padding: 1.5rem;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+.al-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.al-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.al-badge {
+  background: rgba(139, 92, 246, 0.12);
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  border-radius: 999px;
+  color: #a78bfa;
+  font-size: 0.75rem;
+  padding: 0.25rem 0.75rem;
+}
+
+/* Filter chips */
+.al-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+}
+
+.al-chip {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  padding: 0.3rem 0.8rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.al-chip:hover {
+  background: rgba(59, 130, 246, 0.1);
+  border-color: #3b82f6;
+  color: #60a5fa;
+}
+
+.al-chip--active {
+  background: rgba(59, 130, 246, 0.18);
+  border-color: #3b82f6;
+  color: #60a5fa;
+  font-weight: 600;
+}
+
+/* Table */
+.al-table-wrap {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 12px;
+  overflow: auto;
+}
+
+.al-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.al-table th {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.75rem 1rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border-primary);
+  white-space: nowrap;
+}
+
+.al-table td {
+  padding: 0.7rem 1rem;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-secondary);
+  vertical-align: middle;
+}
+
+.al-table tr:last-child td {
+  border-bottom: none;
+}
+
+.al-table tbody tr:hover td {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.al-ts {
+  color: var(--text-muted) !important;
+  font-size: 0.78rem !important;
+  white-space: nowrap;
+}
+
+.al-mono {
+  font-family: 'Fira Code', 'Source Code Pro', 'Consolas', monospace;
+  font-size: 0.78rem !important;
+}
+
+.al-hash {
+  color: var(--text-muted) !important;
+}
+
+.al-badge-type {
+  border-radius: 6px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.2rem 0.5rem;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+}
+
+.al-empty {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 3rem;
+  font-size: 0.9rem;
+}
+
+.al-loading,
+.al-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  color: var(--text-muted);
+  font-size: 0.95rem;
+}
+
+.al-error { color: #f87171; }

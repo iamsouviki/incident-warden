@@ -1,0 +1,202 @@
+.hitl-queue {
+  padding: 20px;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.hitl-header-bar {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin-bottom: 20px;
+}
+
+.hitl-header-bar h2 {
+  margin: 0;
+  flex: 1;
+}
+
+.badge-pending {
+  background: #fd7e14;
+  color: white;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: bold;
+}
+
+.refresh-btn {
+  padding: 6px 14px;
+  background: #4299e1;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+}
+.refresh-btn:hover { background: #3182ce; }
+
+.hitl-loading, .hitl-empty {
+  text-align: center;
+  padding: 40px;
+  color: #666;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.hitl-items {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.hitl-card {
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  overflow: hidden;
+  border-left: 4px solid #fd7e14;
+}
+
+.hitl-card-header {
+  display: flex;
+  align-items: center;
+  padding: 15px 20px;
+  cursor: pointer;
+  gap: 15px;
+}
+.hitl-card-header:hover { background: #f7fafc; }
+
+.hitl-incident-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hitl-incident-id {
+  font-family: monospace;
+  font-size: 12px;
+  color: #666;
+}
+
+.hitl-category {
+  font-size: 13px;
+  font-weight: 600;
+  color: #2d3748;
+}
+
+.hitl-confidence {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 200px;
+}
+
+.confidence-bar {
+  flex: 1;
+  height: 8px;
+  background: #e2e8f0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.confidence-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.confidence-text {
+  font-size: 13px;
+  color: #4a5568;
+  min-width: 80px;
+  text-align: right;
+}
+
+.expand-icon {
+  color: #a0aec0;
+  font-size: 12px;
+}
+
+.hitl-card-details {
+  padding: 15px 20px;
+  border-top: 1px solid #e2e8f0;
+  background: #f7fafc;
+}
+
+.detail-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+.detail-label {
+  font-weight: 600;
+  color: #4a5568;
+  min-width: 140px;
+}
+
+.detail-value {
+  color: #2d3748;
+}
+
+.detail-value.mono {
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.violations-list {
+  margin: 0;
+  padding-left: 20px;
+  color: #c53030;
+}
+
+.violations-list li {
+  margin-bottom: 4px;
+  font-size: 13px;
+}
+
+.hitl-card-actions {
+  display: flex;
+  gap: 10px;
+  padding: 12px 20px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.approve-btn {
+  padding: 8px 20px;
+  background: #28a745;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+}
+.approve-btn:hover { background: #218838; }
+.approve-btn:disabled { background: #a0aec0; cursor: not-allowed; }
+
+.reject-btn {
+  padding: 8px 20px;
+  background: #dc3545;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+}
+.reject-btn:hover { background: #c82333; }
+.reject-btn:disabled { background: #a0aec0; cursor: not-allowed; }
+
+.error-banner {
+  background: #fff5f5;
+  border: 1px solid #feb2b2;
+  color: #c53030;
+  padding: 10px 16px;
+  border-radius: 4px;
+  margin-bottom: 15px;
+}
