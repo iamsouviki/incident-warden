@@ -216,12 +216,12 @@ const OverviewPage: React.FC<{
             <div className="donut-container">
               <div className="donut-wrap">
                 <svg width="110" height="110" viewBox="0 0 110 110">
-                  <circle cx="55" cy="55" r="40" fill="none" stroke="#22223a" strokeWidth="16"/>
-                  <circle cx="55" cy="55" r="40" fill="none" stroke="#30d99c" strokeWidth="16"
+                  <circle cx="55" cy="55" r="40" fill="none" stroke="#e2e8f0" strokeWidth="16"/>
+                  <circle cx="55" cy="55" r="40" fill="none" stroke="#059669" strokeWidth="16"
                     strokeDasharray="180.8 68.9" strokeDashoffset="62.8" transform="rotate(-90 55 55)"/>
-                  <circle cx="55" cy="55" r="40" fill="none" stroke="#f5a623" strokeWidth="16"
+                  <circle cx="55" cy="55" r="40" fill="none" stroke="#d97706" strokeWidth="16"
                     strokeDasharray="45.2 205.6" strokeDashoffset="-118" transform="rotate(-90 55 55)"/>
-                  <circle cx="55" cy="55" r="40" fill="none" stroke="#ff5555" strokeWidth="16"
+                  <circle cx="55" cy="55" r="40" fill="none" stroke="#dc2626" strokeWidth="16"
                     strokeDasharray="25.1 225.7" strokeDashoffset="-163.2" transform="rotate(-90 55 55)"/>
                 </svg>
                 <div className="donut-label">
@@ -304,7 +304,7 @@ const OverviewPage: React.FC<{
       </div>
       <div className="card" style={{marginBottom:24}}>
         {incidents.length === 0 ? (
-          <div className="empty-state-msg">No incidents yet. Click + NEW INCIDENT to create one.</div>
+          <div className="empty-state-msg">No incidents yet.</div>
         ) : incidents.slice(0, 8).map(inc => (
           <div key={inc.id} className="feed-item">
             <span className="inc-id">#{inc.id.substring(0,8).toUpperCase()}</span>

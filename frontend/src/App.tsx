@@ -3,22 +3,29 @@ import './App.css';
 import OverviewPage from './pages/OverviewPage';
 import HitlPage from './pages/HitlPage';
 import SopPage from './pages/SopPage';
+import ToolsPage from './pages/ToolsPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import AuditLogPage from './pages/AuditLogPage';
 import LoginPage from './pages/LoginPage';
+import KnowledgeBasePage from './pages/KnowledgeBasePage';
+import ScriptEditorPage from './pages/ScriptEditorPage';
+import ChatbotWidget from './components/ChatbotWidget';
 import { AuthUser, clearAuth, getStoredUser, authFetch } from './services/api';
 
 const TENANT_ID = '00000000-0000-0000-0000-000000000001';
 
-type Page = 'overview' | 'hitl' | 'sop' | 'analytics' | 'audit' | 'health';
+type Page = 'overview' | 'hitl' | 'sop' | 'kb' | 'analytics' | 'audit' | 'health' | 'tools' | 'scripts';
 
 const PAGE_TITLES: Record<Page, string> = {
   overview:  'OPERATIONS DASHBOARD',
   hitl:      'HITL APPROVAL QUEUE',
   sop:       'SOP LIBRARY',
+  kb:        'RESOLVED INCIDENT KB',
   analytics: 'ANALYTICS',
   audit:     'AUDIT LOG',
   health:    'MCP TOOL HEALTH',
+  tools:     'MCP TOOLS',
+  scripts:   'SCRIPT EDITOR',
 };
 
 const App: React.FC = () => {
@@ -26,7 +33,6 @@ const App: React.FC = () => {
   const [page, setPage]     = useState<Page>('overview');
   const [now, setNow]       = useState(new Date());
   const [hitlCount, setHitlCount] = useState(0);
-  const [creating, setCreating]   = useState(false);
 
   // ── clock ──
   useEffect(() => {
@@ -56,36 +62,6 @@ const App: React.FC = () => {
   const handleLogout = () => {
     clearAuth();
     setUser(null);
-  };
-
-  const handleCreateIncident = async () => {
-    setCreating(true);
-    try {
-      const ticket = `TEST-${Date.now()}`;
-      const severities = ['P1', 'P2', 'P2', 'P3'];
-      const titles = [
-        'Database connection pool exhausted on order-svc',
-        'Memory leak detected on api-gateway — heap at 94%',
-        'Redis OOM — eviction policy misconfiguration',
-        'Disk usage > 80% on log-server prod-01',
-        'K8s pod CrashLoopBackOff — auth-service',
-      ];
-      const sev   = severities[Math.floor(Math.random() * severities.length)];
-      const title = titles[Math.floor(Math.random() * titles.length)];
-      const r = await authFetch('/api/v1/incidents', {
-        method: 'POST',
-        body: JSON.stringify({
-          title, severity: sev, sourceSystem: 'dashboard',
-          tenantId: TENANT_ID, sourceTicketId: ticket, status: 'PENDING',
-          description: `Automated test incident: ${title}`
-        })
-      });
-      if (!r.ok) { const e = await r.json(); alert('Error: ' + (e.error || JSON.stringify(e))); }
-    } catch {
-      alert('Create failed');
-    } finally {
-      setCreating(false);
-    }
   };
 
   return (
@@ -131,13 +107,21 @@ const App: React.FC = () => {
                onClick={() => setPage('sop')}>
             <span className="nav-icon">⊞</span> SOP Library
           </div>
+          <div className={`nav-item ${page === 'kb' ? 'active' : ''}`}
+               onClick={() => setPage('kb')}>
+            <span className="nav-icon">⧗</span> Resolved KB
+          </div>
         </div>
 
         <div className="nav-section">
           <div className="nav-label">System</div>
-          <div className={`nav-item ${page === 'health' ? 'active' : ''}`}
-               onClick={() => setPage('health')}>
+          <div className={`nav-item ${page === 'tools' ? 'active' : ''}`}
+               onClick={() => setPage('tools')}>
             <span className="nav-icon">⬡</span> MCP Tools
+          </div>
+          <div className={`nav-item ${page === 'scripts' ? 'active' : ''}`}
+               onClick={() => setPage('scripts')}>
+            <span className="nav-icon">✎</span> Script Editor
           </div>
           <div className={`nav-item ${page === 'audit' ? 'active' : ''}`}
                onClick={() => setPage('audit')}>
@@ -171,9 +155,6 @@ const App: React.FC = () => {
             <div className="pill user-pill" title={`Role: ${user.role}`}>
               👤 {user.username}
             </div>
-            <button className="btn-create" onClick={handleCreateIncident} disabled={creating}>
-              {creating ? '⏳' : '+ NEW INCIDENT'}
-            </button>
             <button className="btn-logout" onClick={handleLogout} title="Sign out">
               ⎋ Logout
             </button>
@@ -184,10 +165,15 @@ const App: React.FC = () => {
         {page === 'overview'  && <OverviewPage   onNavigate={setPage as any} tenantId={TENANT_ID} />}
         {page === 'hitl'      && <HitlPage       tenantId={TENANT_ID} />}
         {page === 'sop'       && <SopPage        tenantId={TENANT_ID} />}
+        {page === 'kb'        && <KnowledgeBasePage />}
         {page === 'analytics' && <AnalyticsPage  />}
         {page === 'audit'     && <AuditLogPage   />}
         {page === 'health'    && <HealthPage />}
+        {page === 'tools'     && <ToolsPage />}
+        {page === 'scripts'   && <ScriptEditorPage />}
       </div>
+      {/* ── Floating Chatbot ── */}
+      <ChatbotWidget tenantId={TENANT_ID} />
     </div>
   );
 };

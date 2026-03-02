@@ -122,3 +122,39 @@ export async function apiPost<T>(url: string, body: unknown): Promise<T> {
   if (!res.ok) throw new Error(`POST ${url} → HTTP ${res.status}`);
   return res.json() as Promise<T>;
 }
+
+// ─── Knowledge Base API helpers ──────────────────────────────────────────────────
+
+export interface KbStats {
+  totalEntries: number;
+  pendingEmbedding: number;
+  byCategory: Record<string, number>;
+  vectorStoreActive: boolean;
+  fullRagAvailable: boolean;
+}
+
+export async function fetchKbStats(tenantId: string): Promise<KbStats> {
+  return apiGet<KbStats>(`/api/v1/kb/stats?tenantId=${tenantId}`);
+}
+
+/**
+ * Search the KB using combined text + semantic similarity.
+ * Returns ranked resolved-incident entries and optional RAG hints.
+ */
+export async function searchKb(
+  tenantId: string,
+  query: string,
+  topK = 10,
+): Promise<{ results: object[]; ragHints: object[]; vectorStoreActive: boolean }> {
+  return apiPost('/api/v1/kb/search', { tenantId, query, topK });
+}
+
+/**
+ * Get an LLM resolution suggestion derived from both SOPs and resolved-KB entries.
+ * Falls back gracefully when ChatClient / VectorStore is not configured.
+ */
+export async function getKbSuggestion(
+  incidentDescription: string,
+): Promise<{ suggestion: string; sources: object[]; fullRagAvailable: boolean; sourcesFound: number }> {
+  return apiPost('/api/v1/kb/suggest', { incidentDescription });
+}

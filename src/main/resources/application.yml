@@ -240,6 +240,28 @@ mcp:
     fallback-ssh-password: ${MCP_SSH_PASSWORD:}
     fallback-ssh-key-path: ${MCP_SSH_KEY_PATH:}   # path to PEM file on local disk
 
+  # ─── ServiceNow Integration (ITSM alert source) ───────────────────────────
+  # When enabled, IncidentPollingScheduler polls ServiceNow every 60s for new incidents.
+  # Requires: instance-url, username, password.
+  servicenow:
+    enabled: ${MCP_SERVICENOW_ENABLED:false}
+    instance-url: ${SERVICENOW_INSTANCE_URL:https://your-instance.service-now.com}
+    username: ${SERVICENOW_USERNAME:admin}
+    password: ${SERVICENOW_PASSWORD:changeme}
+    table: incident
+    query-filter: ""                        # extra sysparm_query (e.g. "assignment_group=IT Ops")
+    limit: 50                               # max tickets per poll cycle
+
+  # ─── FreshService Integration (ITSM alert source) ────────────────────────
+  # When enabled, IncidentPollingScheduler polls FreshService every 60s for new tickets.
+  # Requires: domain, api-key.
+  freshservice:
+    enabled: ${MCP_FRESHSERVICE_ENABLED:false}
+    domain: ${FRESHSERVICE_DOMAIN:your-company}          # → https://your-company.freshservice.com
+    api-key: ${FRESHSERVICE_API_KEY:changeme}
+    ticket-type: Incident
+    limit: 50                               # max tickets per poll cycle
+
   # ─── Remote Execution (SSH) ──────────────────────────────────────────────
   # RemoteExecutionService uses these defaults; per-host overrides come from Vault.
   remote:
@@ -287,10 +309,6 @@ resilience4j:
       servicenow:
         base-config: default
       freshservice:
-        base-config: default
-      prometheus:
-        base-config: default
-      dynatrace:
         base-config: default
 
   ratelimiter:

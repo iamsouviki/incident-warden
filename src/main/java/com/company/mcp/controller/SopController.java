@@ -2,10 +2,13 @@ package com.company.mcp.controller;
 
 import com.company.mcp.model.SopProcedure;
 import com.company.mcp.repository.SopProcedureRepository;
+import com.company.mcp.service.SopDocumentParser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -25,6 +28,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class SopController {
     private final SopProcedureRepository sopRepository;
+    private final SopDocumentParser documentParser;
 
     /**
      * Create a new SOP.
@@ -177,6 +181,87 @@ public class SopController {
             ));
         } catch (Exception e) {
             log.error("Failed to approve SOP", e);
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Document Upload — parse SOP from PDF/DOCX/XLSX/TXT for user validation
+    // ──────────────────────────────────────────────────────────────────────
+
+    /**
+     * POST /api/v1/sops/parse
+     * Accepts a multipart file upload and returns extracted SOP fields.
+     * The user validates the fields in the UI then calls POST /api/v1/sops to save.
+     */
+    @PostMapping(value = "/parse", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<?> parseDocument(@RequestParam("file") MultipartFile file) {
+        if (file.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "No file provided"));
+        }
+        String name = file.getOriginalFilename() != null ? file.getOriginalFilename().toLowerCase() : "";
+        if (!name.endsWith(".pdf") && !name.endsWith(".docx") && !name.endsWith(".txt")
+                && !name.endsWith(".md") && !name.endsWith(".xlsx") && !name.endsWith(".xls")) {
+            return ResponseEntity.badRequest().body(Map.of("error",
+                    "Unsupported file type. Supported: PDF, DOCX, XLSX, TXT, MD"));
+        }
+        try {
+            SopDocumentParser.ParsedSop parsed = documentParser.parse(file);
+            Map<String, Object> resp = new HashMap<>();
+            resp.put("title",            parsed.title());
+            resp.put("category",         parsed.category());
+            resp.put("description",      parsed.description());
+            resp.put("resolutionSteps",  parsed.resolutionSteps());
+            resp.put("sourceFileName",   parsed.sourceFileName());
+            resp.put("warnings",         parsed.warnings());
+            log.info("SopController: parsed document '{}' — title='{}' category='{}'",
+                    file.getOriginalFilename(), parsed.title(), parsed.category());
+            return ResponseEntity.ok(resp);
+        } catch (Exception e) {
+            log.error("Failed to parse SOP document", e);
+            return ResponseEntity.badRequest().body(Map.of("error", "Parse failed: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * POST /api/v1/sops/manual
+     * Save a manually-entered SOP (no file upload required).
+     * Accepts flat fields and converts to SopProcedure with DRAFT status.
+     */
+    @PostMapping("/manual")
+    public ResponseEntity<?> createManual(@RequestBody Map<String, Object> body,
+                                          @RequestParam(defaultValue = "system") String createdBy) {
+        try {
+            SopProcedure sop = SopProcedure.builder()
+                    .id(UUID.randomUUID())
+                    .title((String) body.getOrDefault("title", "Untitled SOP"))
+                    .category((String) body.getOrDefault("category", "GENERAL"))
+                    .description((String) body.get("description"))
+                    .actionPlanJson((String) body.get("resolutionSteps"))
+                    .ownerTeam((String) body.get("ownerTeam"))
+                    .status("DRAFT")
+                    .approvedBy(null)
+                    .scope("PRIVATE")
+                    .version("v1.0")
+                    .createdAt(LocalDateTime.now())
+                    .updatedAt(LocalDateTime.now())
+                    .build();
+
+            // Optional tenant from body
+            if (body.get("tenantId") != null) {
+                sop.setTenantId(UUID.fromString((String) body.get("tenantId")));
+            }
+
+            SopProcedure saved = sopRepository.save(sop);
+            log.info("SopController: manual SOP created '{}' by '{}'", saved.getTitle(), createdBy);
+            return ResponseEntity.ok(Map.of(
+                    "id",      saved.getId(),
+                    "title",   saved.getTitle(),
+                    "status",  saved.getStatus(),
+                    "message", "SOP saved as DRAFT — approve to activate"
+            ));
+        } catch (Exception e) {
+            log.error("Failed to create manual SOP", e);
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }

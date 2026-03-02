@@ -71,6 +71,14 @@ public class McpToolRegistry {
         return Collections.unmodifiableCollection(definitions.values());
     }
 
+    /** Unregister a tool by name (used when a custom tool is disabled/deleted). */
+    public void unregister(String toolName) {
+        String key = normalise(toolName);
+        handlers.remove(key);
+        definitions.remove(key);
+        log.info("McpToolRegistry: unregistered tool '{}'", toolName);
+    }
+
     // -------------------------------------------------------------------------
 
     private static String normalise(String name) {

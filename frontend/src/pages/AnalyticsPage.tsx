@@ -93,9 +93,9 @@ export default function AnalyticsPage() {
                 <XAxis dataKey="name" tick={{ fill: '#94a3b8', fontSize: 11 }} tickLine={false} axisLine={false} />
                 <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }} tickLine={false} axisLine={false} />
                 <Tooltip
-                  contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8 }}
-                  labelStyle={{ color: '#f1f5f9' }}
-                  itemStyle={{ color: '#94a3b8' }}
+                  contentStyle={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 8 }}
+                  labelStyle={{ color: '#1e293b' }}
+                  itemStyle={{ color: '#475569' }}
                 />
                 <Bar dataKey="value" radius={[4, 4, 0, 0]}>
                   {incidentBarData.map((_, i) => (
@@ -129,11 +129,11 @@ export default function AnalyticsPage() {
                   ))}
                 </Pie>
                 <Tooltip
-                  contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8 }}
-                  itemStyle={{ color: '#94a3b8' }}
+                  contentStyle={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 8 }}
+                  itemStyle={{ color: '#475569' }}
                 />
                 <Legend
-                  formatter={(value) => <span style={{ color: '#94a3b8', fontSize: 12 }}>{value}</span>}
+                  formatter={(value) => <span style={{ color: '#475569', fontSize: 12 }}>{value}</span>}
                 />
               </PieChart>
             </ResponsiveContainer>

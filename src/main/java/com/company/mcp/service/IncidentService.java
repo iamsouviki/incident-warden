@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -25,8 +26,14 @@ import java.util.UUID;
 public class IncidentService {
     private final IncidentRepository incidentRepository;
     private final AgentPipeline agentPipeline;
+    private final KnowledgeBaseService knowledgeBaseService;
 
     private static final int DEFAULT_BATCH_SIZE = 5;
+
+    /** Terminal statuses that should trigger archival to the Knowledge Base. */
+    private static final java.util.Set<String> TERMINAL_STATUSES = java.util.Set.of(
+            "AUTO_RESOLVED", "HITL_RESOLVED", "ESCALATED", "GUARDRAILS_BLOCKED"
+    );
 
     /**
      * Create a new incident and queue it for processing.
@@ -118,23 +125,63 @@ public class IncidentService {
      * Update incident status.
      */
     public Incident updateIncidentStatus(UUID incidentId, String status) {
+        return updateIncidentStatus(incidentId, status, null, null, null, null);
+    }
+
+    /**
+     * Update incident status and, when the status is terminal, automatically
+     * archive the incident into the Resolved Incident Knowledge Base.
+     *
+     * @param incidentId       ID of the incident to update
+     * @param status           New status (e.g. AUTO_RESOLVED, HITL_RESOLVED)
+     * @param resolutionSummary Optional summary of how it was resolved
+     * @param rootCause        Optional root cause description
+     * @param resolutionSteps  Optional ordered list of fix actions
+     * @param resolvedBy       Operator username or "AUTO"
+     */
+    public Incident updateIncidentStatus(
+            UUID incidentId,
+            String status,
+            String resolutionSummary,
+            String rootCause,
+            List<Map<String, Object>> resolutionSteps,
+            String resolvedBy
+    ) {
         Optional<Incident> incident = incidentRepository.findById(incidentId);
-        
+
         if (incident.isEmpty()) {
             throw new IllegalArgumentException("Incident not found: " + incidentId);
         }
 
         Incident updated = incident.get();
         updated.setStatus(status);
-        
-        if ("AUTO_RESOLVED".equals(status) || "ESCALATED".equals(status) || 
-            "GUARDRAILS_BLOCKED".equals(status)) {
+
+        if (TERMINAL_STATUSES.contains(status)) {
             updated.setResolvedAt(LocalDateTime.now());
         }
 
         log.info("Updated incident {} status to {}", incidentId, status);
-        
-        return incidentRepository.save(updated);
+        Incident saved = incidentRepository.save(updated);
+
+        // ── Auto-archive to Knowledge Base when incident reaches a terminal state ──
+        if (TERMINAL_STATUSES.contains(status)) {
+            try {
+                knowledgeBaseService.archiveResolved(
+                        saved,
+                        resolutionSummary,
+                        rootCause,
+                        resolutionSteps != null ? resolutionSteps : List.of(),
+                        List.of(),
+                        resolvedBy != null ? resolvedBy : "AUTO"
+                );
+            } catch (Exception e) {
+                // Non-fatal — KB archival should never block the main flow
+                log.warn("[KB] Failed to archive incident {} to knowledge base: {}",
+                        incidentId, e.getMessage());
+            }
+        }
+
+        return saved;
     }
 
     /**

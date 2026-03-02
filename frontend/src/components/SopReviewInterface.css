@@ -22,7 +22,7 @@
   font-size: 14px;
 }
 
-.sop-loading { text-align: center; padding: 40px; color: #666; }
+.sop-loading { text-align: center; padding: 40px; color: var(--text-muted); }
 
 .sop-layout {
   display: grid;
@@ -31,9 +31,9 @@
 }
 
 .sop-list {
-  background: white;
+  background: var(--surface);
   border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.4);
   overflow-y: auto;
   max-height: calc(100vh - 200px);
 }
@@ -41,17 +41,17 @@
 .sop-list-item {
   padding: 14px 16px;
   cursor: pointer;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--border);
   transition: background 0.1s;
 }
-.sop-list-item:hover { background: #f7fafc; }
-.sop-list-item.selected { background: #ebf8ff; }
+.sop-list-item:hover { background: var(--surface2); }
+.sop-list-item.selected { background: rgba(79,142,247,0.12); }
 .sop-list-item:last-child { border-bottom: none; }
 
 .sop-list-title {
   font-size: 14px;
   font-weight: 600;
-  color: #2d3748;
+  color: var(--text);
   margin-bottom: 6px;
 }
 
@@ -67,7 +67,7 @@
   border-radius: 10px;
   font-size: 11px;
   font-weight: 600;
-  color: #2d3748;
+  color: var(--text-dim);
 }
 
 .sop-status-tag {
@@ -80,12 +80,12 @@
 .sop-status-tag.inactive { background: #fed7d7; color: #742a2a; }
 .sop-status-tag.draft { background: #fefcbf; color: #744210; }
 
-.sop-reliability { font-size: 11px; color: #718096; }
+.sop-reliability { font-size: 11px; color: var(--text-muted); }
 
 .sop-detail {
-  background: white;
+  background: var(--surface);
   border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.4);
   padding: 20px;
   overflow-y: auto;
   max-height: calc(100vh - 200px);
@@ -93,7 +93,7 @@
 
 .sop-detail-empty {
   text-align: center;
-  color: #a0aec0;
+  color: var(--text-muted);
   padding: 60px 20px;
   font-size: 16px;
 }
@@ -101,7 +101,7 @@
 .sop-detail h3 { margin-top: 0; font-size: 20px; }
 
 .sop-detail-meta {
-  background: #f7fafc;
+  background: var(--surface2);
   border-radius: 6px;
   padding: 15px;
   margin-bottom: 20px;
@@ -118,13 +118,13 @@
 
 .detail-label {
   font-weight: 600;
-  color: #4a5568;
+  color: var(--text-dim);
   min-width: 130px;
 }
 
 .confidence-bar {
   height: 10px;
-  background: #e2e8f0;
+  background: var(--surface3);
   border-radius: 5px;
   overflow: hidden;
   display: flex;
@@ -141,14 +141,15 @@
 
 .sop-action-plan h4 {
   font-size: 15px;
-  color: #2d3748;
-  border-bottom: 1px solid #e2e8f0;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
   padding-bottom: 8px;
 }
 
 .sop-action-plan pre {
-  background: #2d3748;
-  color: #e2e8f0;
+  background: var(--surface2);
+  color: var(--text-dim);
+  border: 1px solid var(--border-bright);
   padding: 15px;
   border-radius: 6px;
   font-size: 12px;
@@ -157,9 +158,9 @@
 }
 
 .error-banner {
-  background: #fff5f5;
-  border: 1px solid #feb2b2;
-  color: #c53030;
+  background: rgba(255,85,85,0.1);
+  border: 1px solid rgba(255,85,85,0.3);
+  color: var(--red);
   padding: 10px 16px;
   border-radius: 4px;
   margin-bottom: 15px;
@@ -168,5 +169,5 @@
 .empty-state {
   text-align: center;
   padding: 40px;
-  color: #666;
+  color: var(--text-muted);
 }

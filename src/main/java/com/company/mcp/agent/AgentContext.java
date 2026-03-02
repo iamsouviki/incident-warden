@@ -6,6 +6,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.springframework.ai.document.Document;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -60,6 +61,30 @@ public class AgentContext {
     private List<ActionExecutionStep> executedSteps = new ArrayList<>();
     private Boolean rollbackTriggered;
     private String rollbackReason;
+
+    // ── Dual-source RAG: SOP + Resolved Incident KB ───────────────────────────
+    /**
+     * LLM-generated resolution suggestion produced by consulting <em>both</em>
+     * the SOP library and the Resolved Incident Knowledge Base.
+     * Populated by {@link SopRankerAgent} during Phase-1.
+     */
+    private String kbSuggestedResolution;
+
+    /**
+     * Summary metadata of the top-K resolved KB entries that matched this
+     * incident. Each map contains: {@code id}, {@code title},
+     * {@code resolutionSummary}, {@code rootCause}, {@code severity},
+     * {@code resolvedBy}, {@code resolvedAt}.
+     */
+    @Builder.Default
+    private List<Map<String, Object>> kbMatchedEntries = new ArrayList<>();
+
+    /**
+     * Raw {@link Document} objects retrieved from the combined SOP + KB search.
+     * Available for downstream agents to inspect individual passages.
+     */
+    @Builder.Default
+    private List<Document> combinedRagDocs = new ArrayList<>();
 
     // Timeline tracking
     private LocalDateTime processingStartedAt;

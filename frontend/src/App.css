@@ -1,14 +1,14 @@
 
 :root {
-  --bg: #09090f; --surface: #111118; --surface2: #1a1a26; --surface3: #22223a;
-  --border: rgba(255,255,255,0.06); --border-bright: rgba(255,255,255,0.12);
-  --blue: #4f8ef7; --blue-dim: rgba(79,142,247,0.12); --blue-glow: rgba(79,142,247,0.25);
-  --green: #30d99c; --green-dim: rgba(48,217,156,0.12);
-  --amber: #f5a623; --amber-dim: rgba(245,166,35,0.12);
-  --red: #ff5555; --red-dim: rgba(255,85,85,0.12);
-  --purple: #b57bff; --purple-dim: rgba(181,123,255,0.12);
-  --text: #e8e8f0; --text-dim: #8888aa; --text-muted: #555570;
-  --mono: 'Space Mono', monospace; --sans: 'DM Sans', sans-serif;
+  --bg: #f0f4f8; --surface: #ffffff; --surface2: #f1f5f9; --surface3: #e2e8f0;
+  --border: rgba(0,0,0,0.07); --border-bright: rgba(0,0,0,0.13);
+  --blue: #2563eb; --blue-dim: rgba(37,99,235,0.08); --blue-glow: rgba(37,99,235,0.15);
+  --green: #059669; --green-dim: rgba(5,150,105,0.09);
+  --amber: #d97706; --amber-dim: rgba(217,119,6,0.09);
+  --red: #dc2626; --red-dim: rgba(220,38,38,0.08);
+  --purple: #7c3aed; --purple-dim: rgba(124,58,237,0.08);
+  --text: #1e293b; --text-dim: #475569; --text-muted: #94a3b8;
+  --mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace; --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   /* ── alias vars used in new pages ─────────────── */
   --bg-primary:    var(--bg);
   --bg-secondary:  var(--surface);
@@ -23,7 +23,7 @@
 body { background: var(--bg); color: var(--text); font-family: var(--sans); min-height: 100vh; overflow-x: hidden; }
 body::before {
   content: ''; position: fixed; inset: 0;
-  background-image: linear-gradient(rgba(79,142,247,0.015) 1px, transparent 1px), linear-gradient(90deg, rgba(79,142,247,0.015) 1px, transparent 1px);
+  background-image: linear-gradient(rgba(37,99,235,0.025) 1px, transparent 1px), linear-gradient(90deg, rgba(37,99,235,0.025) 1px, transparent 1px);
   background-size: 40px 40px; pointer-events: none; z-index: 0;
 }
 .shell { display: flex; min-height: 100vh; position: relative; z-index: 1; }

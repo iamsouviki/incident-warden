@@ -39,10 +39,10 @@
 .hitl-loading, .hitl-empty {
   text-align: center;
   padding: 40px;
-  color: #666;
-  background: white;
+  color: var(--text-muted);
+  background: var(--surface);
   border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.4);
 }
 
 .hitl-items {
@@ -52,9 +52,9 @@
 }
 
 .hitl-card {
-  background: white;
+  background: var(--surface);
   border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.4);
   overflow: hidden;
   border-left: 4px solid #fd7e14;
 }
@@ -66,7 +66,7 @@
   cursor: pointer;
   gap: 15px;
 }
-.hitl-card-header:hover { background: #f7fafc; }
+.hitl-card-header:hover { background: var(--surface2); }
 
 .hitl-incident-info {
   flex: 1;
@@ -78,13 +78,13 @@
 .hitl-incident-id {
   font-family: monospace;
   font-size: 12px;
-  color: #666;
+  color: var(--text-muted);
 }
 
 .hitl-category {
   font-size: 13px;
   font-weight: 600;
-  color: #2d3748;
+  color: var(--text);
 }
 
 .hitl-confidence {
@@ -97,7 +97,7 @@
 .confidence-bar {
   flex: 1;
   height: 8px;
-  background: #e2e8f0;
+  background: var(--surface3);
   border-radius: 4px;
   overflow: hidden;
 }
@@ -110,20 +110,20 @@
 
 .confidence-text {
   font-size: 13px;
-  color: #4a5568;
+  color: var(--text-dim);
   min-width: 80px;
   text-align: right;
 }
 
 .expand-icon {
-  color: #a0aec0;
+  color: var(--text-muted);
   font-size: 12px;
 }
 
 .hitl-card-details {
   padding: 15px 20px;
-  border-top: 1px solid #e2e8f0;
-  background: #f7fafc;
+  border-top: 1px solid var(--border);
+  background: var(--surface2);
 }
 
 .detail-row {
@@ -135,12 +135,12 @@
 
 .detail-label {
   font-weight: 600;
-  color: #4a5568;
+  color: var(--text-dim);
   min-width: 140px;
 }
 
 .detail-value {
-  color: #2d3748;
+  color: var(--text);
 }
 
 .detail-value.mono {
@@ -163,7 +163,7 @@
   display: flex;
   gap: 10px;
   padding: 12px 20px;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid var(--border);
 }
 
 .approve-btn {
@@ -193,9 +193,9 @@
 .reject-btn:disabled { background: #a0aec0; cursor: not-allowed; }
 
 .error-banner {
-  background: #fff5f5;
-  border: 1px solid #feb2b2;
-  color: #c53030;
+  background: rgba(255,85,85,0.1);
+  border: 1px solid rgba(255,85,85,0.3);
+  color: var(--red);
   padding: 10px 16px;
   border-radius: 4px;
   margin-bottom: 15px;

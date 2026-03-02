@@ -200,6 +200,12 @@ public class OrchestratorAgent extends BaseAgent {
                 .sopTitle(src.getSopTitle())
                 .sopReliability(src.getSopReliability())
                 .actionPlan(src.getActionPlan())
+                // dual-source RAG fields
+                .kbSuggestedResolution(src.getKbSuggestedResolution())
+                .kbMatchedEntries(src.getKbMatchedEntries() != null
+                        ? new java.util.ArrayList<>(src.getKbMatchedEntries()) : new java.util.ArrayList<>())
+                .combinedRagDocs(src.getCombinedRagDocs() != null
+                        ? new java.util.ArrayList<>(src.getCombinedRagDocs()) : new java.util.ArrayList<>())
                 .build();
     }
 
@@ -227,6 +233,18 @@ public class OrchestratorAgent extends BaseAgent {
             master.setSopTitle(result.getSopTitle());
             master.setSopReliability(result.getSopReliability());
             master.setActionPlan(result.getActionPlan());
+        }
+        // SopRankerAgent also writes dual-source RAG enrichment fields
+        if (result.getKbSuggestedResolution() != null && master.getKbSuggestedResolution() == null) {
+            master.setKbSuggestedResolution(result.getKbSuggestedResolution());
+        }
+        if (result.getKbMatchedEntries() != null && !result.getKbMatchedEntries().isEmpty()
+                && master.getKbMatchedEntries().isEmpty()) {
+            master.setKbMatchedEntries(result.getKbMatchedEntries());
+        }
+        if (result.getCombinedRagDocs() != null && !result.getCombinedRagDocs().isEmpty()
+                && master.getCombinedRagDocs().isEmpty()) {
+            master.setCombinedRagDocs(result.getCombinedRagDocs());
         }
         // Propagate warnings/errors
         result.getErrors().forEach(master::addError);
