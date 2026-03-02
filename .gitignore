@@ -1,3 +1,4 @@
+# ── Docs (generated / delivery) ────────────────────────────────────────────────
 /COMPLETE_FILE_STRUCTURE.md
 /DELIVERY_SUMMARY.md
 /IMPLEMENTATION.md
@@ -6,3 +7,53 @@
 /QUICK_START.md
 /RAG_SOP_ARCHITECTURE.md
 /RUNNING_APPLICATION_GUIDE.md
+
+# ── Java / Maven build output ───────────────────────────────────────────────────
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+*.zip
+*.tar.gz
+hs_err_pid*
+replay_pid*
+
+# ── Frontend build output ───────────────────────────────────────────────────────
+frontend/dist/
+frontend/dist-ssr/
+frontend/.vite/
+
+# ── Node / npm ──────────────────────────────────────────────────────────────────
+node_modules/
+frontend/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.npm
+.yarn/
+
+# ── Environment / secrets ───────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── Logs ────────────────────────────────────────────────────────────────────────
+logs/
+*.log
+
+# ── IDE / editor ────────────────────────────────────────────────────────────────
+.idea/
+.vscode/settings.json
+*.iml
+*.iws
+*.ipr
+.project
+.classpath
+.settings/
+
+# ── OS ──────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
