@@ -1,7 +1,15 @@
 spring:
   application:
     name: mcp-incident-automation
-  
+
+  # ── Multipart file upload limits (SOP document import: PDF, DOCX, TXT) ──────
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 50MB
+      max-request-size: 52MB
+      file-size-threshold: 2MB
+
   datasource:
     url: jdbc:postgresql://localhost:5432/mcp_db
     driver-class-name: org.postgresql.Driver
@@ -50,7 +58,9 @@ spring:
   ai:
     # ════════════════════════════════════════════════════════════════
     # Spring AI provider blocks.
-    # DEFAULT: Ollama with phi4 (local, no API key needed).
+    # DEFAULT: Ollama with phi3:mini (local, no API key needed).
+    # All LLM features (SOP extraction, script generation, RAG) use
+    # the same ChatClient and work with ANY provider below.
     # To switch provider, comment out the autoconfigure.exclude entries
     # above for that provider and set the required env vars.
     # ════════════════════════════════════════════════════════════════
@@ -61,7 +71,7 @@ spring:
       chat:
         enabled: ${SPRING_AI_OLLAMA_CHAT_ENABLED:true}       # ← set true when Ollama is running
         options:
-          model: ${OLLAMA_CHAT_MODEL:phi4}                   # ← llama3.2 | mistral | phi3 | gemma2
+          model: ${OLLAMA_CHAT_MODEL:phi3:mini}                   # ← phi3:mini | qwen2.5:latest | llama3.2
           temperature: 0.0
       embedding:
         enabled: ${SPRING_AI_OLLAMA_EMBED_ENABLED:true}      # ← set true when Ollama is running
@@ -277,11 +287,11 @@ mcp:
 
   # ─── LLM Script Generator ────────────────────────────────────────────────
   script-gen:
-    # OpenAI-compatible endpoint — override with Ollama (http://localhost:11434/v1/chat/completions)
-    api-url: https://api.openai.com/v1/chat/completions
-    # Bearer key — set OPENAI_API_KEY env-var in production; empty = LLM disabled, uses templates
-    api-key: ${OPENAI_API_KEY:}
-    model: gpt-4o
+    # Ollama-compatible endpoint (OpenAI-compatible API)
+    api-url: http://localhost:11434/v1/chat/completions
+    # No API key needed for Ollama — set a dummy value so the service doesn't fall back to templates
+    api-key: ${OPENAI_API_KEY:ollama}
+    model: phi3:mini
     max-tokens: 768
     temperature: 0.1
     api-timeout-ms: 30000

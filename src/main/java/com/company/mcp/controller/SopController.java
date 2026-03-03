@@ -190,6 +190,112 @@ public class SopController {
     // ──────────────────────────────────────────────────────────────────────
 
     /**
+     * POST /api/v1/sops/parse-text
+     * Accepts raw text/markdown content as JSON — NO file upload needed.
+     * Parses the content and returns extracted SOP fields.
+     * The user validates the fields in the UI then calls POST /api/v1/sops to save.
+     *
+     * Request body:
+     * <pre>
+     * {
+     *   "content": "# SOP: Tomcat API URL Not Accessible\n...",
+     *   "fileName": "TOMCAT_URL_FIX.md"   // optional, used for heuristics
+     * }
+     * </pre>
+     */
+    @PostMapping("/parse-text")
+    public ResponseEntity<?> parseTextContent(@RequestBody Map<String, Object> body) {
+        String content  = body.get("content")  != null ? body.get("content").toString()  : "";
+        String fileName = body.get("fileName") != null ? body.get("fileName").toString() : "pasted-content.md";
+
+        if (content.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Content is required"));
+        }
+
+        try {
+            SopDocumentParser.ParsedSop parsed = documentParser.parseRawText(content, fileName);
+            Map<String, Object> resp = new HashMap<>();
+            resp.put("title",           parsed.title());
+            resp.put("category",        parsed.category());
+            resp.put("description",     parsed.description());
+            resp.put("resolutionSteps", parsed.resolutionSteps());
+            resp.put("sourceFileName",  parsed.sourceFileName());
+            resp.put("warnings",        parsed.warnings());
+            log.info("SopController: parsed text content — title='{}' category='{}'",
+                    parsed.title(), parsed.category());
+            return ResponseEntity.ok(resp);
+        } catch (Exception e) {
+            log.error("Failed to parse SOP text content", e);
+            return ResponseEntity.badRequest().body(Map.of("error", "Parse failed: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * POST /api/v1/sops/parse-and-save
+     * Accepts raw text/markdown content, parses it, extracts SOP fields,
+     * and saves directly to the database in one call — no file storage.
+     *
+     * Request body:
+     * <pre>
+     * {
+     *   "content": "# SOP: Tomcat API URL Not Accessible\n...",
+     *   "fileName": "TOMCAT_URL_FIX.md",
+     *   "tenantId": "00000000-0000-0000-0000-000000000001",
+     *   "ownerTeam": "Platform SRE"
+     * }
+     * </pre>
+     */
+    @PostMapping("/parse-and-save")
+    public ResponseEntity<?> parseAndSave(@RequestBody Map<String, Object> body,
+                                          @RequestParam(defaultValue = "system") String createdBy) {
+        String content   = body.get("content")  != null ? body.get("content").toString()  : "";
+        String fileName  = body.get("fileName") != null ? body.get("fileName").toString() : "pasted-content.md";
+        String ownerTeam = body.get("ownerTeam") != null ? body.get("ownerTeam").toString() : "";
+
+        if (content.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Content is required"));
+        }
+
+        try {
+            SopDocumentParser.ParsedSop parsed = documentParser.parseRawText(content, fileName);
+
+            SopProcedure sop = SopProcedure.builder()
+                    .id(UUID.randomUUID())
+                    .title(parsed.title() != null ? parsed.title() : "Untitled SOP")
+                    .category(parsed.category() != null ? parsed.category() : "GENERAL")
+                    .description(parsed.description())
+                    .actionPlanJson(parsed.resolutionSteps())
+                    .ownerTeam(ownerTeam)
+                    .status("DRAFT")
+                    .approvedBy(null)
+                    .scope("PRIVATE")
+                    .version("v1.0")
+                    .createdAt(LocalDateTime.now())
+                    .updatedAt(LocalDateTime.now())
+                    .build();
+
+            if (body.get("tenantId") != null) {
+                sop.setTenantId(UUID.fromString(body.get("tenantId").toString()));
+            }
+
+            SopProcedure saved = sopRepository.save(sop);
+            log.info("SopController: parse-and-save '{}' by '{}'", saved.getTitle(), createdBy);
+
+            Map<String, Object> resp = new HashMap<>();
+            resp.put("id",       saved.getId());
+            resp.put("title",    saved.getTitle());
+            resp.put("category", saved.getCategory());
+            resp.put("status",   saved.getStatus());
+            resp.put("message",  "SOP parsed and saved as DRAFT — approve to activate");
+            resp.put("warnings", parsed.warnings());
+            return ResponseEntity.ok(resp);
+        } catch (Exception e) {
+            log.error("Failed to parse-and-save SOP", e);
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
      * POST /api/v1/sops/parse
      * Accepts a multipart file upload and returns extracted SOP fields.
      * The user validates the fields in the UI then calls POST /api/v1/sops to save.
@@ -220,6 +326,57 @@ public class SopController {
         } catch (Exception e) {
             log.error("Failed to parse SOP document", e);
             return ResponseEntity.badRequest().body(Map.of("error", "Parse failed: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * POST /api/v1/sops/upload-and-save
+     * Accepts a multipart file upload, extracts text, parses via LLM,
+     * and saves directly to DB in one call. No file is stored on the server.
+     */
+    @PostMapping(value = "/upload-and-save", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<?> uploadAndSave(@RequestParam("file") MultipartFile file,
+                                           @RequestParam(required = false) String tenantId,
+                                           @RequestParam(defaultValue = "system") String createdBy) {
+        if (file.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "No file provided"));
+        }
+        try {
+            SopDocumentParser.ParsedSop parsed = documentParser.parse(file);
+
+            SopProcedure sop = SopProcedure.builder()
+                    .id(UUID.randomUUID())
+                    .title(parsed.title() != null ? parsed.title() : "Untitled SOP")
+                    .category(parsed.category() != null ? parsed.category() : "GENERAL")
+                    .description(parsed.description())
+                    .actionPlanJson(parsed.resolutionSteps())
+                    .status("DRAFT")
+                    .approvedBy(null)
+                    .scope("PRIVATE")
+                    .version("v1.0")
+                    .createdAt(LocalDateTime.now())
+                    .updatedAt(LocalDateTime.now())
+                    .build();
+
+            if (tenantId != null && !tenantId.isBlank()) {
+                sop.setTenantId(UUID.fromString(tenantId));
+            }
+
+            SopProcedure saved = sopRepository.save(sop);
+            log.info("SopController: upload-and-save '{}' from file '{}' by '{}'",
+                    saved.getTitle(), file.getOriginalFilename(), createdBy);
+
+            Map<String, Object> resp = new HashMap<>();
+            resp.put("id",       saved.getId());
+            resp.put("title",    saved.getTitle());
+            resp.put("category", saved.getCategory());
+            resp.put("status",   saved.getStatus());
+            resp.put("message",  "SOP parsed from file and saved as DRAFT");
+            resp.put("warnings", parsed.warnings());
+            return ResponseEntity.ok(resp);
+        } catch (Exception e) {
+            log.error("Failed to upload-and-save SOP from file", e);
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
 

@@ -45,12 +45,14 @@ const SopPage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
 
   /* ── Upload / parse state ── */
   const fileInputRef             = useRef<HTMLInputElement>(null);
+  const fileDirectSaveRef        = useRef<HTMLInputElement>(null);
   const [uploading, setUploading]       = useState(false);
   const [parsedSop, setParsedSop]       = useState<ParsedSop | null>(null);
   const [showValidate, setShowValidate] = useState(false);
   const [editParsed, setEditParsed]     = useState<ParsedSop | null>(null);
   const [approving, setApproving]       = useState(false);
   const [uploadError, setUploadError]   = useState<string | null>(null);
+  const [directSaving, setDirectSaving] = useState(false);
 
   /* ── Manual entry state ── */
   const [showManual, setShowManual] = useState(false);
@@ -60,6 +62,13 @@ const SopPage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
   });
   const [savingManual, setSavingManual] = useState(false);
   const [manualError, setManualError]   = useState<string | null>(null);
+
+  /* ── Paste content state (parse text directly — no file needed) ── */
+  const [showPaste, setShowPaste]         = useState(false);
+  const [pasteContent, setPasteContent]   = useState('');
+  const [pasteParsing, setPasteParsing]   = useState(false);
+  const [pasteError, setPasteError]       = useState<string | null>(null);
+  const [pasteSaving, setPasteSaving]     = useState(false);
 
   /* ── Inline SOP edit state ── */
   const [showEditSop, setShowEditSop] = useState(false);
@@ -72,7 +81,7 @@ const SopPage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
 
   const fetchSops = async () => {
     try {
-      const r = await fetch(`/api/v1/sops?tenantId=${tenantId}`);
+      const r = await authFetch(`/api/v1/sops?tenantId=${tenantId}`);
       if (r.ok) { const d = await r.json(); setSops(Array.isArray(d) ? d : d.sops || []); setError(null); }
       else setError('Failed to load SOPs');
     } catch { setError('Cannot connect to backend'); }
@@ -115,6 +124,21 @@ const SopPage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
     finally { setApproving(false); }
   };
 
+  /* ── Upload & save directly to DB (no review step) ── */
+  const handleDirectFileSave = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setDirectSaving(true); setUploadError(null);
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      const r = await authFetch(`/api/v1/sops/upload-and-save?tenantId=${tenantId}`, { method: 'POST', body: fd });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); setUploadError(j.error || `Save failed (${r.status})`); }
+      else { fetchSops(); }
+    } catch { setUploadError('Cannot connect to backend'); }
+    finally { setDirectSaving(false); if (fileDirectSaveRef.current) fileDirectSaveRef.current.value = ''; }
+  };
+
   /* ── Manual save handler ── */
   const handleManualSave = async () => {
     if (!manualForm.title.trim()) { setManualError('Title is required.'); return; }
@@ -132,6 +156,49 @@ const SopPage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
       }
     } catch { setManualError('Network error'); }
     finally { setSavingManual(false); }
+  };
+
+  /* ── Paste content: parse text, show in validation modal ── */
+  const handlePasteParseOnly = async () => {
+    if (!pasteContent.trim()) { setPasteError('Please paste some content first.'); return; }
+    setPasteParsing(true); setPasteError(null);
+    try {
+      const r = await authFetch('/api/v1/sops/parse-text', {
+        method: 'POST',
+        body: JSON.stringify({ content: pasteContent, fileName: 'pasted-content.md' }),
+      });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); setPasteError(j.error || `Parse failed (${r.status})`); }
+      else {
+        const parsed: ParsedSop = await r.json();
+        // Switch to the validation modal so user can review & edit
+        setParsedSop(parsed);
+        setEditParsed({ ...parsed });
+        setShowPaste(false);
+        setPasteContent('');
+        setShowValidate(true);
+      }
+    } catch { setPasteError('Cannot connect to backend'); }
+    finally { setPasteParsing(false); }
+  };
+
+  /* ── Paste content: parse + save directly in one call ── */
+  const handlePasteAndSave = async () => {
+    if (!pasteContent.trim()) { setPasteError('Please paste some content first.'); return; }
+    setPasteSaving(true); setPasteError(null);
+    try {
+      const r = await authFetch('/api/v1/sops/parse-and-save', {
+        method: 'POST',
+        body: JSON.stringify({ content: pasteContent, fileName: 'pasted-content.md', tenantId }),
+      });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); setPasteError(j.error || `Save failed (${r.status})`); }
+      else {
+        await r.json();
+        setShowPaste(false);
+        setPasteContent('');
+        fetchSops();
+      }
+    } catch { setPasteError('Cannot connect to backend'); }
+    finally { setPasteSaving(false); }
   };
 
   /* ── Open edit for unapproved SOP ── */
@@ -185,10 +252,14 @@ const SopPage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
 
   return (
     <div className="content">
-      {/* hidden file input */}
+      {/* hidden file inputs */}
       <input
         ref={fileInputRef} type="file" accept=".pdf,.docx,.xlsx,.xls,.txt,.md"
         style={{ display:'none' }} onChange={handleFileChange}
+      />
+      <input
+        ref={fileDirectSaveRef} type="file" accept=".pdf,.docx,.xlsx,.xls,.txt,.md"
+        style={{ display:'none' }} onChange={handleDirectFileSave}
       />
 
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:24, flexWrap:'wrap', gap:10}}>
@@ -202,7 +273,18 @@ const SopPage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading}
             style={actnBtnStyle('var(--green-dim)','rgba(48,217,156,0.35)','var(--green)')}>
-            {uploading ? '⏳ PARSING…' : '⬆ UPLOAD DOC'}
+            {uploading ? '⏳ PARSING…' : '⬆ UPLOAD & REVIEW'}
+          </button>
+          <button
+            onClick={() => fileDirectSaveRef.current?.click()}
+            disabled={directSaving}
+            style={actnBtnStyle('rgba(48,217,156,0.2)','rgba(48,217,156,0.45)','var(--green)')}>
+            {directSaving ? '⏳ SAVING…' : '⚡ UPLOAD & SAVE'}
+          </button>
+          <button
+            onClick={() => { setPasteError(null); setPasteContent(''); setShowPaste(true); }}
+            style={actnBtnStyle('rgba(181,123,255,0.1)','rgba(181,123,255,0.35)','#b57bff')}>
+            📋 PASTE CONTENT
           </button>
           <button
             onClick={() => { setManualError(null); setShowManual(true); }}
@@ -498,6 +580,79 @@ const SopPage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
               </button>
               <button onClick={handleEditSopSave} disabled={savingEditSop} style={saveBtnStyle(savingEditSop)}>
                 {savingEditSop ? '⏳ SAVING…' : '✓ UPDATE SOP'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Paste Content modal — parse raw text directly into DB ── */}
+      {showPaste && (
+        <div style={overlayStyle}>
+          <div style={modalStyle(620)}>
+            <div style={{ fontFamily:'var(--mono)', fontSize:13, fontWeight:700, color:'#b57bff', marginBottom:4, letterSpacing:1 }}>
+              📋 PASTE SOP CONTENT
+            </div>
+            <div style={{ fontSize:11, color:'var(--text-muted)', marginBottom:14 }}>
+              Paste your SOP text, Markdown, or document content below. The system will extract Title, Category, Description, and Resolution Steps automatically — no file upload needed.
+            </div>
+
+            {pasteError && (
+              <div style={{ background:'rgba(220,38,38,0.08)', border:'1px solid rgba(220,38,38,0.25)', color:'var(--red)', padding:'8px 12px', borderRadius:6, fontSize:12, marginBottom:14 }}>
+                ⚠ {pasteError}
+              </div>
+            )}
+
+            <textarea
+              value={pasteContent}
+              onChange={e => setPasteContent(e.target.value)}
+              rows={18}
+              placeholder={`Paste your SOP content here...\n\nExample:\n# SOP: Tomcat API URL Not Accessible\n\n**Category:** APPLICATION\n**Severity:** SEV-2\n\n## Description\nAPI endpoint hosted on Tomcat returns 502/503...\n\n## Resolution Steps\n1. Check Tomcat status: sudo systemctl status tomcat\n2. Restart service: sudo systemctl restart tomcat\n3. Verify: curl http://localhost:8080/health`}
+              style={{
+                ...inpStyle,
+                resize:'vertical',
+                minHeight:320,
+                fontFamily:'var(--mono)',
+                fontSize:11,
+                lineHeight:'1.6',
+                whiteSpace:'pre',
+                tabSize:4,
+              }}
+              spellCheck={false}
+            />
+
+            <div style={{ fontSize:11, color:'var(--text-muted)', marginTop:6, marginBottom:10 }}>
+              {pasteContent.length > 0
+                ? `${pasteContent.length} characters · ${pasteContent.split('\n').length} lines`
+                : 'Supports: Markdown, plain text, SOP templates'}
+            </div>
+
+            <div style={{ display:'flex', gap:10, marginTop:10 }}>
+              <button
+                onClick={() => { setShowPaste(false); setPasteContent(''); setPasteError(null); }}
+                style={cancelBtnStyle}>
+                CANCEL
+              </button>
+              <button
+                onClick={handlePasteParseOnly}
+                disabled={pasteParsing || !pasteContent.trim()}
+                style={{
+                  ...saveBtnStyle(pasteParsing || !pasteContent.trim()),
+                  flex:2,
+                  border:'1px solid rgba(181,123,255,0.4)',
+                  background:'rgba(181,123,255,0.08)',
+                  color:'#b57bff',
+                }}>
+                {pasteParsing ? '⏳ PARSING…' : '🔍 PARSE & REVIEW'}
+              </button>
+              <button
+                onClick={handlePasteAndSave}
+                disabled={pasteSaving || !pasteContent.trim()}
+                style={{
+                  ...saveBtnStyle(pasteSaving || !pasteContent.trim()),
+                  flex:2,
+                }}>
+                {pasteSaving ? '⏳ SAVING…' : '⚡ PARSE & SAVE'}
               </button>
             </div>
           </div>

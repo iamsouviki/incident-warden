@@ -10,7 +10,7 @@ import LoginPage from './pages/LoginPage';
 import KnowledgeBasePage from './pages/KnowledgeBasePage';
 import ScriptEditorPage from './pages/ScriptEditorPage';
 import ChatbotWidget from './components/ChatbotWidget';
-import { AuthUser, clearAuth, getStoredUser, authFetch } from './services/api';
+import { AuthUser, clearAuth, getStoredUser, authFetch, refreshToken, isTokenExpiringSoon } from './services/api';
 
 const TENANT_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -52,6 +52,36 @@ const App: React.FC = () => {
     poll();
     const t = setInterval(poll, 15000);
     return () => clearInterval(t);
+  }, [user]);
+
+  // ── Activity-based token auto-refresh ──────────────────────────────────────
+  // Tracks the last user interaction. Every 4 minutes, if the user was active
+  // in the past 10 minutes and the token expires within 30 minutes, silently
+  // exchange it for a fresh one — so active sessions never expire mid-use.
+  useEffect(() => {
+    if (!user) return;
+    let lastActivity = Date.now();
+
+    const onActivity = () => { lastActivity = Date.now(); };
+    const events = ['click', 'keydown', 'scroll', 'mousemove', 'touchstart'] as const;
+    events.forEach(e => window.addEventListener(e, onActivity, { passive: true }));
+
+    const interval = setInterval(async () => {
+      const recentlyActive = Date.now() - lastActivity < 10 * 60 * 1000; // active in last 10 min
+      if (recentlyActive && isTokenExpiringSoon(30 * 60 * 1000)) {        // expires within 30 min
+        const ok = await refreshToken();
+        if (!ok) {
+          // Token already expired and could not be refreshed — force re-login
+          clearAuth();
+          setUser(null);
+        }
+      }
+    }, 4 * 60 * 1000); // check every 4 minutes
+
+    return () => {
+      events.forEach(e => window.removeEventListener(e, onActivity));
+      clearInterval(interval);
+    };
   }, [user]);
 
   // ── Show login when no user ──

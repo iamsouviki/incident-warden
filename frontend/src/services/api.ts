@@ -2,9 +2,11 @@
  * api.ts — centralised HTTP + JWT helpers
  *
  * Token lifecycle:
- *   setAuth()   → called after successful login
- *   clearAuth() → called on logout / 401
- *   getToken()  → read token for Authorization header
+ *   setAuth()            → called after successful login
+ *   clearAuth()          → called on logout / 401
+ *   getToken()           → read token for Authorization header
+ *   refreshToken()       → silently issues a new JWT from a still-valid one
+ *   isTokenExpiringSoon()→ true when token expires within the given window
  */
 
 // ─── Storage keys ────────────────────────────────────────────────────────────
@@ -57,6 +59,74 @@ export function isAuthenticated(): boolean {
   return !!getToken();
 }
 
+// ─── Token expiry helpers ─────────────────────────────────────────────────────
+
+/** Decode the JWT `exp` claim and return its value in milliseconds. */
+export function getTokenExpiry(): number | null {
+  const token = getToken();
+  if (!token) return null;
+  try {
+    const b64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(atob(b64));
+    return typeof payload.exp === 'number' ? payload.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Returns true when the stored token expires within `thresholdMs` milliseconds.
+ * Default threshold: 5 minutes (proactive per-request refresh window).
+ */
+export function isTokenExpiringSoon(thresholdMs = 5 * 60 * 1000): boolean {
+  const exp = getTokenExpiry();
+  if (!exp) return false;
+  return exp - Date.now() < thresholdMs;
+}
+
+// Single in-flight refresh promise — prevents stampede when many requests fire simultaneously
+let _refreshPromise: Promise<boolean> | null = null;
+
+/**
+ * Silently exchange the current (still-valid) JWT for a fresh one.
+ * Calls POST /api/auth/refresh — no password required.
+ * Returns true on success, false if the token is already expired or the call fails.
+ */
+export async function refreshToken(): Promise<boolean> {
+  if (_refreshPromise) return _refreshPromise;
+  const token = getToken();
+  if (!token) return false;
+
+  _refreshPromise = (async (): Promise<boolean> => {
+    try {
+      const res = await fetch('/api/auth/refresh', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+      if (!res.ok) return false;
+      const data = await res.json();
+      if (data.token) {
+        const stored = getStoredUser();
+        if (stored) {
+          const updated: AuthUser = { ...stored, token: data.token, expiresIn: data.expiresIn ?? stored.expiresIn };
+          setAuth(updated);
+        } else {
+          localStorage.setItem(TOKEN_KEY, data.token);
+        }
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    } finally {
+      _refreshPromise = null;
+    }
+  })();
+
+  return _refreshPromise;
+}
+
 // ─── Login ───────────────────────────────────────────────────────────────────
 export async function login(username: string, password: string): Promise<AuthUser> {
   const res = await fetch('/api/auth/login', {
@@ -86,6 +156,11 @@ export async function login(username: string, password: string): Promise<AuthUse
  *   2. On 401 → clears stored token and reloads the page (login redirect)
  */
 export async function authFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  // ── Proactively refresh if token expires within the next 5 minutes ──────
+  if (isTokenExpiringSoon(5 * 60 * 1000)) {
+    await refreshToken();
+  }
+
   const token = getToken();
   const headers = new Headers(init.headers);
   if (token) {
@@ -97,9 +172,22 @@ export async function authFetch(input: string, init: RequestInit = {}): Promise<
 
   const res = await fetch(input, { ...init, headers });
 
-  if (res.status === 401) {
-    clearAuth();
-    window.location.reload();
+  // 401 = token rejected by backend; 403 = Spring Security stateless default for
+  // unauthenticated requests (expired/missing JWT). Both require re-login.
+  if (res.status === 401 || res.status === 403) {
+    // Only force logout for auth-related 403s (i.e. when there's no token at all
+    // or the token is provably expired).  Preserve the current response so callers
+    // that legitimately handle 403 (permission errors) can still inspect it.
+    const token = getToken();
+    if (!token) {
+      clearAuth();
+      window.location.reload();
+      return res;
+    }
+    if (res.status === 401) {
+      clearAuth();
+      window.location.reload();
+    }
   }
 
   return res;
