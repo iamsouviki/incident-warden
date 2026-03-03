@@ -10,7 +10,7 @@ import LoginPage from './pages/LoginPage';
 import KnowledgeBasePage from './pages/KnowledgeBasePage';
 import ScriptEditorPage from './pages/ScriptEditorPage';
 import ChatbotWidget from './components/ChatbotWidget';
-import { AuthUser, clearAuth, getStoredUser, authFetch, refreshToken, isTokenExpiringSoon } from './services/api';
+import { AuthUser, clearAuth, getStoredUser, getTokenExpiry, authFetch, refreshToken, isTokenExpiringSoon } from './services/api';
 
 const TENANT_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -29,15 +29,57 @@ const PAGE_TITLES: Record<Page, string> = {
 };
 
 const App: React.FC = () => {
-  const [user, setUser]     = useState<AuthUser | null>(() => getStoredUser());
-  const [page, setPage]     = useState<Page>('overview');
+  const [user, setUser]     = useState<AuthUser | null>(() => {
+    const stored = getStoredUser();
+    if (!stored) return null;
+    // If the stored token is already expired, discard it immediately so the app
+    // never enters the authenticated view with a dead JWT (prevents a burst of
+    // 401 errors on every useEffect that fires before the mcp:auth-expired
+    // listener can attach).
+    const exp = getTokenExpiry();
+    if (exp !== null && exp < Date.now()) {
+      clearAuth();
+      return null;
+    }
+    return stored;
+  });
+  const [page, setPage]     = useState<Page>(() => {
+    const path = window.location.pathname.replace(/^\//, '') as Page;
+    return path in PAGE_TITLES ? path : 'overview';
+  });
   const [now, setNow]       = useState(new Date());
   const [hitlCount, setHitlCount] = useState(0);
+
+  /** Navigate to a page and push a clean URL path (no hash) for bookmarkable links. */
+  const navigate = (p: Page) => {
+    setPage(p);
+    window.history.pushState(null, '', '/' + p);
+  };
 
   // ── clock ──
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
+  }, []);
+
+  // ── Sync page state with browser back / forward buttons ──
+  useEffect(() => {
+    const handler = () => {
+      const path = window.location.pathname.replace(/^\//, '') as Page;
+      if (path in PAGE_TITLES) setPage(path);
+    };
+    window.addEventListener('popstate', handler);
+    return () => window.removeEventListener('popstate', handler);
+  }, []);
+
+  // ── Handle expired/rejected token without a hard page reload ──
+  // authFetch dispatches this event instead of calling window.location.reload(),
+  // which prevents the React component tree from being torn down mid-render
+  // (the main cause of the white-page flash on ToolsPage / HITL polling).
+  useEffect(() => {
+    const handler = () => { clearAuth(); setUser(null); };
+    window.addEventListener('mcp:auth-expired', handler);
+    return () => window.removeEventListener('mcp:auth-expired', handler);
   }, []);
 
   // ── HITL badge poll ──
@@ -105,7 +147,7 @@ const App: React.FC = () => {
 
         <div className="nav-section">
           <div className={`nav-item ${page === 'overview' ? 'active' : ''}`}
-               onClick={() => setPage('overview')}>
+               onClick={() => navigate('overview')}>
             <span className="nav-icon">⬡</span> Dashboard
           </div>
         </div>
@@ -113,11 +155,11 @@ const App: React.FC = () => {
         <div className="nav-section">
           <div className="nav-label">Incidents</div>
           <div className={`nav-item ${page === 'overview' ? 'active' : ''}`}
-               onClick={() => setPage('overview')}>
+               onClick={() => navigate('overview')}>
             <span className="nav-icon">◉</span> Live Incidents
           </div>
           <div className={`nav-item ${page === 'analytics' ? 'active' : ''}`}
-               onClick={() => setPage('analytics')}>
+               onClick={() => navigate('analytics')}>
             <span className="nav-icon">⤢</span> Analytics
           </div>
         </div>
@@ -125,7 +167,7 @@ const App: React.FC = () => {
         <div className="nav-section">
           <div className="nav-label">Approvals</div>
           <div className={`nav-item ${page === 'hitl' ? 'active' : ''}`}
-               onClick={() => setPage('hitl')}>
+               onClick={() => navigate('hitl')}>
             <span className="nav-icon">✋</span> Pending HITL
             {hitlCount > 0 && <span className="nav-badge amber">{hitlCount}</span>}
           </div>
@@ -134,11 +176,11 @@ const App: React.FC = () => {
         <div className="nav-section">
           <div className="nav-label">Knowledge</div>
           <div className={`nav-item ${page === 'sop' ? 'active' : ''}`}
-               onClick={() => setPage('sop')}>
+               onClick={() => navigate('sop')}>
             <span className="nav-icon">⊞</span> SOP Library
           </div>
           <div className={`nav-item ${page === 'kb' ? 'active' : ''}`}
-               onClick={() => setPage('kb')}>
+               onClick={() => navigate('kb')}>
             <span className="nav-icon">⧗</span> Resolved KB
           </div>
         </div>
@@ -146,15 +188,15 @@ const App: React.FC = () => {
         <div className="nav-section">
           <div className="nav-label">System</div>
           <div className={`nav-item ${page === 'tools' ? 'active' : ''}`}
-               onClick={() => setPage('tools')}>
+               onClick={() => navigate('tools')}>
             <span className="nav-icon">⬡</span> MCP Tools
           </div>
           <div className={`nav-item ${page === 'scripts' ? 'active' : ''}`}
-               onClick={() => setPage('scripts')}>
+               onClick={() => navigate('scripts')}>
             <span className="nav-icon">✎</span> Script Editor
           </div>
           <div className={`nav-item ${page === 'audit' ? 'active' : ''}`}
-               onClick={() => setPage('audit')}>
+               onClick={() => navigate('audit')}>
             <span className="nav-icon">⊟</span> Audit Log
           </div>
         </div>
@@ -192,7 +234,7 @@ const App: React.FC = () => {
         </div>
 
         {/* Page content */}
-        {page === 'overview'  && <OverviewPage   onNavigate={setPage as any} tenantId={TENANT_ID} />}
+        {page === 'overview'  && <OverviewPage   onNavigate={navigate as any} tenantId={TENANT_ID} />}
         {page === 'hitl'      && <HitlPage       tenantId={TENANT_ID} />}
         {page === 'sop'       && <SopPage        tenantId={TENANT_ID} />}
         {page === 'kb'        && <KnowledgeBasePage />}

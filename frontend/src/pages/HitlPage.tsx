@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { authFetch } from '../services/api';
 
 interface HitlRequest {
   id: string; incidentId: string; status: string;
@@ -15,7 +16,7 @@ const HitlPage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
 
   const fetchItems = useCallback(async () => {
     try {
-      const r = await fetch(`/api/v1/hitl/pending?tenantId=${tenantId}`);
+      const r = await authFetch(`/api/v1/hitl/pending?tenantId=${tenantId}`);
       if (r.ok) { const d = await r.json(); setItems(d.requests || []); setError(null); }
       else setError('Failed to load HITL queue');
     } catch { setError('Cannot connect to backend'); }
@@ -27,7 +28,7 @@ const HitlPage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
   const handleApprove = async (hitlId: string) => {
     setActionIn(hitlId);
     try {
-      const r = await fetch(`/api/v1/hitl/${hitlId}/approve?decidedBy=dashboard-user&reason=Approved+via+dashboard`, { method: 'POST' });
+      const r = await authFetch(`/api/v1/hitl/${hitlId}/approve?decidedBy=dashboard-user&reason=Approved+via+dashboard`, { method: 'POST' });
       if (r.ok) { setItems(prev => prev.filter(i => i.id !== hitlId)); }
       else { const e = await r.json(); alert('Error: ' + (e.error || JSON.stringify(e))); }
     } catch { alert('Failed to approve'); }
@@ -39,7 +40,7 @@ const HitlPage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
     if (!reason) return;
     setActionIn(hitlId);
     try {
-      const r = await fetch(`/api/v1/hitl/${hitlId}/reject?decidedBy=dashboard-user&reason=${encodeURIComponent(reason)}`, { method: 'POST' });
+      const r = await authFetch(`/api/v1/hitl/${hitlId}/reject?decidedBy=dashboard-user&reason=${encodeURIComponent(reason)}`, { method: 'POST' });
       if (r.ok) { setItems(prev => prev.filter(i => i.id !== hitlId)); }
       else { const e = await r.json(); alert('Error: ' + (e.error || JSON.stringify(e))); }
     } catch { alert('Failed to reject'); }

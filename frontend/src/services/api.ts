@@ -175,18 +175,18 @@ export async function authFetch(input: string, init: RequestInit = {}): Promise<
   // 401 = token rejected by backend; 403 = Spring Security stateless default for
   // unauthenticated requests (expired/missing JWT). Both require re-login.
   if (res.status === 401 || res.status === 403) {
-    // Only force logout for auth-related 403s (i.e. when there's no token at all
-    // or the token is provably expired).  Preserve the current response so callers
-    // that legitimately handle 403 (permission errors) can still inspect it.
+    // Dispatch a custom event instead of calling window.location.reload() so that
+    // App.tsx can handle logout via React state (prevents white-page flash from
+    // tearing down the component tree during an in-progress render).
     const token = getToken();
     if (!token) {
       clearAuth();
-      window.location.reload();
+      window.dispatchEvent(new CustomEvent('mcp:auth-expired'));
       return res;
     }
     if (res.status === 401) {
       clearAuth();
-      window.location.reload();
+      window.dispatchEvent(new CustomEvent('mcp:auth-expired'));
     }
   }
 

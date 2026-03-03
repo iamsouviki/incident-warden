@@ -105,7 +105,9 @@ const ToolsPage: React.FC = () => {
   useEffect(() => { fetchAll(); }, []);
 
   const allCategories = ['ALL', ...Array.from(new Set(['DATABASE','NETWORK','SECURITY','INFRASTRUCTURE','DEPLOYMENT','MONITORING','CACHE','KUBERNETES','CUSTOM', ...categories]))];
-  const filtered = filter === 'ALL' ? tools : tools.filter(t => (t.category || '').toUpperCase() === filter);
+  // Guard against non-array API responses (e.g. 401/5xx returns an object body)
+  const toolsArr = Array.isArray(tools) ? tools : [];
+  const filtered = filter === 'ALL' ? toolsArr : toolsArr.filter(t => (t.category || '').toUpperCase() === filter);
 
   /* group by category */
   const grouped = filtered.reduce<Record<string, Tool[]>>((acc, t) => {

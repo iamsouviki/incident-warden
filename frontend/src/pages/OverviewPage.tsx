@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { authFetch } from '../services/api';
 
 interface Stats {
   totalPending: number; processing: number;
@@ -47,9 +48,9 @@ const OverviewPage: React.FC<{
   const fetchAll = useCallback(async () => {
     try {
       const [sR, iR, hR] = await Promise.all([
-        fetch(`/api/v1/incidents/stats/${tenantId}`),
-        fetch(`/api/v1/incidents?tenantId=${tenantId}&limit=20`),
-        fetch(`/api/v1/hitl/pending?tenantId=${tenantId}`),
+        authFetch(`/api/v1/incidents/stats/${tenantId}`),
+        authFetch(`/api/v1/incidents?tenantId=${tenantId}&limit=20`),
+        authFetch(`/api/v1/hitl/pending?tenantId=${tenantId}`),
       ]);
       if (sR.ok) setStats(await sR.json());
       if (iR.ok) { const d = await iR.json(); setIncidents(Array.isArray(d) ? d : d.incidents || []); }
@@ -63,7 +64,7 @@ const OverviewPage: React.FC<{
   const handleProcess = async (incidentId: string) => {
     setProcessing(incidentId);
     try {
-      const r = await fetch(`/api/v1/incidents/${incidentId}/process?tenantId=${tenantId}`, { method: 'POST' });
+      const r = await authFetch(`/api/v1/incidents/${incidentId}/process?tenantId=${tenantId}`, { method: 'POST' });
       const d = await r.json();
       await fetchAll();
       alert(`Pipeline result: ${d.decision || d.status || JSON.stringify(d)}`);
@@ -73,7 +74,7 @@ const OverviewPage: React.FC<{
 
   const handleApprove = async (hitlId: string) => {
     try {
-      await fetch(`/api/v1/hitl/${hitlId}/approve?decidedBy=dashboard-user&reason=Approved+via+dashboard`, { method: 'POST' });
+      await authFetch(`/api/v1/hitl/${hitlId}/approve?decidedBy=dashboard-user&reason=Approved+via+dashboard`, { method: 'POST' });
       await fetchAll();
     } catch { alert('Approve failed'); }
   };
@@ -82,7 +83,7 @@ const OverviewPage: React.FC<{
     const reason = prompt('Rejection reason:', 'Insufficient confidence');
     if (!reason) return;
     try {
-      await fetch(`/api/v1/hitl/${hitlId}/reject?decidedBy=dashboard-user&reason=${encodeURIComponent(reason)}`, { method: 'POST' });
+      await authFetch(`/api/v1/hitl/${hitlId}/reject?decidedBy=dashboard-user&reason=${encodeURIComponent(reason)}`, { method: 'POST' });
       await fetchAll();
     } catch { alert('Reject failed'); }
   };
