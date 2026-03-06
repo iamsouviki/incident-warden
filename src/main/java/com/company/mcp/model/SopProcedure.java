@@ -5,6 +5,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.ColumnTransformer;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -44,6 +45,7 @@ public class SopProcedure {
     private String description;
 
     // pgvector embeddings for RAG search
+    @ColumnTransformer(write = "?::vector")
     @Column(name = "embedding", columnDefinition = "vector(1536)")
     private String embedding;
 
@@ -88,6 +90,18 @@ public class SopProcedure {
     @Column(length = 30)
     @Builder.Default
     private String status = "DRAFT"; // DRAFT, PENDING_APPROVAL, ACTIVE, STALE, ARCHIVED
+
+    @Column(name = "linked_tool_id", columnDefinition = "UUID")
+    private UUID linkedToolId;
+
+    @Column(name = "linked_tool_name", length = 100)
+    private String linkedToolName;
+
+    @Column(name = "linked_script_id", columnDefinition = "UUID")
+    private UUID linkedScriptId;
+
+    @Column(name = "linked_script_name", length = 200)
+    private String linkedScriptName;
 
     @Column(name = "updated_at", columnDefinition = "TIMESTAMPTZ")
     @Builder.Default

@@ -2,8 +2,9 @@ package com.company.mcp.controller;
 
 import com.company.mcp.model.CustomTool;
 import com.company.mcp.repository.CustomToolRepository;
+import com.company.mcp.service.SopLinkedAssetService;
 import com.company.mcp.tool.CustomToolLoader;
-import com.company.mcp.tool.McpToolRegistry;
+import com.company.mcp.util.ApiErrorResponses;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -16,7 +17,7 @@ import java.util.stream.Collectors;
 /**
  * ToolController — REST API for MCP tool management.
  *
- * GET  /api/v1/tools           → list all registered tools (built-in + custom)
+ * GET  /api/v1/tools           → list all enabled custom tools
  * GET  /api/v1/tools/custom    → list only DB-persisted custom tools
  * GET  /api/v1/tools/categories→ list distinct categories
  * POST /api/v1/tools           → create a new custom tool (persists + registers)
@@ -29,36 +30,30 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class ToolController {
 
-    private final McpToolRegistry      registry;
     private final CustomToolRepository customToolRepository;
     private final CustomToolLoader     customToolLoader;
+    private final SopLinkedAssetService sopLinkedAssetService;
 
     // ─────────────────────────────────────────────────────────────────────────
     // READ
     // ─────────────────────────────────────────────────────────────────────────
 
-    /** All registered tools (built-in + custom), grouped by category. */
+    /** All enabled custom tools. */
     @GetMapping
     public ResponseEntity<?> listAll() {
-        Collection<McpToolRegistry.ToolDefinition> defs = registry.allDefinitions();
-
-        // Enrich with "isCustom" flag from DB names
-        Set<String> customNames = customToolRepository.findByEnabledTrue()
+        List<Map<String, Object>> tools = customToolRepository.findByEnabledTrueOrderByCreatedAtDesc()
                 .stream()
-                .map(t -> t.getName().toUpperCase().replace(' ', '_'))
-                .collect(Collectors.toSet());
-
-        List<Map<String, Object>> tools = defs.stream()
-                .sorted(Comparator.comparing(McpToolRegistry.ToolDefinition::category)
-                        .thenComparing(McpToolRegistry.ToolDefinition::name))
-                .map(d -> {
+                .sorted(Comparator.comparing(CustomTool::getCategory)
+                        .thenComparing(CustomTool::getName))
+                .map(tool -> {
                     Map<String, Object> m = new LinkedHashMap<>();
-                    m.put("name",           d.name());
-                    m.put("category",       d.category());
-                    m.put("description",    d.description());
-                    m.put("requiredParams", d.requiredParams());
-                    m.put("dangerous",      d.dangerous());
-                    m.put("custom",         customNames.contains(d.name()));
+                    m.put("id",             tool.getId());
+                    m.put("name",           tool.getName());
+                    m.put("category",       tool.getCategory());
+                    m.put("description",    tool.getDescription());
+                    m.put("requiredParams", tool.getRequiredParams());
+                    m.put("dangerous",      tool.getDangerous());
+                    m.put("enabled",        tool.getEnabled());
                     return m;
                 })
                 .toList();
@@ -72,20 +67,20 @@ public class ToolController {
     /** Only user-created custom tools with full DB metadata. */
     @GetMapping("/custom")
     public ResponseEntity<?> listCustom() {
-        List<CustomTool> tools = customToolRepository.findAll()
-                .stream()
-                .sorted(Comparator.comparing(CustomTool::getCreatedAt).reversed())
-                .toList();
+        List<CustomTool> tools = customToolRepository.findByEnabledTrueOrderByCreatedAtDesc();
         return ResponseEntity.ok(Map.of("count", tools.size(), "tools", tools));
     }
 
     /** Distinct categories across all registered tools. */
     @GetMapping("/categories")
     public ResponseEntity<?> listCategories() {
-        Set<String> builtIn = registry.allDefinitions().stream()
-                .map(McpToolRegistry.ToolDefinition::category)
+        Set<String> categories = customToolRepository.findByEnabledTrue().stream()
+                .map(CustomTool::getCategory)
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(category -> !category.isEmpty())
                 .collect(Collectors.toCollection(TreeSet::new));
-        return ResponseEntity.ok(builtIn);
+        return ResponseEntity.ok(Map.of("categories", categories));
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -128,7 +123,7 @@ public class ToolController {
             ));
         } catch (Exception e) {
             log.error("Failed to create tool", e);
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.badRequest();
         }
     }
 
@@ -160,13 +155,16 @@ public class ToolController {
 
     @DeleteMapping("/{id}")
     public ResponseEntity<?> delete(@PathVariable UUID id) {
-        return customToolRepository.findById(id).map(tool -> {
-            tool.setEnabled(false);
-            tool.setUpdatedAt(LocalDateTime.now());
-            customToolRepository.save(tool);
-            registry.unregister(tool.getName());
-            log.info("ToolController: disabled custom tool '{}'", tool.getName());
-            return ResponseEntity.ok(Map.of("message", "Tool disabled successfully"));
-        }).orElse(ResponseEntity.notFound().build());
+        try {
+            boolean deleted = sopLinkedAssetService.deleteToolAndLinkedAssets(id);
+            if (!deleted) {
+                return ResponseEntity.notFound().build();
+            }
+            log.info("ToolController: deleted custom tool '{}'", id);
+            return ResponseEntity.ok(Map.of("message", "Tool deleted successfully"));
+        } catch (Exception e) {
+            log.error("Failed to delete tool {}", id, e);
+            return ApiErrorResponses.badRequest();
+        }
     }
 }

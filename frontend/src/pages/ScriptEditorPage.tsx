@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { authFetch } from '../services/api';
+import { authFetch, SIMPLE_ERROR_MESSAGE } from '../services/api';
 import './ScriptEditorPage.css';
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -34,7 +34,7 @@ const CATEGORIES = [
   'APPLICATION', 'PERFORMANCE', 'INFRASTRUCTURE', 'DATABASE', 'DEPLOYMENT', 'NETWORK',
 ];
 
-const ScriptEditorPage: React.FC = () => {
+const ScriptEditorPage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
   // ── State ──────────────────────────────────────────────────────────────────
   const [description, setDescription]   = useState('');
   const [scriptContent, setScriptContent] = useState('');
@@ -67,13 +67,13 @@ const ScriptEditorPage: React.FC = () => {
   // ── Load saved scripts ─────────────────────────────────────────────────────
   const loadSavedScripts = useCallback(async () => {
     try {
-      const r = await authFetch('/api/v1/scripts');
+      const r = await authFetch(`/api/v1/scripts?tenantId=${tenantId}`);
       if (r.ok) {
         const data = await r.json();
         setSavedScripts(data.scripts || []);
       }
     } catch { /* ignore */ }
-  }, []);
+  }, [tenantId]);
 
   useEffect(() => { loadSavedScripts(); }, [loadSavedScripts]);
 
@@ -123,17 +123,22 @@ const ScriptEditorPage: React.FC = () => {
         }),
       });
       const data = await r.json();
+      if (!r.ok) {
+        setFindings([{ level: 'BLOCK', layer: 'Generation', message: data.error || SIMPLE_ERROR_MESSAGE }]);
+        setValidationLevel('BLOCK');
+        return;
+      }
       if (data.script) {
         setScriptContent(data.script);
         setValidationLevel('PASS');
         setFindings([]);
       }
       if (data.error) {
-        setFindings([{ level: 'BLOCK', layer: 'Generation', message: data.error + (data.details ? '\n' + data.details : '') }]);
+        setFindings([{ level: 'BLOCK', layer: 'Generation', message: data.error }]);
         setValidationLevel('BLOCK');
       }
-    } catch (e: any) {
-      setFindings([{ level: 'BLOCK', layer: 'Error', message: e.message || 'Generation failed' }]);
+    } catch {
+      setFindings([{ level: 'BLOCK', layer: 'Error', message: SIMPLE_ERROR_MESSAGE }]);
     } finally {
       setGenerating(false);
     }
@@ -155,10 +160,15 @@ const ScriptEditorPage: React.FC = () => {
         }),
       });
       const data = await r.json();
+      if (!r.ok) {
+        setFindings([{ level: 'BLOCK', layer: 'Error', message: data.error || SIMPLE_ERROR_MESSAGE }]);
+        setValidationLevel('BLOCK');
+        return;
+      }
       setValidationLevel(data.level || 'PASS');
       setFindings(data.findings || []);
-    } catch (e: any) {
-      setFindings([{ level: 'BLOCK', layer: 'Error', message: e.message || 'Validation request failed' }]);
+    } catch {
+      setFindings([{ level: 'BLOCK', layer: 'Error', message: SIMPLE_ERROR_MESSAGE }]);
       setValidationLevel('BLOCK');
     } finally {
       setValidating(false);
@@ -179,9 +189,19 @@ const ScriptEditorPage: React.FC = () => {
           dryRun,
           category,
           description: description || 'User script execution',
+          targetHost,
         }),
       });
       const data = await r.json();
+      if (!r.ok) {
+        setExecOutput({
+          stdout: '',
+          stderr: data.error || SIMPLE_ERROR_MESSAGE,
+          exitCode: -1,
+          message: 'Error',
+        });
+        return;
+      }
       setExecOutput({
         stdout:   data.stdout || '',
         stderr:   data.stderr || '',
@@ -192,8 +212,8 @@ const ScriptEditorPage: React.FC = () => {
         setValidationLevel('BLOCK');
         setFindings([{ level: 'BLOCK', layer: 'Guardrails', message: data.stderr || 'Blocked' }]);
       }
-    } catch (e: any) {
-      setExecOutput({ stdout: '', stderr: e.message || 'Execution failed', exitCode: -1, message: 'Error' });
+    } catch {
+      setExecOutput({ stdout: '', stderr: SIMPLE_ERROR_MESSAGE, exitCode: -1, message: 'Error' });
     } finally {
       setExecuting(false);
     }
@@ -211,6 +231,7 @@ const ScriptEditorPage: React.FC = () => {
         language,
         category,
         targetHost,
+        tenantId,
       };
       let r;
       if (activeScriptId) {
@@ -495,4 +516,3 @@ const ScriptEditorPage: React.FC = () => {
 };
 
 export default ScriptEditorPage;
-

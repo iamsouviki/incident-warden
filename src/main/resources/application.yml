@@ -223,6 +223,8 @@ mcp:
     timeout-seconds: 30
     url-check-timeout-ms: 5000
     dry-run: false
+    default-definitions:
+      enabled: false
 
   # ── Spring AI RAG configuration ────────────────────────────────────────────
   rag:
@@ -291,10 +293,10 @@ mcp:
     api-url: http://localhost:11434/v1/chat/completions
     # No API key needed for Ollama — set a dummy value so the service doesn't fall back to templates
     api-key: ${OPENAI_API_KEY:ollama}
-    model: phi3:mini
+    model: qwen2.5:latest
     max-tokens: 768
     temperature: 0.1
-    api-timeout-ms: 30000
+    api-timeout-ms: 0
     # Max script lines — go beyond this and the script is BLOCKED
     max-lines: 100
     # Max distinct commands — go beyond this and a WARN is raised
@@ -303,6 +305,18 @@ mcp:
     warn-requires-hitl: false
     # Permanently banned patterns — matched case-insensitively anywhere in the script
     blocklist: "rm -rf /,format c:,mkfs.,dd if=/dev/,dd if=,:(){:|:&};:,> /dev/sda,> /dev/hda"
+
+  # ─── SOP Parser LLM controls + cache ─────────────────────────────────────
+  sop-parser:
+    llm:
+      chunk-size: 100000      # chars per chunk — full doc sent if smaller (qwen2.5 handles ~100K chars)
+      chunk-overlap: 2000     # overlap between consecutive chunks
+      max-output-tokens: 2048 # cap LLM response size
+      num-ctx: 32768          # Ollama context window in tokens
+    cache:
+      enabled: true
+      ttl-minutes: 180          # reuse parsed result for repeated uploads
+      max-entries: 500
 
 # Resilience4J Circuit Breakers
 resilience4j:
@@ -371,5 +385,11 @@ server:
   compression:
     enabled: true
     min-response-size: 1024
+  tomcat:
+    connection-timeout: -1          # no timeout — LLM calls can be very slow
+    keep-alive-timeout: 600000      # 10 min keep-alive
+    threads:
+      max: 200
 
+spring.mvc.async.request-timeout: -1  # no async timeout — LLM on low-spec device
 

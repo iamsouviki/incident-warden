@@ -49,6 +49,12 @@ public class CustomTool {
     @Builder.Default
     private Boolean enabled = true;
 
+    @Column(name = "script_workspace_id", columnDefinition = "UUID")
+    private UUID scriptWorkspaceId;
+
+    @Column(name = "sop_id", columnDefinition = "UUID")
+    private UUID sopId;
+
     @Column(name = "created_by", length = 100)
     private String createdBy;
 

@@ -2,8 +2,6 @@ import { useEffect, useState } from 'react';
 import { apiGet } from '../services/api';
 import './AuditLogPage.css';
 
-const TENANT_ID = '00000000-0000-0000-0000-000000000001';
-
 interface AuditEvent {
   id: string;
   incidentId: string | null;
@@ -42,7 +40,7 @@ const EVENT_COLORS: Record<string, string> = {
   ESCALATED:           '#f97316',
 };
 
-export default function AuditLogPage() {
+export default function AuditLogPage({ tenantId }: { tenantId: string }) {
   const [events, setEvents]   = useState<AuditEvent[]>([]);
   const [filtered, setFiltered] = useState<AuditEvent[]>([]);
   const [filter, setFilter]   = useState('ALL');
@@ -50,14 +48,14 @@ export default function AuditLogPage() {
   const [error, setError]     = useState('');
 
   useEffect(() => {
-    apiGet<AuditEvent[]>(`/api/v1/audit/tenant/${TENANT_ID}`)
+    apiGet<AuditEvent[]>(`/api/v1/audit/tenant/${tenantId}`)
       .then(data => {
         setEvents(data);
         setFiltered(data);
       })
       .catch(err => setError(err.message))
       .finally(() => setLoading(false));
-  }, []);
+  }, [tenantId]);
 
   useEffect(() => {
     if (filter === 'ALL') {

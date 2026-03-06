@@ -13,9 +13,13 @@ public interface CustomToolRepository extends JpaRepository<CustomTool, UUID> {
 
     List<CustomTool> findByEnabledTrue();
 
+    List<CustomTool> findByEnabledTrueOrderByCreatedAtDesc();
+
     List<CustomTool> findByCategoryIgnoreCase(String category);
 
     Optional<CustomTool> findByNameIgnoreCase(String name);
+
+    List<CustomTool> findBySopId(UUID sopId);
 
     boolean existsByNameIgnoreCase(String name);
 }

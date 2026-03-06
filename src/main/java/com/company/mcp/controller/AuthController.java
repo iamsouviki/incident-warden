@@ -1,12 +1,15 @@
 package com.company.mcp.controller;
 
 import com.company.mcp.config.security.JwtUtil;
+import com.company.mcp.model.Tenant;
+import com.company.mcp.repository.TenantRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * AuthController — spec §2 "Multi-Tenant Auth".
@@ -42,6 +45,7 @@ public class AuthController {
     );
 
     private final JwtUtil jwtUtil;
+    private final TenantRepository tenantRepository;
 
     // -------------------------------------------------------------------------
     // Login
@@ -80,6 +84,7 @@ public class AuthController {
         String tenantId = body.getOrDefault("tenantId", DEFAULT_TENANT);
         String role     = creds[1];
         String token    = jwtUtil.generateToken(username, tenantId, role);
+        String tenantName = resolveTenantDisplayName(tenantId);
 
         log.info("Login ok: user={} role={} tenant={}", username, role, tenantId);
 
@@ -88,6 +93,7 @@ public class AuthController {
                 "username",  username,
                 "role",      role,
                 "tenantId",  tenantId,
+                "tenantName", tenantName,
                 "expiresIn", 86400
         ));
     }
@@ -112,6 +118,7 @@ public class AuthController {
         return ResponseEntity.ok(Map.of(
                 "username", jwtUtil.extractUsername(token),
                 "tenantId", jwtUtil.extractTenantId(token),
+                "tenantName", resolveTenantDisplayName(jwtUtil.extractTenantId(token)),
                 "role",     jwtUtil.extractRole(token)
         ));
     }
@@ -132,5 +139,22 @@ public class AuthController {
                 jwtUtil.extractTenantId(token),
                 jwtUtil.extractRole(token));
         return ResponseEntity.ok(Map.of("token", newToken, "expiresIn", 86400));
+    }
+
+    private String resolveTenantDisplayName(String tenantId) {
+        if (tenantId == null || tenantId.isBlank()) {
+            return "Workspace";
+        }
+        if (DEFAULT_TENANT.equals(tenantId)) {
+            return "Primary Workspace";
+        }
+        try {
+            return tenantRepository.findById(UUID.fromString(tenantId))
+                    .map(Tenant::getName)
+                    .filter(name -> !name.isBlank())
+                    .orElse("Workspace");
+        } catch (IllegalArgumentException ex) {
+            return "Workspace";
+        }
     }
 }

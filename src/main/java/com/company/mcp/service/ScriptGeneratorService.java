@@ -81,7 +81,7 @@ public class ScriptGeneratorService {
     @Value("${mcp.script-gen.temperature:0.1}")
     private double temperature;
 
-    @Value("${mcp.script-gen.api-timeout-ms:30000}")
+    @Value("${mcp.script-gen.api-timeout-ms:0}")
     private int apiTimeoutMs;
 
     // ── System prompt ─────────────────────────────────────────────────────────
@@ -194,8 +194,10 @@ public class ScriptGeneratorService {
             URL url = new URL(apiUrl);
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
-            conn.setConnectTimeout(apiTimeoutMs);
-            conn.setReadTimeout(apiTimeoutMs);
+            // 0 means "no timeout" for HttpURLConnection; use it by default for slow models.
+            int timeoutMs = Math.max(0, apiTimeoutMs);
+            conn.setConnectTimeout(timeoutMs);
+            conn.setReadTimeout(timeoutMs);
             conn.setDoOutput(true);
             conn.setRequestProperty("Content-Type", "application/json");
             conn.setRequestProperty("Authorization", "Bearer " + apiKey);

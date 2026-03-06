@@ -12,12 +12,14 @@
 // ─── Storage keys ────────────────────────────────────────────────────────────
 const TOKEN_KEY = 'mcp_jwt_token';
 const USER_KEY  = 'mcp_user';
+export const SIMPLE_ERROR_MESSAGE = 'Something went wrong. Please try again.';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 export interface AuthUser {
   username: string;
   role: string;
   tenantId: string;
+  tenantName?: string;
   token: string;
   expiresIn: number;
 }
@@ -27,6 +29,7 @@ export interface LoginResponse {
   username: string;
   role: string;
   tenantId: string;
+  tenantName?: string;
   expiresIn: number;
 }
 
@@ -140,7 +143,7 @@ export async function login(username: string, password: string): Promise<AuthUse
     throw new Error((err as any).error || 'Invalid username or password');
   }
   if (!res.ok) {
-    throw new Error(`Login failed (HTTP ${res.status})`);
+    throw new Error(SIMPLE_ERROR_MESSAGE);
   }
 
   const data = (await res.json()) as LoginResponse;
@@ -193,12 +196,24 @@ export async function authFetch(input: string, init: RequestInit = {}): Promise<
   return res;
 }
 
+export async function extractApiError(res: Response): Promise<string> {
+  try {
+    const data = await res.json();
+    if (data && typeof data.error === 'string' && data.error.trim()) {
+      return data.error;
+    }
+  } catch {
+    // Ignore invalid/non-JSON bodies and use the shared fallback.
+  }
+  return SIMPLE_ERROR_MESSAGE;
+}
+
 /**
  * Convenience wrapper — GETs JSON via authFetch.
  */
 export async function apiGet<T>(url: string): Promise<T> {
   const res = await authFetch(url);
-  if (!res.ok) throw new Error(`GET ${url} → HTTP ${res.status}`);
+  if (!res.ok) throw new Error(await extractApiError(res));
   return res.json() as Promise<T>;
 }
 
@@ -207,7 +222,7 @@ export async function apiGet<T>(url: string): Promise<T> {
  */
 export async function apiPost<T>(url: string, body: unknown): Promise<T> {
   const res = await authFetch(url, { method: 'POST', body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(`POST ${url} → HTTP ${res.status}`);
+  if (!res.ok) throw new Error(await extractApiError(res));
   return res.json() as Promise<T>;
 }
 

@@ -75,9 +75,9 @@ export default function LoginPage({ onLogin }: Props) {
           </button>
         </form>
 
-        {/* Demo hint */}
+        {/* Local hint */}
         <p className="login-hint">
-          Demo credentials:&nbsp;
+          Local credentials:&nbsp;
           <code>admin / admin123</code>
         </p>
       </div>

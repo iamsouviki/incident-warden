@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { authFetch } from '../services/api';
+import { authFetch, extractApiError, SIMPLE_ERROR_MESSAGE } from '../services/api';
 
 interface HitlRequest {
   id: string; incidentId: string; status: string;
@@ -18,8 +18,8 @@ const HitlPage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
     try {
       const r = await authFetch(`/api/v1/hitl/pending?tenantId=${tenantId}`);
       if (r.ok) { const d = await r.json(); setItems(d.requests || []); setError(null); }
-      else setError('Failed to load HITL queue');
-    } catch { setError('Cannot connect to backend'); }
+      else setError(await extractApiError(r));
+    } catch { setError(SIMPLE_ERROR_MESSAGE); }
     finally { setLoading(false); }
   }, [tenantId]);
 
@@ -30,8 +30,8 @@ const HitlPage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
     try {
       const r = await authFetch(`/api/v1/hitl/${hitlId}/approve?decidedBy=dashboard-user&reason=Approved+via+dashboard`, { method: 'POST' });
       if (r.ok) { setItems(prev => prev.filter(i => i.id !== hitlId)); }
-      else { const e = await r.json(); alert('Error: ' + (e.error || JSON.stringify(e))); }
-    } catch { alert('Failed to approve'); }
+      else { alert(await extractApiError(r)); }
+    } catch { alert(SIMPLE_ERROR_MESSAGE); }
     finally { setActionIn(null); }
   };
 
@@ -42,8 +42,8 @@ const HitlPage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
     try {
       const r = await authFetch(`/api/v1/hitl/${hitlId}/reject?decidedBy=dashboard-user&reason=${encodeURIComponent(reason)}`, { method: 'POST' });
       if (r.ok) { setItems(prev => prev.filter(i => i.id !== hitlId)); }
-      else { const e = await r.json(); alert('Error: ' + (e.error || JSON.stringify(e))); }
-    } catch { alert('Failed to reject'); }
+      else { alert(await extractApiError(r)); }
+    } catch { alert(SIMPLE_ERROR_MESSAGE); }
     finally { setActionIn(null); }
   };
 

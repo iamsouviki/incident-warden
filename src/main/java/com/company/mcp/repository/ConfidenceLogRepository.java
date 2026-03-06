@@ -2,6 +2,7 @@ package com.company.mcp.repository;
 
 import com.company.mcp.model.ConfidenceLog;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -14,4 +15,7 @@ public interface ConfidenceLogRepository extends JpaRepository<ConfidenceLog, UU
     List<ConfidenceLog> findByIncidentIdOrderByComputedAtDesc(UUID incidentId);
     List<ConfidenceLog> findByDecision(String decision);
     Integer countByDecision(String decision);
+
+    @Transactional
+    long deleteBySopId(UUID sopId);
 }

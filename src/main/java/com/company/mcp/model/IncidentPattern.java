@@ -6,6 +6,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.ColumnTransformer;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -42,6 +43,7 @@ public class IncidentPattern {
     private String subCategory;
 
     // pgvector embeddings (1536D for text-embedding-3-small)
+    @ColumnTransformer(write = "?::vector")
     @Column(name = "embedding", columnDefinition = "vector(1536)")
     private String embedding;
 

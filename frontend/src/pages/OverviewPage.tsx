@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { authFetch } from '../services/api';
+import { authFetch, extractApiError, SIMPLE_ERROR_MESSAGE } from '../services/api';
 
 interface Stats {
   totalPending: number; processing: number;
@@ -55,8 +55,13 @@ const OverviewPage: React.FC<{
       if (sR.ok) setStats(await sR.json());
       if (iR.ok) { const d = await iR.json(); setIncidents(Array.isArray(d) ? d : d.incidents || []); }
       if (hR.ok) { const d = await hR.json(); setHitl(d.requests || []); }
-      setError(null);
-    } catch { setError('Cannot reach backend on port 8080'); }
+      if (sR.ok && iR.ok && hR.ok) {
+        setError(null);
+      } else {
+        const failed = !sR.ok ? sR : !iR.ok ? iR : hR;
+        setError(await extractApiError(failed));
+      }
+    } catch { setError(SIMPLE_ERROR_MESSAGE); }
   }, [tenantId]);
 
   useEffect(() => { fetchAll(); const t = setInterval(fetchAll, 15000); return () => clearInterval(t); }, [fetchAll]);
@@ -65,27 +70,39 @@ const OverviewPage: React.FC<{
     setProcessing(incidentId);
     try {
       const r = await authFetch(`/api/v1/incidents/${incidentId}/process?tenantId=${tenantId}`, { method: 'POST' });
+      if (!r.ok) {
+        alert(await extractApiError(r));
+        return;
+      }
       const d = await r.json();
       await fetchAll();
       alert(`Pipeline result: ${d.decision || d.status || JSON.stringify(d)}`);
-    } catch { alert('Pipeline error'); }
+    } catch { alert(SIMPLE_ERROR_MESSAGE); }
     finally { setProcessing(null); }
   };
 
   const handleApprove = async (hitlId: string) => {
     try {
-      await authFetch(`/api/v1/hitl/${hitlId}/approve?decidedBy=dashboard-user&reason=Approved+via+dashboard`, { method: 'POST' });
+      const r = await authFetch(`/api/v1/hitl/${hitlId}/approve?decidedBy=dashboard-user&reason=Approved+via+dashboard`, { method: 'POST' });
+      if (!r.ok) {
+        alert(await extractApiError(r));
+        return;
+      }
       await fetchAll();
-    } catch { alert('Approve failed'); }
+    } catch { alert(SIMPLE_ERROR_MESSAGE); }
   };
 
   const handleReject = async (hitlId: string) => {
     const reason = prompt('Rejection reason:', 'Insufficient confidence');
     if (!reason) return;
     try {
-      await authFetch(`/api/v1/hitl/${hitlId}/reject?decidedBy=dashboard-user&reason=${encodeURIComponent(reason)}`, { method: 'POST' });
+      const r = await authFetch(`/api/v1/hitl/${hitlId}/reject?decidedBy=dashboard-user&reason=${encodeURIComponent(reason)}`, { method: 'POST' });
+      if (!r.ok) {
+        alert(await extractApiError(r));
+        return;
+      }
       await fetchAll();
-    } catch { alert('Reject failed'); }
+    } catch { alert(SIMPLE_ERROR_MESSAGE); }
   };
 
   // Compute derived stats
@@ -93,6 +110,23 @@ const OverviewPage: React.FC<{
   const autoRate = total > 0 ? Math.round((stats.autoResolved / total) * 100) : 0;
   const p1Count = incidents.filter(i => i.severity === 'P1').length;
   const p2Count = incidents.filter(i => i.severity === 'P2').length;
+  const p3Count = incidents.filter(i => i.severity === 'P3').length;
+  const p4Count = incidents.filter(i => i.severity === 'P4' || !i.severity).length;
+  const statusSnapshot = [
+    { label: 'Pending', value: stats.totalPending, color: 'var(--text-muted)' },
+    { label: 'Processing', value: stats.processing, color: 'var(--blue)' },
+    { label: 'HITL Pending', value: stats.hitlPending, color: 'var(--amber)' },
+    { label: 'Auto-Resolved', value: stats.autoResolved, color: 'var(--green)' },
+    { label: 'Escalated', value: stats.escalated, color: 'var(--red)' },
+  ];
+  const severitySnapshot = [
+    { label: 'P1', value: p1Count, color: 'var(--red)' },
+    { label: 'P2', value: p2Count, color: 'var(--amber)' },
+    { label: 'P3', value: p3Count, color: 'var(--blue)' },
+    { label: 'P4', value: p4Count, color: 'var(--green)' },
+  ];
+  const maxStatusValue = Math.max(1, ...statusSnapshot.map(item => item.value));
+  const maxSeverityValue = Math.max(1, ...severitySnapshot.map(item => item.value));
 
   const parsePayload = (raw: string) => { try { return JSON.parse(raw); } catch { return {}; } };
 
@@ -179,30 +213,24 @@ const OverviewPage: React.FC<{
       <div className="chart-row">
         <div className="card">
           <div className="card-header">
-            <div className="card-title">Incidents by Outcome — Last 7 Days</div>
-            <div style={{display:'flex',gap:12,fontSize:10,fontFamily:'var(--mono)'}}>
-              <span style={{color:'var(--blue)'}}>■ AUTO</span>
-              <span style={{color:'var(--amber)'}}>■ HITL</span>
-              <span style={{color:'var(--red)'}}>■ ESCALATED</span>
-            </div>
+            <div className="card-title">Current Incident Status</div>
           </div>
           <div className="card-body">
-            <div className="bar-chart">
-              {[
-                { label:'MON', auto:46, hitl:12, esc:8 },
-                { label:'TUE', auto:62, hitl:12, esc:4 },
-                { label:'WED', auto:38, hitl:16, esc:8 },
-                { label:'THU', auto:70, hitl:10, esc:6 },
-                { label:'FRI', auto:55, hitl:14, esc:10 },
-                { label:'SAT', auto:30, hitl:8, esc:4 },
-                { label:'SUN', auto:42, hitl:12, esc:6 },
-              ].map(d => (
-                <div key={d.label} className="bar-group">
-                  <div className="bar-stack">
-                    <div className="bar auto" style={{height:`${d.auto}px`}}></div>
-                    <div className="bar hitl" style={{height:`${d.hitl}px`}}></div>
-                    <div className="bar esc" style={{height:`${d.esc}px`}}></div>
-                    <span className="bar-label">{d.label}</span>
+            <div style={{display:'grid',gap:14}}>
+              {statusSnapshot.map(item => (
+                <div key={item.label}>
+                  <div style={{display:'flex',justifyContent:'space-between',marginBottom:6}}>
+                    <span style={{fontSize:12,color:'var(--text-dim)'}}>{item.label}</span>
+                    <span style={{fontFamily:'var(--mono)',fontSize:12,color:item.color}}>{item.value}</span>
+                  </div>
+                  <div style={{background:'var(--surface2)',borderRadius:999,height:10,overflow:'hidden'}}>
+                    <div style={{
+                      width:`${item.value === 0 ? 0 : Math.max(10, (item.value / maxStatusValue) * 100)}%`,
+                      height:'100%',
+                      borderRadius:999,
+                      background:item.color,
+                      transition:'width 0.3s ease'
+                    }}></div>
                   </div>
                 </div>
               ))}
@@ -211,30 +239,27 @@ const OverviewPage: React.FC<{
         </div>
         <div className="card">
           <div className="card-header">
-            <div className="card-title">HITL Decision Breakdown</div>
+            <div className="card-title">Loaded Incident Severity Mix</div>
           </div>
           <div className="card-body">
-            <div className="donut-container">
-              <div className="donut-wrap">
-                <svg width="110" height="110" viewBox="0 0 110 110">
-                  <circle cx="55" cy="55" r="40" fill="none" stroke="#e2e8f0" strokeWidth="16"/>
-                  <circle cx="55" cy="55" r="40" fill="none" stroke="#059669" strokeWidth="16"
-                    strokeDasharray="180.8 68.9" strokeDashoffset="62.8" transform="rotate(-90 55 55)"/>
-                  <circle cx="55" cy="55" r="40" fill="none" stroke="#d97706" strokeWidth="16"
-                    strokeDasharray="45.2 205.6" strokeDashoffset="-118" transform="rotate(-90 55 55)"/>
-                  <circle cx="55" cy="55" r="40" fill="none" stroke="#dc2626" strokeWidth="16"
-                    strokeDasharray="25.1 225.7" strokeDashoffset="-163.2" transform="rotate(-90 55 55)"/>
-                </svg>
-                <div className="donut-label">
-                  <div className="donut-pct">72%</div>
-                  <div className="donut-sub">APPROVED</div>
+            <div style={{display:'grid',gap:14}}>
+              {severitySnapshot.map(item => (
+                <div key={item.label}>
+                  <div style={{display:'flex',justifyContent:'space-between',marginBottom:6}}>
+                    <span style={{fontSize:12,color:'var(--text-dim)'}}>{item.label}</span>
+                    <span style={{fontFamily:'var(--mono)',fontSize:12,color:item.color}}>{item.value}</span>
+                  </div>
+                  <div style={{background:'var(--surface2)',borderRadius:999,height:10,overflow:'hidden'}}>
+                    <div style={{
+                      width:`${item.value === 0 ? 0 : Math.max(10, (item.value / maxSeverityValue) * 100)}%`,
+                      height:'100%',
+                      borderRadius:999,
+                      background:item.color,
+                      transition:'width 0.3s ease'
+                    }}></div>
+                  </div>
                 </div>
-              </div>
-              <div className="legend">
-                <div className="legend-item"><div className="legend-dot" style={{background:'var(--green)'}}></div>Approved<span className="legend-pct">72%</span></div>
-                <div className="legend-item"><div className="legend-dot" style={{background:'var(--amber)'}}></div>Modified<span className="legend-pct">18%</span></div>
-                <div className="legend-item"><div className="legend-dot" style={{background:'var(--red)'}}></div>Rejected<span className="legend-pct">10%</span></div>
-              </div>
+              ))}
             </div>
           </div>
         </div>

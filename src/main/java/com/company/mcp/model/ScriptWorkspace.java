@@ -50,6 +50,12 @@ public class ScriptWorkspace {
     @Column(name = "target_host", length = 200)
     private String targetHost;
 
+    @Column(name = "sop_id", columnDefinition = "UUID")
+    private UUID sopId;
+
+    @Column(name = "tool_name", length = 100)
+    private String toolName;
+
     /** Lifecycle status: DRAFT, VALIDATED, EXECUTED, FAILED. */
     @Column(nullable = false, length = 30)
     @Builder.Default
@@ -85,4 +91,3 @@ public class ScriptWorkspace {
         updatedAt = LocalDateTime.now();
     }
 }
-

@@ -3,6 +3,8 @@ package com.company.mcp.controller;
 import com.company.mcp.model.SopProcedure;
 import com.company.mcp.repository.SopProcedureRepository;
 import com.company.mcp.service.SopDocumentParser;
+import com.company.mcp.service.SopLinkedAssetService;
+import com.company.mcp.util.ApiErrorResponses;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -29,6 +31,7 @@ import java.util.UUID;
 public class SopController {
     private final SopProcedureRepository sopRepository;
     private final SopDocumentParser documentParser;
+    private final SopLinkedAssetService sopLinkedAssetService;
 
     /**
      * Create a new SOP.
@@ -54,7 +57,7 @@ public class SopController {
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             log.error("Failed to create SOP", e);
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.badRequest();
         }
     }
 
@@ -69,7 +72,7 @@ public class SopController {
                 .orElseGet(() -> ResponseEntity.notFound().build());
         } catch (Exception e) {
             log.error("Failed to get SOP", e);
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.badRequest();
         }
     }
 
@@ -128,7 +131,7 @@ public class SopController {
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             log.error("Failed to update SOP", e);
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.badRequest();
         }
     }
 
@@ -139,8 +142,7 @@ public class SopController {
     public ResponseEntity<?> getSopsByTenant(@RequestParam String tenantId) {
         try {
             UUID tenantUuid = UUID.fromString(tenantId);
-            // Use findByTenantIdAndStatusOrderByVersionDesc for active SOPs
-            List<SopProcedure> sops = sopRepository.findByTenantIdAndStatusOrderByVersionDesc(tenantUuid, "ACTIVE");
+            List<SopProcedure> sops = sopRepository.findByTenantIdOrderByUpdatedAtDesc(tenantUuid);
 
             Map<String, Object> response = new HashMap<>();
             response.put("count", sops.size());
@@ -149,7 +151,7 @@ public class SopController {
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             log.error("Failed to get SOPs", e);
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.badRequest();
         }
     }
 
@@ -181,7 +183,24 @@ public class SopController {
             ));
         } catch (Exception e) {
             log.error("Failed to approve SOP", e);
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.badRequest();
+        }
+    }
+
+    @DeleteMapping("/{sopId}")
+    public ResponseEntity<?> deleteSop(@PathVariable UUID sopId) {
+        try {
+            boolean deleted = sopLinkedAssetService.deleteSopAndLinkedAssets(sopId);
+            if (!deleted) {
+                return ResponseEntity.notFound().build();
+            }
+            return ResponseEntity.ok(Map.of(
+                    "id", sopId,
+                    "message", "SOP deleted successfully"
+            ));
+        } catch (Exception e) {
+            log.error("Failed to delete SOP {}", sopId, e);
+            return ApiErrorResponses.badRequest();
         }
     }
 
@@ -216,17 +235,16 @@ public class SopController {
             SopDocumentParser.ParsedSop parsed = documentParser.parseRawText(content, fileName);
             Map<String, Object> resp = new HashMap<>();
             resp.put("title",           parsed.title());
-            resp.put("category",        parsed.category());
             resp.put("description",     parsed.description());
             resp.put("resolutionSteps", parsed.resolutionSteps());
+            resp.put("mcpToolScript",   parsed.mcpToolScript());
             resp.put("sourceFileName",  parsed.sourceFileName());
             resp.put("warnings",        parsed.warnings());
-            log.info("SopController: parsed text content — title='{}' category='{}'",
-                    parsed.title(), parsed.category());
+            log.info("SopController: parsed text content — title='{}'", parsed.title());
             return ResponseEntity.ok(resp);
         } catch (Exception e) {
             log.error("Failed to parse SOP text content", e);
-            return ResponseEntity.badRequest().body(Map.of("error", "Parse failed: " + e.getMessage()));
+            return ApiErrorResponses.badRequest();
         }
     }
 
@@ -262,7 +280,7 @@ public class SopController {
             SopProcedure sop = SopProcedure.builder()
                     .id(UUID.randomUUID())
                     .title(parsed.title() != null ? parsed.title() : "Untitled SOP")
-                    .category(parsed.category() != null ? parsed.category() : "GENERAL")
+                    .category("GENERAL")
                     .description(parsed.description())
                     .actionPlanJson(parsed.resolutionSteps())
                     .ownerTeam(ownerTeam)
@@ -278,20 +296,21 @@ public class SopController {
                 sop.setTenantId(UUID.fromString(body.get("tenantId").toString()));
             }
 
-            SopProcedure saved = sopRepository.save(sop);
+            SopProcedure saved = sopLinkedAssetService.saveWithLinkedAssets(
+                    sop,
+                    parsed.mcpToolScript(),
+                    createdBy
+            );
             log.info("SopController: parse-and-save '{}' by '{}'", saved.getTitle(), createdBy);
 
-            Map<String, Object> resp = new HashMap<>();
-            resp.put("id",       saved.getId());
-            resp.put("title",    saved.getTitle());
-            resp.put("category", saved.getCategory());
-            resp.put("status",   saved.getStatus());
-            resp.put("message",  "SOP parsed and saved as DRAFT — approve to activate");
-            resp.put("warnings", parsed.warnings());
-            return ResponseEntity.ok(resp);
+            return ResponseEntity.ok(buildSaveResponse(
+                    saved,
+                    "SOP parsed, linked to an MCP tool, and saved as DRAFT — approve to activate",
+                    parsed.warnings()
+            ));
         } catch (Exception e) {
             log.error("Failed to parse-and-save SOP", e);
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.badRequest();
         }
     }
 
@@ -315,17 +334,17 @@ public class SopController {
             SopDocumentParser.ParsedSop parsed = documentParser.parse(file);
             Map<String, Object> resp = new HashMap<>();
             resp.put("title",            parsed.title());
-            resp.put("category",         parsed.category());
             resp.put("description",      parsed.description());
             resp.put("resolutionSteps",  parsed.resolutionSteps());
+            resp.put("mcpToolScript",    parsed.mcpToolScript());
             resp.put("sourceFileName",   parsed.sourceFileName());
             resp.put("warnings",         parsed.warnings());
-            log.info("SopController: parsed document '{}' — title='{}' category='{}'",
-                    file.getOriginalFilename(), parsed.title(), parsed.category());
+            log.info("SopController: parsed document '{}' — title='{}'",
+                    file.getOriginalFilename(), parsed.title());
             return ResponseEntity.ok(resp);
         } catch (Exception e) {
             log.error("Failed to parse SOP document", e);
-            return ResponseEntity.badRequest().body(Map.of("error", "Parse failed: " + e.getMessage()));
+            return ApiErrorResponses.badRequest();
         }
     }
 
@@ -347,7 +366,7 @@ public class SopController {
             SopProcedure sop = SopProcedure.builder()
                     .id(UUID.randomUUID())
                     .title(parsed.title() != null ? parsed.title() : "Untitled SOP")
-                    .category(parsed.category() != null ? parsed.category() : "GENERAL")
+                    .category("GENERAL")
                     .description(parsed.description())
                     .actionPlanJson(parsed.resolutionSteps())
                     .status("DRAFT")
@@ -362,21 +381,22 @@ public class SopController {
                 sop.setTenantId(UUID.fromString(tenantId));
             }
 
-            SopProcedure saved = sopRepository.save(sop);
+            SopProcedure saved = sopLinkedAssetService.saveWithLinkedAssets(
+                    sop,
+                    parsed.mcpToolScript(),
+                    createdBy
+            );
             log.info("SopController: upload-and-save '{}' from file '{}' by '{}'",
                     saved.getTitle(), file.getOriginalFilename(), createdBy);
 
-            Map<String, Object> resp = new HashMap<>();
-            resp.put("id",       saved.getId());
-            resp.put("title",    saved.getTitle());
-            resp.put("category", saved.getCategory());
-            resp.put("status",   saved.getStatus());
-            resp.put("message",  "SOP parsed from file and saved as DRAFT");
-            resp.put("warnings", parsed.warnings());
-            return ResponseEntity.ok(resp);
+            return ResponseEntity.ok(buildSaveResponse(
+                    saved,
+                    "SOP parsed from file, linked to an MCP tool, and saved as DRAFT",
+                    parsed.warnings()
+            ));
         } catch (Exception e) {
             log.error("Failed to upload-and-save SOP from file", e);
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.badRequest();
         }
     }
 
@@ -392,7 +412,7 @@ public class SopController {
             SopProcedure sop = SopProcedure.builder()
                     .id(UUID.randomUUID())
                     .title((String) body.getOrDefault("title", "Untitled SOP"))
-                    .category((String) body.getOrDefault("category", "GENERAL"))
+                    .category("GENERAL")
                     .description((String) body.get("description"))
                     .actionPlanJson((String) body.get("resolutionSteps"))
                     .ownerTeam((String) body.get("ownerTeam"))
@@ -409,18 +429,45 @@ public class SopController {
                 sop.setTenantId(UUID.fromString((String) body.get("tenantId")));
             }
 
-            SopProcedure saved = sopRepository.save(sop);
+            String mcpToolScript = body.get("mcpToolScript") != null
+                    ? body.get("mcpToolScript").toString()
+                    : null;
+            SopProcedure saved = sopLinkedAssetService.saveWithLinkedAssets(
+                    sop,
+                    mcpToolScript,
+                    createdBy
+            );
             log.info("SopController: manual SOP created '{}' by '{}'", saved.getTitle(), createdBy);
-            return ResponseEntity.ok(Map.of(
-                    "id",      saved.getId(),
-                    "title",   saved.getTitle(),
-                    "status",  saved.getStatus(),
-                    "message", "SOP saved as DRAFT — approve to activate"
+            return ResponseEntity.ok(buildSaveResponse(
+                    saved,
+                    saved.getLinkedToolId() != null
+                            ? "SOP saved as DRAFT and linked to its MCP tool — approve to activate"
+                            : "SOP saved as DRAFT — approve to activate",
+                    null
             ));
         } catch (Exception e) {
             log.error("Failed to create manual SOP", e);
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.badRequest();
         }
+    }
+
+    private Map<String, Object> buildSaveResponse(
+            SopProcedure saved,
+            String message,
+            List<String> warnings) {
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("id", saved.getId());
+        resp.put("title", saved.getTitle());
+        resp.put("status", saved.getStatus());
+        resp.put("message", message);
+        resp.put("linkedToolId", saved.getLinkedToolId());
+        resp.put("linkedToolName", saved.getLinkedToolName());
+        resp.put("linkedScriptId", saved.getLinkedScriptId());
+        resp.put("linkedScriptName", saved.getLinkedScriptName());
+        if (warnings != null && !warnings.isEmpty()) {
+            resp.put("warnings", warnings);
+        }
+        return resp;
     }
 
     /**

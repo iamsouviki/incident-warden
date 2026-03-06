@@ -5,8 +5,6 @@ import {
 import { apiGet } from '../services/api';
 import './AnalyticsPage.css';
 
-const TENANT_ID = '00000000-0000-0000-0000-000000000001';
-
 const PIE_COLORS = ['#3b82f6','#22c55e','#f59e0b','#ef4444','#8b5cf6','#06b6d4'];
 
 interface OverviewData {
@@ -24,17 +22,17 @@ function StatCard({ label, value, color }: { label: string; value: number; color
   );
 }
 
-export default function AnalyticsPage() {
+export default function AnalyticsPage({ tenantId }: { tenantId: string }) {
   const [data, setData]     = useState<OverviewData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]   = useState('');
 
   useEffect(() => {
-    apiGet<OverviewData>(`/api/v1/analytics/overview/${TENANT_ID}`)
+    apiGet<OverviewData>(`/api/v1/analytics/overview/${tenantId}`)
       .then(setData)
       .catch(err => setError(err.message))
       .finally(() => setLoading(false));
-  }, []);
+  }, [tenantId]);
 
   if (loading) return <div className="an-loading">Loading analytics…</div>;
   if (error)   return <div className="an-error">Error: {error}</div>;
@@ -69,7 +67,7 @@ export default function AnalyticsPage() {
     <div className="an-root">
       <div className="an-header">
         <h1 className="an-title">Analytics Overview</h1>
-        <span className="an-badge">Live data · tenant default</span>
+        <span className="an-badge">Live data</span>
       </div>
 
       {/* KPI cards */}

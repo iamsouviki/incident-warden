@@ -3,6 +3,7 @@ package com.company.mcp.controller;
 import com.company.mcp.repository.AuditEventRepository;
 import com.company.mcp.repository.HitlRequestRepository;
 import com.company.mcp.service.IncidentService;
+import com.company.mcp.util.ApiErrorResponses;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -64,8 +65,7 @@ public class AnalyticsController {
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             log.error("Analytics overview failed for tenant {}", tenantId, e);
-            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.internalServerError();
         }
     }
 }
-

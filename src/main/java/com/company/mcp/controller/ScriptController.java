@@ -3,10 +3,14 @@ package com.company.mcp.controller;
 import com.company.mcp.model.ScriptWorkspace;
 import com.company.mcp.model.SopScriptRequest;
 import com.company.mcp.repository.ScriptWorkspaceRepository;
+import com.company.mcp.service.RemoteExecutionService;
 import com.company.mcp.service.ScriptGeneratorService;
 import com.company.mcp.service.ScriptGuardrailValidator;
 import com.company.mcp.service.ScriptGuardrailValidator.GuardrailBlockException;
 import com.company.mcp.service.ScriptGuardrailValidator.ValidationResult;
+import com.company.mcp.service.VaultCredentialService;
+import com.company.mcp.util.ApiErrorResponses;
+import com.company.mcp.model.ServerCredentials;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -46,6 +50,8 @@ public class ScriptController {
     private final ScriptWorkspaceRepository repository;
     private final ScriptGeneratorService    scriptGenerator;
     private final ScriptGuardrailValidator  guardrailValidator;
+    private final VaultCredentialService    vaultCredentialService;
+    private final RemoteExecutionService    remoteExecutionService;
 
     @Value("${mcp.tools.timeout-seconds:30}")
     private int timeoutSeconds;
@@ -110,16 +116,13 @@ public class ScriptController {
         } catch (GuardrailBlockException e) {
             return ResponseEntity.ok(Map.of(
                     "script",  "",
-                    "error",   "Generated script was BLOCKED by guardrails",
-                    "details", e.getMessage()
+                    "error",   ApiErrorResponses.SIMPLE_ERROR_MESSAGE
             ));
         } catch (ScriptGeneratorService.ScriptGenerationException e) {
-            return ResponseEntity.status(500)
-                    .body(Map.of("error", "Script generation failed: " + e.getMessage()));
+            return ApiErrorResponses.internalServerError();
         } catch (Exception e) {
             log.error("[ScriptEditor] Generate error", e);
-            return ResponseEntity.status(500)
-                    .body(Map.of("error", "Internal error: " + e.getMessage()));
+            return ApiErrorResponses.internalServerError();
         }
     }
 
@@ -174,7 +177,7 @@ public class ScriptController {
                         "level",    "BLOCK",
                         "passed",   false,
                         "findings", findings,
-                        "summary",  e.getMessage()
+                        "summary",  "Script failed validation"
                 ));
             }
 
@@ -194,8 +197,7 @@ public class ScriptController {
 
         } catch (Exception e) {
             log.error("[ScriptEditor] Validate error", e);
-            return ResponseEntity.status(500)
-                    .body(Map.of("error", "Validation error: " + e.getMessage()));
+            return ApiErrorResponses.internalServerError();
         }
     }
 
@@ -224,6 +226,7 @@ public class ScriptController {
         boolean dryRun  = Boolean.TRUE.equals(body.get("dryRun"));
         String category = getString(body, "category", "APPLICATION");
         String desc     = getString(body, "description", "User script execution");
+        String targetHost = getString(body, "targetHost", "localhost").trim();
 
         if (script.isBlank()) {
             return ResponseEntity.badRequest()
@@ -249,29 +252,61 @@ public class ScriptController {
                     "blocked",  true,
                     "exitCode", -1,
                     "stdout",   "",
-                    "stderr",   "BLOCKED by guardrails: " + e.getMessage(),
+                    "stderr",   "BLOCKED by guardrails",
                     "message",  "Script execution blocked by safety guardrails"
             ));
         }
 
         // ── Step 2: Dry-run mode — just report what would happen ─────────────
+        boolean remoteRequested = !targetHost.isBlank()
+                && !targetHost.equalsIgnoreCase("localhost")
+                && !targetHost.equals("127.0.0.1")
+                && !targetHost.equals("::1");
+
         if (dryRun) {
             long lineCount = script.lines().count();
             return ResponseEntity.ok(Map.of(
                     "success",  true,
                     "dryRun",   true,
+                    "remote",   remoteRequested,
+                    "targetHost", targetHost,
                     "exitCode", 0,
                     "stdout",   "[DRY-RUN] Script validated and ready to execute.\n"
                               + "[DRY-RUN] Language: " + language + "\n"
                               + "[DRY-RUN] Lines: " + lineCount + "\n"
                               + "[DRY-RUN] Category: " + category + "\n"
+                              + "[DRY-RUN] Mode: " + (remoteRequested ? "REMOTE (" + targetHost + ")" : "LOCAL") + "\n"
                               + "[DRY-RUN] Guardrails: PASSED",
                     "stderr",   "",
                     "message",  "Dry run completed — script is safe to execute"
             ));
         }
 
-        // ── Step 3: Write to temp file and execute via ProcessBuilder ────────
+        // ── Step 3: Remote execution via Vault + SSH (when targetHost != localhost) ──
+        if (remoteRequested) {
+            try {
+                ServerCredentials creds = vaultCredentialService.getCredentials(targetHost, os);
+                RemoteExecutionService.RemoteExecResult result = remoteExecutionService.executeRemote(script, creds);
+
+                return ResponseEntity.ok(Map.of(
+                        "success",    result.isSuccess(),
+                        "remote",     true,
+                        "targetHost", targetHost,
+                        "credSource", creds.getCredentialSource(),
+                        "exitCode",   result.getExitCode(),
+                        "stdout",     result.getStdout() != null ? result.getStdout().trim() : "",
+                        "stderr",     result.getStderr() != null ? result.getStderr().trim() : "",
+                        "message",    result.isSuccess()
+                                ? "Remote script executed successfully on " + targetHost
+                                : "Remote script failed on " + targetHost + " (exit " + result.getExitCode() + ")"
+                ));
+            } catch (Exception e) {
+                log.error("[ScriptEditor] Remote execution error on {}: {}", targetHost, e.getMessage(), e);
+                return ApiErrorResponses.internalServerError();
+            }
+        }
+
+        // ── Step 4: Write to temp file and execute via ProcessBuilder (local) ────────
         Path tempScript = null;
         try {
             String suffix = language.equalsIgnoreCase("powershell") ? ".ps1" : ".sh";
@@ -353,8 +388,7 @@ public class ScriptController {
 
         } catch (Exception e) {
             log.error("[ScriptEditor] Execution error", e);
-            return ResponseEntity.status(500)
-                    .body(Map.of("error", "Execution error: " + e.getMessage()));
+            return ApiErrorResponses.internalServerError();
         } finally {
             // ── Cleanup temp file ────────────────────────────────────────────
             if (tempScript != null) {
@@ -421,7 +455,7 @@ public class ScriptController {
             ));
         } catch (Exception e) {
             log.error("[ScriptEditor] Save error", e);
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.badRequest();
         }
     }
 
@@ -505,5 +539,3 @@ public class ScriptController {
                 .collect(Collectors.toList());
     }
 }
-
-

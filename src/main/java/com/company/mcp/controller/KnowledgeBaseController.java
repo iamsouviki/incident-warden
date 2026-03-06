@@ -4,6 +4,7 @@ import com.company.mcp.model.ResolvedIncidentKb;
 import com.company.mcp.repository.ResolvedIncidentKbRepository;
 import com.company.mcp.service.KnowledgeBaseService;
 import com.company.mcp.service.RagService;
+import com.company.mcp.util.ApiErrorResponses;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.document.Document;
@@ -71,7 +72,7 @@ public class KnowledgeBaseController {
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             log.error("[KB] list failed", e);
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.badRequest();
         }
     }
 
@@ -153,7 +154,7 @@ public class KnowledgeBaseController {
             ));
         } catch (Exception e) {
             log.error("[KB] search failed", e);
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.badRequest();
         }
     }
 
@@ -204,7 +205,7 @@ public class KnowledgeBaseController {
             ));
         } catch (Exception e) {
             log.error("[KB] suggest failed", e);
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.badRequest();
         }
     }
 
@@ -225,7 +226,7 @@ public class KnowledgeBaseController {
             return ResponseEntity.ok(saved);
         } catch (Exception e) {
             log.error("[KB] create failed", e);
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.badRequest();
         }
     }
 
@@ -256,7 +257,7 @@ public class KnowledgeBaseController {
             return ResponseEntity.notFound().build();
         } catch (Exception e) {
             log.error("[KB] addComment failed", e);
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.badRequest();
         }
     }
 
@@ -291,7 +292,7 @@ public class KnowledgeBaseController {
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             log.error("[KB] stats failed", e);
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.badRequest();
         }
     }
 }

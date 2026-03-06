@@ -32,6 +32,7 @@ public interface SopProcedureRepository extends JpaRepository<SopProcedure, UUID
 
     List<SopProcedure> findByTenantIdAndCategoryAndStatus(UUID tenantId, String category, String status);
     List<SopProcedure> findByTenantIdAndStatusOrderByVersionDesc(UUID tenantId, String status);
+    List<SopProcedure> findByTenantIdOrderByUpdatedAtDesc(UUID tenantId);
     List<SopProcedure> findByTenantIdAndScopeInAndStatusOrderByUpdatedAtDesc(UUID tenantId, List<String> scopes, String status);
 
     Optional<SopProcedure> findByTitleIgnoreCaseAndTenantIdAndStatus(String title, UUID tenantId, String status);

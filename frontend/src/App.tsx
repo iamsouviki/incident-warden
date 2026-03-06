@@ -12,7 +12,7 @@ import ScriptEditorPage from './pages/ScriptEditorPage';
 import ChatbotWidget from './components/ChatbotWidget';
 import { AuthUser, clearAuth, getStoredUser, getTokenExpiry, authFetch, refreshToken, isTokenExpiringSoon } from './services/api';
 
-const TENANT_ID = '00000000-0000-0000-0000-000000000001';
+const DEFAULT_TENANT_ID = '00000000-0000-0000-0000-000000000001';
 
 type Page = 'overview' | 'hitl' | 'sop' | 'kb' | 'analytics' | 'audit' | 'health' | 'tools' | 'scripts';
 
@@ -87,7 +87,7 @@ const App: React.FC = () => {
     if (!user) return;
     const poll = async () => {
       try {
-        const r = await authFetch(`/api/v1/hitl/pending?tenantId=${TENANT_ID}`);
+        const r = await authFetch(`/api/v1/hitl/pending?tenantId=${user.tenantId || DEFAULT_TENANT_ID}`);
         if (r.ok) { const d = await r.json(); setHitlCount(d.count ?? 0); }
       } catch {}
     };
@@ -135,6 +135,10 @@ const App: React.FC = () => {
     clearAuth();
     setUser(null);
   };
+
+  const activeTenantId = user.tenantId || DEFAULT_TENANT_ID;
+  const activeWorkspaceName = user.tenantName?.trim()
+    || (activeTenantId === DEFAULT_TENANT_ID ? 'Primary Workspace' : 'Workspace');
 
   return (
     <div className="shell">
@@ -202,9 +206,9 @@ const App: React.FC = () => {
         </div>
 
         <div className="sidebar-footer">
-          <div className="tenant-chip">
-            <div className="label">TENANT</div>
-            <div className="name">Acme Corp</div>
+          <div className="tenant-chip" title={activeTenantId}>
+            <div className="label">WORKSPACE</div>
+            <div className="name">{activeWorkspaceName}</div>
           </div>
           <div className="status-dot"></div>
         </div>
@@ -234,18 +238,18 @@ const App: React.FC = () => {
         </div>
 
         {/* Page content */}
-        {page === 'overview'  && <OverviewPage   onNavigate={navigate as any} tenantId={TENANT_ID} />}
-        {page === 'hitl'      && <HitlPage       tenantId={TENANT_ID} />}
-        {page === 'sop'       && <SopPage        tenantId={TENANT_ID} />}
-        {page === 'kb'        && <KnowledgeBasePage />}
-        {page === 'analytics' && <AnalyticsPage  />}
-        {page === 'audit'     && <AuditLogPage   />}
+        {page === 'overview'  && <OverviewPage   onNavigate={navigate as any} tenantId={activeTenantId} />}
+        {page === 'hitl'      && <HitlPage       tenantId={activeTenantId} />}
+        {page === 'sop'       && <SopPage        tenantId={activeTenantId} />}
+        {page === 'kb'        && <KnowledgeBasePage tenantId={activeTenantId} />}
+        {page === 'analytics' && <AnalyticsPage  tenantId={activeTenantId} />}
+        {page === 'audit'     && <AuditLogPage   tenantId={activeTenantId} />}
         {page === 'health'    && <HealthPage />}
         {page === 'tools'     && <ToolsPage />}
-        {page === 'scripts'   && <ScriptEditorPage />}
+        {page === 'scripts'   && <ScriptEditorPage tenantId={activeTenantId} />}
       </div>
       {/* ── Floating Chatbot ── */}
-      <ChatbotWidget tenantId={TENANT_ID} />
+      <ChatbotWidget tenantId={activeTenantId} />
     </div>
   );
 };

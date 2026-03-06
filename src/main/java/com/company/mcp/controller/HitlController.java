@@ -4,6 +4,7 @@ import com.company.mcp.model.ConfidenceLog;
 import com.company.mcp.model.HitlRequest;
 import com.company.mcp.repository.HitlRequestRepository;
 import com.company.mcp.repository.IncidentRepository;
+import com.company.mcp.util.ApiErrorResponses;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -57,7 +58,7 @@ public class HitlController {
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             log.error("Failed to get HITL requests", e);
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.badRequest();
         }
     }
 
@@ -72,7 +73,7 @@ public class HitlController {
                 .orElseGet(() -> ResponseEntity.notFound().build());
         } catch (Exception e) {
             log.error("Failed to get HITL request", e);
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.badRequest();
         }
     }
 
@@ -113,7 +114,7 @@ public class HitlController {
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             log.error("Failed to approve incident", e);
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.badRequest();
         }
     }
 
@@ -150,7 +151,7 @@ public class HitlController {
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             log.error("Failed to reject incident", e);
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.badRequest();
         }
     }
 
@@ -180,7 +181,7 @@ public class HitlController {
             ));
         } catch (Exception e) {
             log.error("Failed to escalate incident", e);
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.badRequest();
         }
     }
 
@@ -201,7 +202,7 @@ public class HitlController {
             return ResponseEntity.ok(stats);
         } catch (Exception e) {
             log.error("Failed to get HITL stats", e);
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.badRequest();
         }
     }
 }

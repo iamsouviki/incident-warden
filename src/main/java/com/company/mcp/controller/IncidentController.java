@@ -4,6 +4,7 @@ import com.company.mcp.agent.AgentContext;
 import com.company.mcp.model.Incident;
 import com.company.mcp.repository.IncidentRepository;
 import com.company.mcp.service.IncidentService;
+import com.company.mcp.util.ApiErrorResponses;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -37,7 +38,7 @@ public class IncidentController {
             return ResponseEntity.ok(created);
         } catch (Exception e) {
             log.error("Failed to create incident", e);
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.badRequest();
         }
     }
 
@@ -52,7 +53,7 @@ public class IncidentController {
                 .orElseGet(() -> ResponseEntity.notFound().build());
         } catch (Exception e) {
             log.error("Failed to get incident", e);
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.badRequest();
         }
     }
 
@@ -76,7 +77,7 @@ public class IncidentController {
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             log.error("Failed to process incident", e);
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.badRequest();
         }
     }
 
@@ -98,7 +99,7 @@ public class IncidentController {
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             log.error("Failed to retry incident", e);
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.badRequest();
         }
     }
 
@@ -128,7 +129,7 @@ public class IncidentController {
             return ResponseEntity.ok(incidents);
         } catch (Exception e) {
             log.error("Failed to list incidents", e);
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.badRequest();
         }
     }
 
@@ -148,7 +149,7 @@ public class IncidentController {
             return ResponseEntity.ok(stats);
         } catch (Exception e) {
             log.error("Failed to get stats", e);
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.badRequest();
         }
     }
 }

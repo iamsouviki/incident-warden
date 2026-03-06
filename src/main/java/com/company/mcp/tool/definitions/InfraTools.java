@@ -6,6 +6,7 @@ import com.company.mcp.tool.McpToolRegistry.ToolHandler;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -23,6 +24,7 @@ import java.util.Map;
  */
 @Slf4j
 @Component
+@ConditionalOnProperty(name = "mcp.tools.default-definitions.enabled", havingValue = "true")
 @RequiredArgsConstructor
 public class InfraTools {
 

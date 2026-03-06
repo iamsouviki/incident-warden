@@ -5,6 +5,7 @@ import com.company.mcp.model.Incident;
 import com.company.mcp.repository.AuditEventRepository;
 import com.company.mcp.repository.HitlRequestRepository;
 import com.company.mcp.repository.IncidentRepository;
+import com.company.mcp.util.ApiErrorResponses;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -74,7 +75,7 @@ public class AnalyticsController {
             return ResponseEntity.badRequest().body(Map.of("error", "Invalid tenantId"));
         } catch (Exception e) {
             log.error("incidentBreakdown failed: {}", e.getMessage(), e);
-            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.internalServerError();
         }
     }
 
@@ -126,7 +127,7 @@ public class AnalyticsController {
             return ResponseEntity.badRequest().body(Map.of("error", "Invalid tenantId"));
         } catch (Exception e) {
             log.error("hitlDecisions failed: {}", e.getMessage(), e);
-            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.internalServerError();
         }
     }
 
@@ -164,7 +165,7 @@ public class AnalyticsController {
             return ResponseEntity.badRequest().body(Map.of("error", "Invalid tenantId"));
         } catch (Exception e) {
             log.error("auditEvents failed: {}", e.getMessage(), e);
-            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+            return ApiErrorResponses.internalServerError();
         }
     }
 

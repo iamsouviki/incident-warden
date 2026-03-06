@@ -21,6 +21,7 @@ public interface ScriptWorkspaceRepository extends JpaRepository<ScriptWorkspace
 
     List<ScriptWorkspace> findByCategory(String category);
 
+    List<ScriptWorkspace> findBySopId(UUID sopId);
+
     List<ScriptWorkspace> findAllByOrderByUpdatedAtDesc();
 }
-

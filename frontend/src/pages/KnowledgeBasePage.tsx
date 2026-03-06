@@ -54,9 +54,7 @@ const STATUS_COLOR: Record<string, string> = {
   GUARDRAILS_BLOCKED: '#ef4444',
 };
 
-const TENANT_ID = '00000000-0000-0000-0000-000000000001';
-
-const KnowledgeBasePage: React.FC = () => {
+const KnowledgeBasePage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
   const [entries, setEntries]       = useState<KbEntry[]>([]);
   const [stats, setStats]           = useState<KbStats | null>(null);
   const [selected, setSelected]     = useState<KbEntry | null>(null);
@@ -76,7 +74,7 @@ const KnowledgeBasePage: React.FC = () => {
     setLoading(true);
     try {
       const params = new URLSearchParams({
-        tenantId: TENANT_ID,
+        tenantId,
         page: String(page),
         size: '20',
       });
@@ -91,14 +89,14 @@ const KnowledgeBasePage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [page, categoryFilter, severityFilter]);
+  }, [page, categoryFilter, severityFilter, tenantId]);
 
   const fetchStats = useCallback(async () => {
     try {
-      const r = await authFetch(`/api/v1/kb/stats?tenantId=${TENANT_ID}`);
+      const r = await authFetch(`/api/v1/kb/stats?tenantId=${tenantId}`);
       if (r.ok) setStats(await r.json());
     } catch {}
-  }, []);
+  }, [tenantId]);
 
   useEffect(() => { fetchEntries(); fetchStats(); }, [fetchEntries, fetchStats]);
 
@@ -109,14 +107,15 @@ const KnowledgeBasePage: React.FC = () => {
     try {
       const r = await authFetch('/api/v1/kb/search', {
         method: 'POST',
-        body: JSON.stringify({ tenantId: TENANT_ID, query: searchQuery, topK: 10 }),
+        body: JSON.stringify({ tenantId, query: searchQuery, topK: 10 }),
       });
       if (r.ok) {
         const d: SearchResult = await r.json();
         setEntries(d.results);
         setTotalPages(1);
       }
-    } finally {
+    } catch {}
+    finally {
       setLoading(false);
     }
   };

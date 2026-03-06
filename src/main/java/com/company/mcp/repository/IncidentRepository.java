@@ -56,6 +56,11 @@ public interface IncidentRepository extends JpaRepository<Incident, UUID> {
 
     List<Incident> findByTenantIdOrderByCreatedAtDesc(UUID tenantId);
 
+    @Transactional
+    @Modifying
+    @Query("UPDATE Incident i SET i.matchedSopId = null WHERE i.matchedSopId = :sopId")
+    int clearMatchedSop(@Param("sopId") UUID sopId);
+
     @Query("SELECT COUNT(i) FROM Incident i WHERE i.tenantId = :tenantId AND i.finalDecision = 'AUTO_RESOLVE'")
     Long countAutoResolvedIncidents(@Param("tenantId") UUID tenantId);
 }
