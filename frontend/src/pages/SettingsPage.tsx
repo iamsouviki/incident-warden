@@ -26,6 +26,17 @@ interface LlmConfig {
   optionsJson: string;
 }
 
+interface EnvVariableConfig {
+  id?: string;
+  key: string;
+  value: string;
+  maskedValue?: string;
+  secret: boolean;
+  scope: string;
+  targetEnvironment: string;
+  description: string;
+}
+
 const newSource = (): SourceConfig => ({
   name: '',
   type: 'SERVICENOW',
@@ -51,6 +62,15 @@ const newLlm = (): LlmConfig => ({
   optionsJson: '{}',
 });
 
+const newEnvVar = (): EnvVariableConfig => ({
+  key: '',
+  value: '',
+  secret: true,
+  scope: 'TENANT',
+  targetEnvironment: 'default',
+  description: '',
+});
+
 const SettingsPage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
   const [incidentSources, setIncidentSources] = useState<SourceConfig[]>([]);
   const [llmProviders, setLlmProviders] = useState<LlmConfig[]>([]);
@@ -58,6 +78,7 @@ const SettingsPage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
     defaultSourceSystem: 'manual',
     autoProcessOnCreate: false,
   });
+  const [envVariables, setEnvVariables] = useState<EnvVariableConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -83,6 +104,7 @@ const SettingsPage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
         defaultSourceSystem: data.incidentDefaults?.defaultSourceSystem || 'manual',
         autoProcessOnCreate: Boolean(data.incidentDefaults?.autoProcessOnCreate),
       });
+      setEnvVariables(Array.isArray(data.envVariables) ? data.envVariables.map(deserializeEnvVar) : []);
       setError(null);
     } catch {
       setError(SIMPLE_ERROR_MESSAGE);
@@ -104,6 +126,7 @@ const SettingsPage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
           incidentSources: incidentSources.map(serializeSource),
           llmProviders: llmProviders.map(serializeLlm),
           incidentDefaults,
+          envVariables: envVariables.map(serializeEnvVar),
         }),
       });
       if (!response.ok) {
@@ -231,6 +254,37 @@ const SettingsPage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
           </div>
         </Section>
       </div>
+
+      <div style={{ marginTop: 22 }}>
+        <Section title="Execution Environment Variables" subtitle="Variables defined here are intended for execution-time injection only. Secret values should not be sent back to the LLM or exposed in chat.">
+          <div style={{ display: 'grid', gap: 14 }}>
+            {envVariables.map((envVar, index) => (
+              <div key={envVar.id || index} style={panelStyle}>
+                <div style={rowStyle}>
+                  <input value={envVar.key} onChange={e => updateEnvVar(index, 'key', e.target.value, setEnvVariables)} placeholder="Variable key" style={inputStyle} />
+                  <select value={envVar.scope} onChange={e => updateEnvVar(index, 'scope', e.target.value, setEnvVariables)} style={inputStyle}>
+                    {['GLOBAL', 'TENANT', 'SERVICE', 'HOST_GROUP'].map(option => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                  <input value={envVar.targetEnvironment} onChange={e => updateEnvVar(index, 'targetEnvironment', e.target.value, setEnvVariables)} placeholder="Target environment" style={inputStyle} />
+                </div>
+                <div style={rowStyle}>
+                  <input value={envVar.value} onChange={e => updateEnvVar(index, 'value', e.target.value, setEnvVariables)} placeholder={envVar.secret ? 'Secret value' : 'Value'} style={inputStyle} />
+                  <input value={envVar.description} onChange={e => updateEnvVar(index, 'description', e.target.value, setEnvVariables)} placeholder="Description / usage" style={inputStyle} />
+                  <label style={checkboxWrapStyle}>
+                    <input type="checkbox" checked={envVar.secret} onChange={e => updateEnvVar(index, 'secret', e.target.checked, setEnvVariables)} />
+                    Secret
+                  </label>
+                </div>
+                {envVar.maskedValue && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Stored mask: {envVar.maskedValue}</div>}
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button onClick={() => setEnvVariables(current => current.filter((_, itemIndex) => itemIndex !== index))} style={dangerButtonStyle}>REMOVE VARIABLE</button>
+                </div>
+              </div>
+            ))}
+            <button onClick={() => setEnvVariables(current => [...current, newEnvVar()])} style={secondaryButtonStyle}>+ ADD ENV VARIABLE</button>
+          </div>
+        </Section>
+      </div>
     </div>
   );
 };
@@ -285,6 +339,28 @@ const serializeLlm = (raw: LlmConfig) => ({
   options: safeJson(raw.optionsJson),
 });
 
+const deserializeEnvVar = (raw: any): EnvVariableConfig => ({
+  id: raw?.id,
+  key: raw?.key || '',
+  value: raw?.value || '',
+  maskedValue: raw?.maskedValue || '',
+  secret: raw?.secret !== false,
+  scope: raw?.scope || 'TENANT',
+  targetEnvironment: raw?.targetEnvironment || 'default',
+  description: raw?.description || '',
+});
+
+const serializeEnvVar = (raw: EnvVariableConfig) => ({
+  id: raw.id,
+  key: raw.key.trim(),
+  value: raw.value,
+  maskedValue: raw.maskedValue || '',
+  secret: raw.secret,
+  scope: raw.scope,
+  targetEnvironment: raw.targetEnvironment.trim() || 'default',
+  description: raw.description.trim(),
+});
+
 const safeJson = (value: string) => {
   try {
     return value.trim() ? JSON.parse(value) : {};
@@ -298,6 +374,10 @@ const updateSource = (index: number, key: keyof SourceConfig, value: string | bo
 };
 
 const updateLlm = (index: number, key: keyof LlmConfig, value: string | boolean, setState: React.Dispatch<React.SetStateAction<LlmConfig[]>>) => {
+  setState(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: value } : item));
+};
+
+const updateEnvVar = (index: number, key: keyof EnvVariableConfig, value: string | boolean, setState: React.Dispatch<React.SetStateAction<EnvVariableConfig[]>>) => {
   setState(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: value } : item));
 };
 

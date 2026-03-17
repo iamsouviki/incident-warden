@@ -10,14 +10,16 @@ import LoginPage from './pages/LoginPage';
 import KnowledgeBasePage from './pages/KnowledgeBasePage';
 import ChatbotWidget from './components/ChatbotWidget';
 import SettingsPage from './pages/SettingsPage';
+import IncidentChatPage from './pages/IncidentChatPage';
 import { AuthUser, clearAuth, getStoredUser, getTokenExpiry, authFetch, refreshToken, isTokenExpiringSoon } from './services/api';
 
 const DEFAULT_TENANT_ID = '00000000-0000-0000-0000-000000000001';
 
-type Page = 'overview' | 'hitl' | 'sop' | 'kb' | 'analytics' | 'audit' | 'health' | 'tools' | 'settings';
+type Page = 'overview' | 'chat' | 'hitl' | 'sop' | 'kb' | 'analytics' | 'audit' | 'health' | 'tools' | 'settings';
 
 const PAGE_TITLES: Record<Page, string> = {
   overview:  'OPERATIONS DASHBOARD',
+  chat:      'INCIDENT COLLABORATION',
   hitl:      'HITL APPROVAL QUEUE',
   sop:       'SOP LIBRARY',
   kb:        'RESOLVED INCIDENTS',
@@ -162,6 +164,10 @@ const App: React.FC = () => {
                onClick={() => navigate('overview')}>
             <span className="nav-icon">◉</span> Live Incidents
           </div>
+          <div className={`nav-item ${page === 'chat' ? 'active' : ''}`}
+               onClick={() => navigate('chat')}>
+            <span className="nav-icon">✎</span> Incident Chat
+          </div>
           <div className={`nav-item ${page === 'analytics' ? 'active' : ''}`}
                onClick={() => navigate('analytics')}>
             <span className="nav-icon">⤢</span> Analytics
@@ -239,6 +245,7 @@ const App: React.FC = () => {
 
         {/* Page content */}
         {page === 'overview'  && <OverviewPage   onNavigate={navigate as any} tenantId={activeTenantId} />}
+        {page === 'chat'      && <IncidentChatPage tenantId={activeTenantId} />}
         {page === 'hitl'      && <HitlPage       tenantId={activeTenantId} />}
         {page === 'sop'       && <SopPage        tenantId={activeTenantId} />}
         {page === 'kb'        && <KnowledgeBasePage tenantId={activeTenantId} />}

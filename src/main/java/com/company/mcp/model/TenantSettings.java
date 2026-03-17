@@ -45,6 +45,11 @@ public class TenantSettings {
     @Builder.Default
     private Map<String, Object> incidentDefaults = Map.of();
 
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "env_variables", columnDefinition = "JSONB", nullable = false)
+    @Builder.Default
+    private List<Map<String, Object>> envVariables = List.of();
+
     @Column(name = "updated_at", columnDefinition = "TIMESTAMPTZ", nullable = false)
     @Builder.Default
     private LocalDateTime updatedAt = LocalDateTime.now();
