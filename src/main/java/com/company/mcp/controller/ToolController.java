@@ -54,6 +54,10 @@ public class ToolController {
                     m.put("requiredParams", tool.getRequiredParams());
                     m.put("dangerous",      tool.getDangerous());
                     m.put("enabled",        tool.getEnabled());
+                    m.put("scriptWorkspaceId", tool.getScriptWorkspaceId());
+                    m.put("sopId",          tool.getSopId());
+                    m.put("createdBy",      tool.getCreatedBy());
+                    m.put("createdAt",      tool.getCreatedAt());
                     return m;
                 })
                 .toList();
@@ -105,6 +109,8 @@ public class ToolController {
                     .requiredParams(body.getRequiredParams() != null ? body.getRequiredParams() : List.of())
                     .dangerous(Boolean.TRUE.equals(body.getDangerous()))
                     .enabled(true)
+                    .scriptWorkspaceId(body.getScriptWorkspaceId())
+                    .sopId(body.getSopId())
                     .createdBy(createdBy)
                     .createdAt(LocalDateTime.now())
                     .updatedAt(LocalDateTime.now())
@@ -139,6 +145,8 @@ public class ToolController {
             if (body.getCategory() != null) existing.setCategory(body.getCategory().toUpperCase());
             if (body.getRequiredParams() != null) existing.setRequiredParams(body.getRequiredParams());
             if (body.getDangerous() != null) existing.setDangerous(body.getDangerous());
+            if (body.getScriptWorkspaceId() != null) existing.setScriptWorkspaceId(body.getScriptWorkspaceId());
+            if (body.getSopId() != null) existing.setSopId(body.getSopId());
             existing.setUpdatedAt(LocalDateTime.now());
 
             CustomTool saved = customToolRepository.save(existing);

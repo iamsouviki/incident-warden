@@ -113,7 +113,7 @@ const ChatbotWidget: React.FC<Props> = ({ tenantId }) => {
       if (results.length === 0 && !suggestion) {
         updateMessage(botId, {
           loading: false,
-          text: `No incidents found for **"${q}"**. Try different keywords or check the Resolved KB page.`,
+          text: `No incidents found for **"${q}"**. Try different keywords or check the Resolved Incidents page.`,
         });
       } else {
         updateMessage(botId, { loading: false, results, suggestion });
@@ -266,8 +266,25 @@ const ChatbotWidget: React.FC<Props> = ({ tenantId }) => {
     );
   };
 
+  const openCreateIncident = () => {
+    const url = new URL(window.location.href);
+    url.pathname = '/overview';
+    url.searchParams.set('createIncident', '1');
+    window.history.pushState(null, '', url.pathname + url.search);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  };
+
   return (
     <>
+      <button
+        className="cb-toggle cb-toggle-create"
+        onClick={openCreateIncident}
+        title="Create Incident"
+      >
+        <span>＋</span>
+        <span className="cb-toggle-label">Create Incident</span>
+      </button>
+
       {/* Floating button */}
       <button
         className={`cb-toggle ${open ? 'cb-toggle-open' : ''}`}

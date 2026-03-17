@@ -434,10 +434,13 @@ public class ScriptController {
                     .language(getString(body, "language", "bash"))
                     .category(getString(body, "category", "APPLICATION"))
                     .targetHost(getString(body, "targetHost", ""))
+                    .toolName(getString(body, "toolName", ""))
                     .status("DRAFT")
                     .createdBy(createdBy)
                     .tenantId(body.containsKey("tenantId")
                             ? UUID.fromString((String) body.get("tenantId")) : null)
+                    .sopId(body.containsKey("sopId") && body.get("sopId") instanceof String sopId && !sopId.isBlank()
+                            ? UUID.fromString(sopId) : null)
                     .build();
 
             if (script.getScriptContent().isBlank()) {
@@ -470,7 +473,12 @@ public class ScriptController {
             if (body.containsKey("language"))       existing.setLanguage(getString(body, "language", "bash"));
             if (body.containsKey("category"))       existing.setCategory(getString(body, "category", "APPLICATION"));
             if (body.containsKey("targetHost"))     existing.setTargetHost(getString(body, "targetHost", ""));
+            if (body.containsKey("toolName"))       existing.setToolName(getString(body, "toolName", ""));
             if (body.containsKey("status"))         existing.setStatus(getString(body, "status", "DRAFT"));
+            if (body.containsKey("sopId")) {
+                Object sopId = body.get("sopId");
+                existing.setSopId(sopId instanceof String value && !value.isBlank() ? UUID.fromString(value) : null);
+            }
 
             // Persist validation/execution results if provided
             if (body.containsKey("lastValidationResult")) {

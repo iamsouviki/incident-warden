@@ -164,7 +164,7 @@ const KnowledgeBasePage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
         {/* Stats bar */}
         {stats && (
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <StatChip label="Total KB Entries" value={String(stats.totalEntries)} color="#3b82f6" />
+            <StatChip label="Resolved Incidents" value={String(stats.totalEntries)} color="#3b82f6" />
             <StatChip label="Pending Embed" value={String(stats.pendingEmbedding)} color="#f97316" />
             <StatChip label="Vector Store" value={stats.vectorStoreActive ? 'ACTIVE' : 'OFF'} color={stats.vectorStoreActive ? '#22c55e' : '#6b7280'} />
             <StatChip label="Full RAG" value={stats.fullRagAvailable ? 'ACTIVE' : 'OFF'} color={stats.fullRagAvailable ? '#22c55e' : '#6b7280'} />
@@ -288,7 +288,7 @@ const KnowledgeBasePage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 4px' }}>
         {!selected ? (
           <div style={{ color: '#475569', fontSize: 14, marginTop: 40, textAlign: 'center' }}>
-            Select a KB entry to view full resolution details
+            Select a resolved incident to view full resolution details
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>

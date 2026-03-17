@@ -6,7 +6,7 @@ interface Sop {
   status: string; reliabilityScore: number; successCount: number;
   failureCount: number; actionPlanJson?: string; description?: string;
   ownerTeam?: string; createdAt: string; version?: string;
-  linkedToolName?: string; linkedScriptName?: string;
+  linkedToolId?: string; linkedToolName?: string; linkedScriptName?: string;
 }
 
 interface ParsedSop {
@@ -241,6 +241,14 @@ const SopPage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
 
   const getRelClass = (r: number) => r >= 0.85 ? '' : r >= 0.65 ? 'amber' : 'red';
   const getSopStatusClass = (s: string) => s === 'ACTIVE' ? 'sop-active' : s === 'DRAFT' ? 'sop-draft' : 'sop-stale';
+  const openLinkedTool = (toolId?: string) => {
+    if (!toolId) return;
+    const url = new URL(window.location.href);
+    url.pathname = '/tools';
+    url.searchParams.set('tool', toolId);
+    window.history.pushState(null, '', url.pathname + url.search);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  };
 
   if (loading) return <div className="loading-state" style={{padding:80}}>Loading SOPs…</div>;
 
@@ -353,7 +361,26 @@ const SopPage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
 
                 <div className="detail-row"><span className="detail-label">Scope:</span><span className="detail-val">{selected.scope || '—'}</span></div>
                 {selected.ownerTeam && <div className="detail-row"><span className="detail-label">Owner Team:</span><span className="detail-val">{selected.ownerTeam}</span></div>}
-                {selected.linkedToolName && <div className="detail-row"><span className="detail-label">MCP Tool:</span><span className="detail-val">{selected.linkedToolName}</span></div>}
+                {selected.linkedToolName && (
+                  <div className="detail-row">
+                    <span className="detail-label">MCP Tool:</span>
+                    <button
+                      type="button"
+                      onClick={() => openLinkedTool(selected.linkedToolId)}
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: 'var(--blue)',
+                        cursor: selected.linkedToolId ? 'pointer' : 'default',
+                        padding: 0,
+                        fontSize: 13,
+                        textDecoration: 'underline',
+                        fontFamily: 'inherit'
+                      }}>
+                      {selected.linkedToolName}
+                    </button>
+                  </div>
+                )}
                 {selected.linkedScriptName && <div className="detail-row"><span className="detail-label">Linked Script:</span><span className="detail-val">{selected.linkedScriptName}</span></div>}
                 <div className="detail-row"><span className="detail-label">Created:</span><span className="detail-val">{new Date(selected.createdAt).toLocaleDateString()}</span></div>
                 {selected.description && (

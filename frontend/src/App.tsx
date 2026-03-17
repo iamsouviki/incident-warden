@@ -8,24 +8,24 @@ import AnalyticsPage from './pages/AnalyticsPage';
 import AuditLogPage from './pages/AuditLogPage';
 import LoginPage from './pages/LoginPage';
 import KnowledgeBasePage from './pages/KnowledgeBasePage';
-import ScriptEditorPage from './pages/ScriptEditorPage';
 import ChatbotWidget from './components/ChatbotWidget';
+import SettingsPage from './pages/SettingsPage';
 import { AuthUser, clearAuth, getStoredUser, getTokenExpiry, authFetch, refreshToken, isTokenExpiringSoon } from './services/api';
 
 const DEFAULT_TENANT_ID = '00000000-0000-0000-0000-000000000001';
 
-type Page = 'overview' | 'hitl' | 'sop' | 'kb' | 'analytics' | 'audit' | 'health' | 'tools' | 'scripts';
+type Page = 'overview' | 'hitl' | 'sop' | 'kb' | 'analytics' | 'audit' | 'health' | 'tools' | 'settings';
 
 const PAGE_TITLES: Record<Page, string> = {
   overview:  'OPERATIONS DASHBOARD',
   hitl:      'HITL APPROVAL QUEUE',
   sop:       'SOP LIBRARY',
-  kb:        'RESOLVED INCIDENT KB',
+  kb:        'RESOLVED INCIDENTS',
   analytics: 'ANALYTICS',
   audit:     'AUDIT LOG',
   health:    'MCP TOOL HEALTH',
   tools:     'MCP TOOLS',
-  scripts:   'SCRIPT EDITOR',
+  settings:  'SETTINGS',
 };
 
 const App: React.FC = () => {
@@ -185,7 +185,7 @@ const App: React.FC = () => {
           </div>
           <div className={`nav-item ${page === 'kb' ? 'active' : ''}`}
                onClick={() => navigate('kb')}>
-            <span className="nav-icon">⧗</span> Resolved KB
+            <span className="nav-icon">⧗</span> Resolved Incidents
           </div>
         </div>
 
@@ -195,13 +195,13 @@ const App: React.FC = () => {
                onClick={() => navigate('tools')}>
             <span className="nav-icon">⬡</span> MCP Tools
           </div>
-          <div className={`nav-item ${page === 'scripts' ? 'active' : ''}`}
-               onClick={() => navigate('scripts')}>
-            <span className="nav-icon">✎</span> Script Editor
-          </div>
           <div className={`nav-item ${page === 'audit' ? 'active' : ''}`}
                onClick={() => navigate('audit')}>
             <span className="nav-icon">⊟</span> Audit Log
+          </div>
+          <div className={`nav-item ${page === 'settings' ? 'active' : ''}`}
+               onClick={() => navigate('settings')}>
+            <span className="nav-icon">⚙</span> Settings
           </div>
         </div>
 
@@ -245,8 +245,8 @@ const App: React.FC = () => {
         {page === 'analytics' && <AnalyticsPage  tenantId={activeTenantId} />}
         {page === 'audit'     && <AuditLogPage   tenantId={activeTenantId} />}
         {page === 'health'    && <HealthPage />}
-        {page === 'tools'     && <ToolsPage />}
-        {page === 'scripts'   && <ScriptEditorPage tenantId={activeTenantId} />}
+        {page === 'tools'     && <ToolsPage tenantId={activeTenantId} />}
+        {page === 'settings'  && <SettingsPage tenantId={activeTenantId} />}
       </div>
       {/* ── Floating Chatbot ── */}
       <ChatbotWidget tenantId={activeTenantId} />

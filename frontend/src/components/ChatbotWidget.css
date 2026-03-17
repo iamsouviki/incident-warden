@@ -19,10 +19,19 @@
   transition: all 0.2s;
   font-family: 'DM Sans', sans-serif;
 }
+.cb-toggle-create {
+  bottom: 86px;
+  background: #0f172a;
+  box-shadow: 0 4px 20px rgba(15,23,42,0.28);
+}
 .cb-toggle:hover {
   background: #1d4ed8;
   box-shadow: 0 6px 28px rgba(37,99,235,0.45);
   transform: translateY(-1px);
+}
+.cb-toggle-create:hover {
+  background: #020617;
+  box-shadow: 0 6px 28px rgba(15,23,42,0.36);
 }
 .cb-toggle-open {
   padding: 12px 16px;
@@ -38,7 +47,7 @@
 /* ── Chat panel ───────────────────────────────────────────────────────────── */
 .cb-panel {
   position: fixed;
-  bottom: 88px;
+  bottom: 146px;
   right: 28px;
   z-index: 1999;
   width: 440px;

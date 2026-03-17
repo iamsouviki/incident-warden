@@ -17,6 +17,25 @@ interface HitlRequest {
   approvalPayload: string; expiresAt: string; createdAt: string;
 }
 
+interface SettingsResponse {
+  incidentDefaults?: {
+    defaultSourceSystem?: string;
+    autoProcessOnCreate?: boolean;
+  };
+  incidentSources?: { name?: string; enabled?: boolean }[];
+}
+
+interface IncidentDraft {
+  sourceSystem: string;
+  sourceTicketId: string;
+  title: string;
+  description: string;
+  category: string;
+  subCategory: string;
+  severity: string;
+  affectedSystems: string;
+}
+
 const getStatusClass = (s: string) => {
   if (s === 'AUTO_RESOLVED') return 's-auto';
   if (s === 'HITL_PENDING') return 's-hitl';
@@ -44,6 +63,24 @@ const OverviewPage: React.FC<{
   const [error, setError] = useState<string | null>(null);
   const [processing, setProcessing] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState('OVERVIEW');
+  const [creatingIncident, setCreatingIncident] = useState(false);
+  const [incidentMessage, setIncidentMessage] = useState<string | null>(null);
+  const [showCreateIncidentModal, setShowCreateIncidentModal] = useState(false);
+  const [sourceOptions, setSourceOptions] = useState<string[]>(['manual']);
+  const [incidentDefaults, setIncidentDefaults] = useState({
+    defaultSourceSystem: 'manual',
+    autoProcessOnCreate: false,
+  });
+  const [incidentDraft, setIncidentDraft] = useState<IncidentDraft>({
+    sourceSystem: 'manual',
+    sourceTicketId: '',
+    title: '',
+    description: '',
+    category: '',
+    subCategory: '',
+    severity: 'P3',
+    affectedSystems: '',
+  });
 
   const fetchAll = useCallback(async () => {
     try {
@@ -65,6 +102,47 @@ const OverviewPage: React.FC<{
   }, [tenantId]);
 
   useEffect(() => { fetchAll(); const t = setInterval(fetchAll, 15000); return () => clearInterval(t); }, [fetchAll]);
+
+  useEffect(() => {
+    const openCreateIncident = () => {
+      setIncidentDraft(current => ({ ...current, sourceSystem: incidentDefaults.defaultSourceSystem || 'manual' }));
+      setShowCreateIncidentModal(true);
+    };
+    const checkUrl = () => {
+      const url = new URL(window.location.href);
+      if (url.pathname === '/overview' && url.searchParams.get('createIncident') === '1') {
+        openCreateIncident();
+        url.searchParams.delete('createIncident');
+        window.history.replaceState(null, '', url.pathname + (url.search ? url.search : ''));
+      }
+    };
+    window.addEventListener('mcp:create-incident', openCreateIncident);
+    checkUrl();
+    return () => window.removeEventListener('mcp:create-incident', openCreateIncident);
+  }, [incidentDefaults.defaultSourceSystem]);
+
+  useEffect(() => {
+    const loadSettings = async () => {
+      try {
+        const response = await authFetch(`/api/v1/settings?tenantId=${tenantId}`);
+        if (!response.ok) {
+          return;
+        }
+        const data: SettingsResponse = await response.json();
+        const options = ['manual', ...(data.incidentSources || [])
+          .filter(source => source.enabled !== false && source.name?.trim())
+          .map(source => source.name!.trim())];
+        const defaultSource = data.incidentDefaults?.defaultSourceSystem || 'manual';
+        setSourceOptions(options);
+        setIncidentDefaults({
+          defaultSourceSystem: defaultSource,
+          autoProcessOnCreate: Boolean(data.incidentDefaults?.autoProcessOnCreate),
+        });
+        setIncidentDraft(current => ({ ...current, sourceSystem: defaultSource }));
+      } catch {}
+    };
+    loadSettings();
+  }, [tenantId]);
 
   const handleProcess = async (incidentId: string) => {
     setProcessing(incidentId);
@@ -103,6 +181,62 @@ const OverviewPage: React.FC<{
       }
       await fetchAll();
     } catch { alert(SIMPLE_ERROR_MESSAGE); }
+  };
+
+  const handleCreateIncident = async () => {
+    if (!incidentDraft.title.trim()) {
+      setError('Incident title is required.');
+      return;
+    }
+
+    setCreatingIncident(true);
+    setIncidentMessage(null);
+    try {
+      const sourceTicketId = incidentDraft.sourceTicketId.trim() || `manual-${Date.now()}`;
+      const response = await authFetch('/api/v1/incidents', {
+        method: 'POST',
+        body: JSON.stringify({
+          tenantId,
+          sourceSystem: incidentDraft.sourceSystem || incidentDefaults.defaultSourceSystem || 'manual',
+          sourceTicketId,
+          title: incidentDraft.title.trim(),
+          description: incidentDraft.description.trim(),
+          category: incidentDraft.category.trim() || null,
+          subCategory: incidentDraft.subCategory.trim() || null,
+          severity: incidentDraft.severity,
+          affectedSystems: incidentDraft.affectedSystems.split(',').map(item => item.trim()).filter(Boolean),
+          status: 'PENDING',
+        }),
+      });
+      if (!response.ok) {
+        setError(await extractApiError(response));
+        return;
+      }
+
+      const created = await response.json();
+      if (incidentDefaults.autoProcessOnCreate && created?.id) {
+        await authFetch(`/api/v1/incidents/${created.id}/process?tenantId=${tenantId}`, { method: 'POST' });
+      }
+
+      setIncidentMessage(`Incident created: ${sourceTicketId}`);
+      setError(null);
+      setShowCreateIncidentModal(false);
+      setIncidentDraft({
+        sourceSystem: incidentDefaults.defaultSourceSystem || 'manual',
+        sourceTicketId: '',
+        title: '',
+        description: '',
+        category: '',
+        subCategory: '',
+        severity: 'P3',
+        affectedSystems: '',
+      });
+      await fetchAll();
+    } catch {
+      setError(SIMPLE_ERROR_MESSAGE);
+    } finally {
+      setCreatingIncident(false);
+    }
   };
 
   // Compute derived stats
@@ -144,6 +278,54 @@ const OverviewPage: React.FC<{
       </div>
 
       {error && <div className="error-banner">⚠ {error}</div>}
+
+      {incidentMessage && (
+        <div style={{ marginBottom: 12, padding: '10px 12px', borderRadius: 8, border: '1px solid rgba(48,217,156,0.28)', background: 'rgba(48,217,156,0.08)', color: 'var(--green)', fontSize: 12 }}>
+          {incidentMessage}
+        </div>
+      )}
+
+      {showCreateIncidentModal && (
+        <div style={modalOverlayStyle} onClick={() => !creatingIncident && setShowCreateIncidentModal(false)}>
+          <div style={modalCardStyle} onClick={(e) => e.stopPropagation()}>
+            <div className="card-header" style={{ padding: 0, marginBottom: 14 }}>
+              <div className="card-title">Create New Incident</div>
+              <div style={{ fontFamily:'var(--mono)', fontSize:10, color:'var(--text-muted)' }}>
+                Popup intake
+              </div>
+            </div>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(3, minmax(0, 1fr))', gap:12, marginBottom:12 }}>
+              <select value={incidentDraft.sourceSystem} onChange={e => setIncidentDraft(current => ({ ...current, sourceSystem: e.target.value }))} style={overviewInputStyle}>
+                {sourceOptions.map(option => <option key={option} value={option}>{option}</option>)}
+              </select>
+              <input value={incidentDraft.sourceTicketId} onChange={e => setIncidentDraft(current => ({ ...current, sourceTicketId: e.target.value }))} placeholder="Source ticket ID (optional)" style={overviewInputStyle} />
+              <select value={incidentDraft.severity} onChange={e => setIncidentDraft(current => ({ ...current, severity: e.target.value }))} style={overviewInputStyle}>
+                {['P1', 'P2', 'P3', 'P4'].map(option => <option key={option} value={option}>{option}</option>)}
+              </select>
+            </div>
+            <input value={incidentDraft.title} onChange={e => setIncidentDraft(current => ({ ...current, title: e.target.value }))} placeholder="Incident title" style={{ ...overviewInputStyle, marginBottom:12 }} />
+            <textarea value={incidentDraft.description} onChange={e => setIncidentDraft(current => ({ ...current, description: e.target.value }))} rows={4} placeholder="Describe the incident" style={{ ...overviewInputStyle, resize:'vertical', marginBottom:12 }} />
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(3, minmax(0, 1fr))', gap:12 }}>
+              <input value={incidentDraft.category} onChange={e => setIncidentDraft(current => ({ ...current, category: e.target.value }))} placeholder="Category" style={overviewInputStyle} />
+              <input value={incidentDraft.subCategory} onChange={e => setIncidentDraft(current => ({ ...current, subCategory: e.target.value }))} placeholder="Sub-category" style={overviewInputStyle} />
+              <input value={incidentDraft.affectedSystems} onChange={e => setIncidentDraft(current => ({ ...current, affectedSystems: e.target.value }))} placeholder="Affected systems, comma separated" style={overviewInputStyle} />
+            </div>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:14, gap:12, flexWrap:'wrap' }}>
+              <div style={{ fontSize:12, color:'var(--text-muted)' }}>
+                Default source: {incidentDefaults.defaultSourceSystem} · Auto-process: {incidentDefaults.autoProcessOnCreate ? 'ON' : 'OFF'}
+              </div>
+              <div style={{ display:'flex', gap:10 }}>
+                <button className="btn" onClick={() => setShowCreateIncidentModal(false)} disabled={creatingIncident}>
+                  CANCEL
+                </button>
+                <button className="btn btn-modify" disabled={creatingIncident} onClick={handleCreateIncident}>
+                  {creatingIncident ? '⏳ CREATING' : '+ CREATE INCIDENT'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ─── KPI CARDS ─── */}
       <div className="kpi-grid">
@@ -400,3 +582,35 @@ const OverviewPage: React.FC<{
 };
 
 export default OverviewPage;
+
+const overviewInputStyle: React.CSSProperties = {
+  width: '100%',
+  background: 'var(--surface2)',
+  border: '1px solid var(--border)',
+  borderRadius: 8,
+  color: 'var(--text)',
+  padding: '10px 12px',
+  fontSize: 12,
+  outline: 'none',
+  boxSizing: 'border-box',
+};
+
+const modalOverlayStyle: React.CSSProperties = {
+  position: 'fixed',
+  inset: 0,
+  background: 'rgba(15,23,42,0.6)',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  zIndex: 1000,
+  padding: 24,
+};
+
+const modalCardStyle: React.CSSProperties = {
+  width: 'min(960px, 100%)',
+  background: 'var(--surface)',
+  border: '1px solid var(--border-bright)',
+  borderRadius: 12,
+  padding: 20,
+  boxShadow: '0 24px 64px rgba(0,0,0,0.28)',
+};
