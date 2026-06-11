@@ -67,6 +67,12 @@
             <artifactId>spring-ai-starter-model-ollama</artifactId>
         </dependency>
 
+        <!-- OpenAI Chat Model -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-openai</artifactId>
+        </dependency>
+
         <!-- pgvector Vector Store -->
         <dependency>
             <groupId>org.springframework.ai</groupId>

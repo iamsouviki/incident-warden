@@ -13,4 +13,12 @@
         <sqlFile path="versions/1.0/dml.sql" relativeToChangelogFile="true" />
     </changeSet>
 
+    <changeSet id="1.1-fts" author="mcp-incident-automation">
+        <sqlFile path="versions/1.1/fts.sql" relativeToChangelogFile="true" />
+    </changeSet>
+
+    <changeSet id="1.1-config" author="mcp-incident-automation">
+        <sqlFile path="versions/1.1/config.sql" relativeToChangelogFile="true" />
+    </changeSet>
+
 </databaseChangeLog>

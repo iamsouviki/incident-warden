@@ -1,23 +1,20 @@
 import React, { useState, useEffect } from 'react';
 
-const CHAT_MODELS = [
-  'qwen2.5-coder:latest',
-  'qwen2.5-coder:14b',
-  'qwen2.5-coder:3b',
-  'qwen3.5:9b',
-  'gemma4:latest'
-];
-
-const EMBEDDING_MODELS = [
-  'nomic-embed-text',
-  'nomic-embed-text:latest',
-  'mxbai-embed-large',
-  'all-minilm'
+const PROVIDERS = [
+  { id: 'ollama', name: 'Ollama (Local)', defaultUrl: 'http://localhost:11434' },
+  { id: 'openai', name: 'OpenAI', defaultUrl: 'https://api.openai.com/v1' },
+  { id: 'groq', name: 'Groq', defaultUrl: 'https://api.groq.com/openai/v1' },
+  { id: 'custom', name: 'Custom OpenAI-Compatible', defaultUrl: '' }
 ];
 
 const AiConfigPage: React.FC = () => {
+  const [provider, setProvider] = useState('ollama');
+  const [baseUrl, setBaseUrl] = useState('http://localhost:11434');
+  const [apiKey, setApiKey] = useState('');
   const [chatModel, setChatModel] = useState('');
   const [embeddingModel, setEmbeddingModel] = useState('');
+  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
@@ -25,11 +22,35 @@ const AiConfigPage: React.FC = () => {
     fetch('/api/v1/ai/config')
       .then(res => res.json())
       .then(data => {
+        if (data.provider) setProvider(data.provider);
+        if (data.baseUrl) setBaseUrl(data.baseUrl);
+        if (data.apiKey) setApiKey(data.apiKey);
         if (data.chatModel) setChatModel(data.chatModel);
         if (data.embeddingModel) setEmbeddingModel(data.embeddingModel);
       })
       .catch(console.error);
   }, []);
+
+  useEffect(() => {
+    if (provider === 'ollama' && baseUrl) {
+      fetch(`/api/v1/ai/config/ollama-models?url=${encodeURIComponent(baseUrl)}`)
+        .then(res => res.json())
+        .then(data => {
+          if (Array.isArray(data)) {
+            setOllamaModels(data);
+          }
+        })
+        .catch(console.error);
+    }
+  }, [provider, baseUrl]);
+
+  const handleProviderChange = (newProvider: string) => {
+    setProvider(newProvider);
+    const selected = PROVIDERS.find(p => p.id === newProvider);
+    if (selected && selected.defaultUrl) {
+      setBaseUrl(selected.defaultUrl);
+    }
+  };
 
   const handleSave = async () => {
     setLoading(true);
@@ -38,7 +59,7 @@ const AiConfigPage: React.FC = () => {
       const res = await fetch('/api/v1/ai/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chatModel, embeddingModel })
+        body: JSON.stringify({ provider, baseUrl, apiKey, chatModel, embeddingModel })
       });
       const data = await res.json();
       if (res.ok) {
@@ -71,56 +92,145 @@ const AiConfigPage: React.FC = () => {
             </div>
           )}
 
-          <div style={{ marginBottom: '24px' }}>
+          {/* Provider Select */}
+          <div style={{ marginBottom: '20px' }}>
             <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-muted)', fontSize: '12px', fontWeight: 'bold' }}>
-              Generative Chat Model
+              AI Provider
             </label>
-            <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>
-              Select the local Ollama model to use for answering questions and generating responses.
-            </p>
             <select
-              value={chatModel}
-              onChange={e => setChatModel(e.target.value)}
+              value={provider}
+              onChange={e => handleProviderChange(e.target.value)}
               style={{
                 width: '100%', padding: '12px', borderRadius: '6px',
                 border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)',
                 outline: 'none', appearance: 'auto'
               }}
             >
-              <option value="" disabled>Select a chat model...</option>
-              {CHAT_MODELS.map(m => (
-                <option key={m} value={m}>{m}</option>
+              {PROVIDERS.map(p => (
+                <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </select>
           </div>
 
+          {/* Base URL */}
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-muted)', fontSize: '12px', fontWeight: 'bold' }}>
+              Base API URL
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. http://localhost:11434 or https://api.openai.com/v1"
+              value={baseUrl}
+              onChange={e => setBaseUrl(e.target.value)}
+              style={{
+                width: '100%', padding: '12px', borderRadius: '6px',
+                border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)',
+                outline: 'none', boxSizing: 'border-box'
+              }}
+            />
+          </div>
+
+          {/* API Key (Show for OpenAI, Groq, Custom) */}
+          {provider !== 'ollama' && (
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-muted)', fontSize: '12px', fontWeight: 'bold' }}>
+                API Key / Token
+              </label>
+              <input
+                type="password"
+                placeholder="Enter API Key / Token"
+                value={apiKey}
+                onChange={e => setApiKey(e.target.value)}
+                style={{
+                  width: '100%', padding: '12px', borderRadius: '6px',
+                  border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)',
+                  outline: 'none', boxSizing: 'border-box'
+                }}
+              />
+            </div>
+          )}
+
+          {/* Chat Model Name */}
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-muted)', fontSize: '12px', fontWeight: 'bold' }}>
+              Chat / Generation Model
+            </label>
+            {provider === 'ollama' ? (
+              <select
+                value={chatModel}
+                onChange={e => setChatModel(e.target.value)}
+                style={{
+                  width: '100%', padding: '12px', borderRadius: '6px',
+                  border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)',
+                  outline: 'none', appearance: 'auto'
+                }}
+              >
+                <option value="" disabled>Select a local model...</option>
+                {ollamaModels.map(m => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                placeholder="e.g. gpt-4o, llama3-70b-8192"
+                value={chatModel}
+                onChange={e => setChatModel(e.target.value)}
+                style={{
+                  width: '100%', padding: '12px', borderRadius: '6px',
+                  border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)',
+                  outline: 'none', boxSizing: 'border-box'
+                }}
+              />
+            )}
+          </div>
+
+          {/* Embedding Model Name */}
           <div style={{ marginBottom: '24px' }}>
             <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-muted)', fontSize: '12px', fontWeight: 'bold' }}>
               Embedding Model
             </label>
-            <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>
-              Select the local Ollama embedding model. Note: Changing this requires re-ingesting your SOPs to match the vector database dimensions.
+            {provider === 'ollama' ? (
+              <select
+                value={embeddingModel}
+                onChange={e => setEmbeddingModel(e.target.value)}
+                style={{
+                  width: '100%', padding: '12px', borderRadius: '6px',
+                  border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)',
+                  outline: 'none', appearance: 'auto'
+                }}
+              >
+                <option value="" disabled>Select a local embedding model...</option>
+                {ollamaModels.map(m => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                placeholder="e.g. text-embedding-3-small"
+                value={embeddingModel}
+                onChange={e => setEmbeddingModel(e.target.value)}
+                style={{
+                  width: '100%', padding: '12px', borderRadius: '6px',
+                  border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)',
+                  outline: 'none', boxSizing: 'border-box'
+                }}
+              />
+            )}
+            <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px', lineHeight: '1.4' }}>
+              ⚠️ Changing embedding model requires re-ingesting your SOPs to match the vector database dimensions.
             </p>
-            <select
-              value={embeddingModel}
-              onChange={e => setEmbeddingModel(e.target.value)}
-              style={{
-                width: '100%', padding: '12px', borderRadius: '6px',
-                border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)',
-                outline: 'none', appearance: 'auto'
-              }}
-            >
-              <option value="" disabled>Select an embedding model...</option>
-              {EMBEDDING_MODELS.map(m => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
           </div>
 
           <button
             onClick={handleSave}
-            disabled={loading || !chatModel || !embeddingModel}
-            style={{ padding: '12px 24px', background: 'var(--blue)', color: 'white', border: 'none', borderRadius: '6px', cursor: (loading || !chatModel || !embeddingModel) ? 'not-allowed' : 'pointer', fontWeight: 'bold', width: '100%' }}
+            disabled={loading || !chatModel || !embeddingModel || !baseUrl}
+            style={{
+              padding: '12px 24px', background: 'var(--blue)', color: 'white', border: 'none',
+              borderRadius: '6px', cursor: (loading || !chatModel || !embeddingModel || !baseUrl) ? 'not-allowed' : 'pointer',
+              fontWeight: 'bold', width: '100%'
+            }}
           >
             {loading ? 'Saving...' : 'Save Configuration'}
           </button>

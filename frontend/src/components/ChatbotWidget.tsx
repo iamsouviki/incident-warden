@@ -138,7 +138,7 @@ const ChatbotWidget: React.FC<Props> = ({ tenantId }) => {
           {/* Messages */}
           <div className="cb-messages">
             {messages.map(msg => (
-              <div key={msg.id}>
+              <React.Fragment key={msg.id}>
                 {msg.role === 'user' ? (
                   <div className="cb-msg cb-msg-user">
                     <div className="cb-bubble cb-bubble-user">{msg.text}</div>
@@ -146,13 +146,13 @@ const ChatbotWidget: React.FC<Props> = ({ tenantId }) => {
                 ) : (
                   renderBotMessage(msg)
                 )}
-              </div>
+              </React.Fragment>
             ))}
             <div ref={bottomRef} />
           </div>
 
           {/* Input */}
-          <div className="cb-input-area">
+          <div className="cb-input-bar">
             <input
               ref={inputRef}
               className="cb-input"

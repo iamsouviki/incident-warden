@@ -12,7 +12,10 @@ public class DynamicEmbeddingConfig {
 
     @Bean
     @Primary
-    public EmbeddingModel dynamicEmbeddingModel(OllamaEmbeddingModel ollamaEmbeddingModel, AiConfigService aiConfigService) {
-        return new DynamicEmbeddingModel(ollamaEmbeddingModel, aiConfigService);
+    public EmbeddingModel dynamicEmbeddingModel(
+            OllamaEmbeddingModel ollamaEmbeddingModel, 
+            AiConfigService aiConfigService,
+            org.springframework.web.client.RestClient.Builder restClientBuilder) {
+        return new DynamicEmbeddingModel(ollamaEmbeddingModel, aiConfigService, restClientBuilder);
     }
 }
