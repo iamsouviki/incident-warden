@@ -15,12 +15,11 @@
     <groupId>com.mcp</groupId>
     <artifactId>incident-automation</artifactId>
     <version>1.0.0</version>
-    <name>MCP Incident Automation</name>
-    <description>AI-powered IT incident automation platform</description>
+    <name>MCP Incident Automation (Stripped RAG)</name>
 
     <properties>
         <java.version>21</java.version>
-        <spring-ai.version>1.0.0</spring-ai.version>
+        <spring-ai.version>1.0.8</spring-ai.version>
     </properties>
 
     <dependencyManagement>
@@ -42,17 +41,10 @@
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
-        <!-- Spring Boot Data JPA -->
+        <!-- Redis for Caching -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-jpa</artifactId>
-        </dependency>
-
-        <!-- H2 Database for testing without PostgreSQL -->
-        <dependency>
-            <groupId>com.h2database</groupId>
-            <artifactId>h2</artifactId>
-            <scope>runtime</scope>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
 
         <!-- PostgreSQL -->
@@ -62,30 +54,6 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- Spring Security -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-security</artifactId>
-        </dependency>
-
-        <!-- Spring Validation -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-validation</artifactId>
-        </dependency>
-
-        <!-- Spring Actuator -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-actuator</artifactId>
-        </dependency>
-
-        <!-- Prometheus Metrics -->
-        <dependency>
-            <groupId>io.micrometer</groupId>
-            <artifactId>micrometer-registry-prometheus</artifactId>
-        </dependency>
-
         <!-- Lombok -->
         <dependency>
             <groupId>org.projectlombok</groupId>
@@ -93,161 +61,53 @@
             <optional>true</optional>
         </dependency>
 
-        <!-- JWT -->
-        <dependency>
-            <groupId>io.jsonwebtoken</groupId>
-            <artifactId>jjwt-api</artifactId>
-            <version>0.12.3</version>
-        </dependency>
-        <dependency>
-            <groupId>io.jsonwebtoken</groupId>
-            <artifactId>jjwt-impl</artifactId>
-            <version>0.12.3</version>
-            <scope>runtime</scope>
-        </dependency>
-        <dependency>
-            <groupId>io.jsonwebtoken</groupId>
-            <artifactId>jjwt-jackson</artifactId>
-            <version>0.12.3</version>
-            <scope>runtime</scope>
-        </dependency>
-
-        <!-- PDF Processing -->
-        <dependency>
-            <groupId>org.apache.pdfbox</groupId>
-            <artifactId>pdfbox</artifactId>
-            <version>2.0.28</version>
-        </dependency>
-
-        <!-- Document Processing (DOCX) -->
-        <dependency>
-            <groupId>org.apache.poi</groupId>
-            <artifactId>poi-ooxml</artifactId>
-            <version>5.2.3</version>
-        </dependency>
-
-        <!-- Resilience4J -->
-        <dependency>
-            <groupId>io.github.resilience4j</groupId>
-            <artifactId>resilience4j-spring-boot3</artifactId>
-            <version>2.1.0</version>
-        </dependency>
-
-        <!-- Google Guava -->
-        <dependency>
-            <groupId>com.google.guava</groupId>
-            <artifactId>guava</artifactId>
-            <version>32.1.3-jre</version>
-        </dependency>
-
-        <!-- ================================================================ -->
-        <!-- Spring AI 1.0.0 GA — all LLM providers + RAG                    -->
-        <!-- Version managed by spring-ai-bom in <dependencyManagement>       -->
-        <!-- NEW naming: spring-ai-starter-model-* / spring-ai-starter-vector-store-* -->
-        <!-- ================================================================ -->
-
-        <!-- ── Chat providers ──────────────────────────────────────────────── -->
-        <!-- OpenAI: GPT-4o, GPT-4-turbo, GPT-3.5-turbo + text-embedding-3-* -->
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-starter-model-openai</artifactId>
-        </dependency>
-
-        <!-- Ollama: local Llama3, Mistral, Phi3, Gemma — no API key needed -->
+        <!-- Ollama Chat Model -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-starter-model-ollama</artifactId>
         </dependency>
 
-        <!-- Anthropic: Claude-3.5-Sonnet, Claude-3-Opus, Claude-3-Haiku -->
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-starter-model-anthropic</artifactId>
-        </dependency>
-
-        <!-- Google Gemini via Vertex AI: Gemini-1.5-Pro, Gemini-1.5-Flash -->
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-starter-model-vertex-ai-gemini</artifactId>
-        </dependency>
-
-        <!-- ── RAG: Vector Store + Spring AI RAG pipeline ──────────────────── -->
-        <!-- pgvector store — auto-configures PgVectorStore against existing datasource -->
+        <!-- pgvector Vector Store -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-starter-vector-store-pgvector</artifactId>
         </dependency>
-
-        <!-- Spring AI RAG abstractions (DocumentRetriever, QuestionAnswerAdvisor, etc.) -->
+        
+        <!-- Spring AI RAG -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-rag</artifactId>
         </dependency>
-
-        <!-- VectorStore advisor for ChatClient.prompt().advisors(new QuestionAnswerAdvisor()) -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-advisors-vector-store</artifactId>
         </dependency>
 
-        <!-- Flyway Database Migration -->
+        <!-- Liquibase -->
         <dependency>
-            <groupId>org.flywaydb</groupId>
-            <artifactId>flyway-core</artifactId>
-            <version>9.22.3</version>
+            <groupId>org.liquibase</groupId>
+            <artifactId>liquibase-core</artifactId>
         </dependency>
 
-        <!-- ============================================================ -->
-        <!-- SSH Client (JSch maintained fork) — remote script execution  -->
-        <!-- Used by RemoteExecutionService to SSH into Linux/Windows hosts -->
-        <!-- ============================================================ -->
-        <dependency>
-            <groupId>com.github.mwiede</groupId>
-            <artifactId>jsch</artifactId>
-            <version>0.2.17</version>
-        </dependency>
-
-        <!-- Spring Retry — auto-retry vault lookups and SSH transient errors -->
-        <dependency>
-            <groupId>org.springframework.retry</groupId>
-            <artifactId>spring-retry</artifactId>
-        </dependency>
+        <!-- AOP for Spring AI Advisors -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-aop</artifactId>
         </dependency>
 
-        <!-- Testing -->
+        <!-- Tika Document Reader for PDF, DOCX, etc -->
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-tika-document-reader</artifactId>
         </dependency>
-    </dependencies>
 
-    <!-- Spring AI 1.0.0 GA is in Maven Central — no extra repositories needed -->
+    </dependencies>
 
     <build>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
-            </plugin>
-            <!-- Explicitly register Lombok annotation processor so Google Cloud / gRPC
-                 transitive dependencies (from Vertex AI starter) cannot interfere
-                 with auto-discovery of Lombok's javac annotation processor. -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-compiler-plugin</artifactId>
-                <configuration>
-                    <annotationProcessorPaths>
-                        <path>
-                            <groupId>org.projectlombok</groupId>
-                            <artifactId>lombok</artifactId>
-                            <version>${lombok.version}</version>
-                        </path>
-                    </annotationProcessorPaths>
-                </configuration>
             </plugin>
         </plugins>
     </build>

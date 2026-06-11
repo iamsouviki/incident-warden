@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { login, AuthUser } from '../services/api';
+import { Zap } from 'lucide-react';
 import './LoginPage.css';
 
 interface Props {
@@ -31,7 +32,7 @@ export default function LoginPage({ onLogin }: Props) {
       <div className="login-card">
         {/* Logo / brand */}
         <div className="login-logo">
-          <span className="login-logo-icon">⚡</span>
+          <span className="login-logo-icon"><Zap size={28} /></span>
           <div>
             <div className="login-logo-title">MCP Incident&nbsp;Automation</div>
             <div className="login-logo-sub">AI-Powered Operations Platform</div>

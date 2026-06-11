@@ -1,0 +1,2 @@
+-- Sample DML data (optional)
+-- INSERT INTO vector_store (content, metadata, embedding) VALUES ('Initial SOP', '{"doc_type": "SOP"}', '[0,0,0]');
