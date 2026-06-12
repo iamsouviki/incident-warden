@@ -21,8 +21,8 @@ public class AiConfigService {
     private String provider = "ollama";
     private String baseUrl = "http://localhost:11434";
     private String apiKey = "";
-    private String activeChatModel = "qwen2.5-coder:latest";
-    private String activeEmbeddingModel = "nomic-embed-text";
+    private String activeChatModel = "qwen2.5-coder:3b";
+    private String activeEmbeddingModel = "nomic-embed-text:latest";
 
     @PostConstruct
     public void init() {

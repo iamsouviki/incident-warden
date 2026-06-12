@@ -6,6 +6,7 @@ import org.springframework.context.annotation.Primary;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.ollama.OllamaEmbeddingModel;
 import com.company.mcp.service.AiConfigService;
+import org.springframework.web.client.RestClient.Builder;
 
 @Configuration
 public class DynamicEmbeddingConfig {
@@ -15,7 +16,7 @@ public class DynamicEmbeddingConfig {
     public EmbeddingModel dynamicEmbeddingModel(
             OllamaEmbeddingModel ollamaEmbeddingModel, 
             AiConfigService aiConfigService,
-            org.springframework.web.client.RestClient.Builder restClientBuilder) {
+            Builder restClientBuilder) {
         return new DynamicEmbeddingModel(ollamaEmbeddingModel, aiConfigService, restClientBuilder);
     }
 }
