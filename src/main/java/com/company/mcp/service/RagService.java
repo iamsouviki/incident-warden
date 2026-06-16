@@ -48,10 +48,16 @@ public class RagService {
     private RagFusionService ragFusionService;
 
     @Autowired
-    private JdbcTemplate jdbcTemplate;
+    private com.company.mcp.repository.VectorStoreEntityRepository vectorStoreEntityRepository;
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private com.company.mcp.repository.IncidentRepository incidentRepository;
+
+    @Autowired
+    private com.company.mcp.repository.ExternalIncidentRepository externalIncidentRepository;
 
     private ChatClient chatClient;
     private String cachedProvider;
@@ -67,7 +73,7 @@ public class RagService {
         }
     }
 
-    private synchronized ChatClient getOrBuildChatClient() {
+    public synchronized org.springframework.ai.chat.client.ChatClient getOrBuildChatClient() {
         String provider = aiConfigService.getProvider();
         String baseUrl = aiConfigService.getBaseUrl();
         String apiKey = aiConfigService.getApiKey();
@@ -206,24 +212,23 @@ public class RagService {
                     activeClient, question, defaultTopK, defaultSimilarityThreshold);
 
             // 2. Get lexical results (Full-Text Search)
-            List<Document> lexicalDocs = Collections.emptyList();
+            List<Document> lexicalDocs = new ArrayList<>();
             try {
-                lexicalDocs = jdbcTemplate.query(
-                    "SELECT id, content, metadata FROM mcp_rag.vector_store " +
-                    "WHERE fts_vector @@ plainto_tsquery('english', ?) LIMIT ?",
-                    (rs, rowNum) -> {
-                        String id = rs.getString("id");
-                        String content = rs.getString("content");
-                        String metadataJson = rs.getString("metadata");
-                        Map<String, Object> metadata = new HashMap<>();
+                java.util.List<com.company.mcp.model.VectorStoreEntity> entities = 
+                    vectorStoreEntityRepository.findByFullTextSearch(question, defaultTopK);
+                for (com.company.mcp.model.VectorStoreEntity ent : entities) {
+                    Map<String, Object> metadata = new HashMap<>();
+                    if (ent.getMetadata() != null) {
                         try {
-                            metadata = objectMapper.readValue(metadataJson, Map.class);
+                            metadata = objectMapper.readValue(ent.getMetadata(), Map.class);
                         } catch (Exception ignored) {}
-                        return new Document(id, content, metadata);
-                    },
-                    question,
-                    defaultTopK
-                );
+                    }
+                    lexicalDocs.add(new Document(
+                        ent.getId() != null ? ent.getId().toString() : UUID.randomUUID().toString(),
+                        ent.getContent(),
+                        metadata
+                    ));
+                }
                 log.info("[RAG-HYBRID] Retrieved {} FTS documents", lexicalDocs.size());
             } catch (Exception e) {
                 log.error("[RAG-HYBRID] Lexical search failed: {}", e.getMessage());
@@ -238,9 +243,31 @@ public class RagService {
                     .map(Document::getText)
                     .collect(Collectors.joining("\n\n"));
 
-            String prompt = "You are a strict technical assistant. Answer the user's question solely based on the provided retrieved SOP context. If the answer is not present in the context, you must reply exactly with 'NOT_FOUND'. Do not answer anything outside these docs.\n\n" +
-                    "Context:\n" + context + "\n\n" +
-                    "Question: " + question;
+            // 5. Fetch all incidents context
+            StringBuilder incidentsContext = new StringBuilder();
+            try {
+                List<com.company.mcp.model.Incident> manual = incidentRepository.findAll();
+                List<com.company.mcp.model.ExternalIncident> external = externalIncidentRepository.findAll();
+                for (com.company.mcp.model.Incident inc : manual) {
+                    incidentsContext.append(String.format("- Ticket: %s, Subject: '%s', Status: %s, Assignee: %s, Assigned Team: %s, Priority: %s, Created: %s\n",
+                        inc.getExternalId(), inc.getSubject(), inc.getStatus(), inc.getAssignee(), inc.getAssignedGteam(), inc.getPriority(), inc.getCreatedAt()));
+                }
+                for (com.company.mcp.model.ExternalIncident ext : external) {
+                    incidentsContext.append(String.format("- Ticket: %s, Subject: '%s', Status: %s, Assignee: %s, Assigned Team: %s, Priority: %s, Source: %s, Created: %s\n",
+                        ext.getExternalId(), ext.getSubject(), ext.getStatus(), ext.getAssignee(), ext.getAssignedGteam(), ext.getPriority(), ext.getExternalSource(), ext.getCreatedAt()));
+                }
+            } catch (Exception e) {
+                log.error("[RAG] Failed to build incidents context: {}", e.getMessage());
+            }
+
+            String prompt = "You are a helpful assistant for the Incident Management and SOP platform. You have access to:\n\n" +
+                    "SOP Context:\n" + context + "\n\n" +
+                    "System Incident Data:\n" + incidentsContext.toString() + "\n\n" +
+                    "Answer the user's question: " + question + "\n\n" +
+                    "Instructions:\n" +
+                    "- If the query is about incident status, assignee, priority, or other incident details, use the System Incident Data to answer.\n" +
+                    "- If the query is about troubleshooting procedures, use the SOP Context.\n" +
+                    "- If the query cannot be answered by either the SOP Context or the System Incident Data, answer based on your general knowledge but mention that it is not in the official system database.";
 
             String activeModel = aiConfigService.getActiveChatModel();
             log.info("[RAG] Routing chat query to model: {}", activeModel);
@@ -250,16 +277,16 @@ public class RagService {
                     .call()
                     .content();
             
-            if (answer == null || answer.trim().equals("NOT_FOUND")) {
-                log.info("[RAG] Answer not found in context.");
-                return "I'm sorry, but I couldn't find the answer to your question in the currently ingested SOP documents.";
+            if (answer == null) {
+                log.info("[RAG] No answer generated.");
+                return "I'm sorry, but I couldn't generate an answer to that question.";
             }
             
-            log.info("[RAG] Strict answer generated ({} chars)", answer.length());
+            log.info("[RAG] Answer generated ({} chars)", answer.length());
             return answer;
         } catch (Exception e) {
             log.error("[RAG] askStrictSopRag failed: {}", e.getMessage());
-            return "I'm sorry, but an error occurred while searching the SOPs.";
+            return "I'm sorry, but an error occurred while generating the answer.";
         }
     }
 

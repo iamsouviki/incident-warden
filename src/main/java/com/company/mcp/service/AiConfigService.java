@@ -16,7 +16,7 @@ public class AiConfigService {
     private static final Logger log = LoggerFactory.getLogger(AiConfigService.class);
 
     @Autowired
-    private JdbcTemplate jdbcTemplate;
+    private com.company.mcp.repository.SystemConfigRepository systemConfigRepository;
 
     private String provider = "ollama";
     private String baseUrl = "http://localhost:11434";
@@ -28,10 +28,10 @@ public class AiConfigService {
     public void init() {
         try {
             log.info("[CONFIG] Loading AI configurations from database...");
-            List<Map<String, Object>> rows = jdbcTemplate.queryForList("SELECT config_key, config_value FROM system_config");
-            for (Map<String, Object> row : rows) {
-                String key = (String) row.get("config_key");
-                String val = (String) row.get("config_value");
+            java.util.List<com.company.mcp.model.SystemConfig> configs = systemConfigRepository.findAll();
+            for (com.company.mcp.model.SystemConfig config : configs) {
+                String key = config.getConfigKey();
+                String val = config.getConfigValue();
                 if (val == null) continue;
 
                 switch (key) {
@@ -60,11 +60,7 @@ public class AiConfigService {
 
     private void updateConfig(String key, String value) {
         try {
-            jdbcTemplate.update(
-                "INSERT INTO system_config (config_key, config_value) VALUES (?, ?) " +
-                "ON CONFLICT (config_key) DO UPDATE SET config_value = EXCLUDED.config_value",
-                key, value
-            );
+            systemConfigRepository.save(new com.company.mcp.model.SystemConfig(key, value));
             log.info("[CONFIG] Persisted configuration key={} value={}", key, value);
         } catch (Exception e) {
             log.error("[CONFIG] Failed to persist configuration key={} value={}: {}", key, value, e.getMessage());

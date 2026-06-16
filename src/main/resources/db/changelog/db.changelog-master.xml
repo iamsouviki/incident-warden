@@ -21,4 +21,20 @@
         <sqlFile path="versions/1.1/config.sql" relativeToChangelogFile="true" />
     </changeSet>
 
+    <changeSet id="1.2-incidents" author="mcp-incident-automation">
+        <sqlFile path="versions/1.2/incidents.sql" relativeToChangelogFile="true" />
+    </changeSet>
+
+    <changeSet id="1.3-comments-history" author="mcp-incident-automation">
+        <sqlFile path="versions/1.3/comments_history.sql" relativeToChangelogFile="true" />
+    </changeSet>
+
+    <changeSet id="1.4-external-incidents" author="mcp-incident-automation">
+        <sqlFile path="versions/1.4/external_incidents.sql" relativeToChangelogFile="true" />
+    </changeSet>
+
+    <changeSet id="1.5-teams" author="mcp-incident-automation">
+        <sqlFile path="versions/1.5/teams.sql" relativeToChangelogFile="true" />
+    </changeSet>
+
 </databaseChangeLog>

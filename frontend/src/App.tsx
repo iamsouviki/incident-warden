@@ -3,21 +3,24 @@ import './App.css';
 import LoginPage from './pages/LoginPage';
 import RagIngestPage from './pages/RagIngestPage';
 import AiConfigPage from './pages/AiConfigPage';
+import IncidentManagementPage from './pages/IncidentManagementPage';
 import ChatbotWidget from './components/ChatbotWidget';
-import { Database, Settings, LogOut, User } from 'lucide-react';
+import { Database, Settings, LogOut, User, ShieldAlert, Plus } from 'lucide-react';
 import { AuthUser, getToken, getStoredUser, clearAuth, refreshToken, isTokenExpiringSoon } from './services/api';
 
 const DEFAULT_TENANT_ID = 'tenant-1';
 
 const PAGE_TITLES: Record<string, string> = {
   sop: 'SOP INGEST & RAG KNOWLEDGE BASE',
-  ai_config: 'AI CONFIGURATION'
+  ai_config: 'AI CONFIGURATION',
+  incidents: 'INCIDENT DIRECTORY'
 };
 
 const App: React.FC = () => {
   const [user, setUser] = useState<AuthUser | null>(getStoredUser());
-  const [page, setPage] = useState<string>('sop');
+  const [page, setPage] = useState<string>('incidents');
   const [now, setNow]   = useState(new Date());
+  const [showCreateModal, setShowCreateModal] = useState(false);
 
   // Keep topbar clock updated
   useEffect(() => {
@@ -90,6 +93,12 @@ const App: React.FC = () => {
                onClick={() => setPage('sop')}>
             <span className="nav-icon"><Database size={18} /></span> SOP Ingest
           </div>
+
+          <div className="nav-label" style={{ marginTop: '20px' }}>Operations</div>
+          <div className={`nav-item ${page === 'incidents' ? 'active' : ''}`}
+               onClick={() => setPage('incidents')}>
+            <span className="nav-icon"><ShieldAlert size={18} /></span> Incidents
+          </div>
           
           <div className="nav-label" style={{ marginTop: '20px' }}>Settings</div>
           <div className={`nav-item ${page === 'ai_config' ? 'active' : ''}`}
@@ -137,7 +146,32 @@ const App: React.FC = () => {
         {/* Page content */}
         {page === 'sop' && <RagIngestPage />}
         {page === 'ai_config' && <AiConfigPage />}
+        {page === 'incidents' && (
+          <IncidentManagementPage
+            showCreateModal={showCreateModal}
+            setShowCreateModal={setShowCreateModal}
+          />
+        )}
       </div>
+
+      {/* ── Floating Create Incident Button (below the chat toggle) ── */}
+      <button
+        className="cb-toggle cb-toggle-incident"
+        style={{
+          bottom: '28px',
+          right: '28px',
+          background: 'var(--red)',
+          boxShadow: '0 8px 30px rgba(220,38,38,0.25)'
+        }}
+        onClick={() => {
+          setPage('incidents');
+          setShowCreateModal(true);
+        }}
+        title="Create Incident"
+      >
+        <Plus size={24} />
+        <span className="cb-toggle-label">Create Incident</span>
+      </button>
       
       {/* ── Floating Chatbot ── */}
       <ChatbotWidget tenantId={activeTenantId} />

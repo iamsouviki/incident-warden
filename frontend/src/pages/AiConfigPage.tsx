@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 const PROVIDERS = [
   { id: 'ollama', name: 'Ollama (Local)', defaultUrl: 'http://localhost:11434' },
   { id: 'openai', name: 'OpenAI', defaultUrl: 'https://api.openai.com/v1' },
+  { id: 'gemini', name: 'Google Gemini', defaultUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' },
   { id: 'groq', name: 'Groq', defaultUrl: 'https://api.groq.com/openai/v1' },
   { id: 'custom', name: 'Custom OpenAI-Compatible', defaultUrl: '' }
 ];
