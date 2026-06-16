@@ -23,7 +23,12 @@ public class AiConfigController {
                 "baseUrl", aiConfigService.getBaseUrl(),
                 "apiKey", aiConfigService.getApiKey(),
                 "chatModel", aiConfigService.getActiveChatModel(),
-                "embeddingModel", aiConfigService.getActiveEmbeddingModel()
+                "embeddingModel", aiConfigService.getActiveEmbeddingModel(),
+                "autoResolveThreshold", aiConfigService.getAutoResolveThreshold(),
+                "hitlThreshold", aiConfigService.getHitlThreshold(),
+                "blastRadiusThreshold", aiConfigService.getBlastRadiusThreshold(),
+                "servicenowEnabled", aiConfigService.getServicenowEnabled(),
+                "freshserviceEnabled", aiConfigService.getFreshserviceEnabled()
         ));
     }
 
@@ -57,6 +62,11 @@ public class AiConfigController {
         String apiKey = body.getOrDefault("apiKey", "");
         String chatModel = body.get("chatModel");
         String embeddingModel = body.get("embeddingModel");
+        String autoResolveThreshold = body.get("autoResolveThreshold");
+        String hitlThreshold = body.get("hitlThreshold");
+        String blastRadiusThreshold = body.get("blastRadiusThreshold");
+        String servicenowEnabled = body.get("servicenowEnabled");
+        String freshserviceEnabled = body.get("freshserviceEnabled");
 
         if (provider == null || provider.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "provider is required"));
@@ -75,9 +85,15 @@ public class AiConfigController {
         aiConfigService.setApiKey(apiKey);
         aiConfigService.setActiveChatModel(chatModel);
         aiConfigService.setActiveEmbeddingModel(embeddingModel);
+        
+        if (autoResolveThreshold != null) aiConfigService.setAutoResolveThreshold(autoResolveThreshold);
+        if (hitlThreshold != null) aiConfigService.setHitlThreshold(hitlThreshold);
+        if (blastRadiusThreshold != null) aiConfigService.setBlastRadiusThreshold(blastRadiusThreshold);
+        if (servicenowEnabled != null) aiConfigService.setServicenowEnabled(servicenowEnabled);
+        if (freshserviceEnabled != null) aiConfigService.setFreshserviceEnabled(freshserviceEnabled);
 
         return ResponseEntity.ok(Map.of(
-                "message", "AI Configuration updated successfully",
+                "message", "AI & Platform Configuration updated successfully",
                 "provider", provider,
                 "chatModel", chatModel,
                 "embeddingModel", embeddingModel

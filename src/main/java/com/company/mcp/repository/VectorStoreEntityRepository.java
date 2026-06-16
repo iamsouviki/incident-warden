@@ -12,7 +12,10 @@ import java.util.UUID;
 @Repository
 public interface VectorStoreEntityRepository extends JpaRepository<VectorStoreEntity, UUID> {
 
-    @Query(value = "SELECT id, content, metadata FROM mcp_rag.vector_store " +
+    @Query(value = "SELECT id, content, metadata FROM sop.vector_store " +
                    "WHERE fts_vector @@ plainto_tsquery('english', :queryStr) LIMIT :lim", nativeQuery = true)
     List<VectorStoreEntity> findByFullTextSearch(@Param("queryStr") String queryStr, @Param("lim") int lim);
+
+    @Query(value = "SELECT id, content, metadata FROM sop.vector_store WHERE metadata->>'doc_type' = 'SOP'", nativeQuery = true)
+    List<VectorStoreEntity> findAllSops();
 }

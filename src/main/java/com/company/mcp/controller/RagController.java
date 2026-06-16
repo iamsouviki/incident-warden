@@ -65,4 +65,34 @@ public class RagController {
         String answer = ragService.askStrictSopRag(session.getId(), question);
         return ResponseEntity.ok(Map.of("answer", answer));
     }
+
+    @GetMapping("/sops")
+    public ResponseEntity<?> getAllSops() {
+        return ResponseEntity.ok(ragService.getAllSops());
+    }
+
+    @PutMapping("/sops/{id}")
+    public ResponseEntity<?> updateSop(@PathVariable java.util.UUID id, @RequestBody Map<String, String> body) {
+        String title = body.get("title");
+        String description = body.get("description");
+        if (title == null || description == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "title and description are required"));
+        }
+        boolean success = ragService.updateSop(id, title, description);
+        if (success) {
+            return ResponseEntity.ok(Map.of("message", "SOP successfully updated and re-embedded."));
+        } else {
+            return ResponseEntity.status(500).body(Map.of("error", "Failed to update SOP."));
+        }
+    }
+
+    @DeleteMapping("/sops/{id}")
+    public ResponseEntity<?> deleteSop(@PathVariable java.util.UUID id) {
+        boolean success = ragService.deleteSop(id);
+        if (success) {
+            return ResponseEntity.ok(Map.of("message", "SOP successfully deleted."));
+        } else {
+            return ResponseEntity.status(500).body(Map.of("error", "Failed to delete SOP."));
+        }
+    }
 }

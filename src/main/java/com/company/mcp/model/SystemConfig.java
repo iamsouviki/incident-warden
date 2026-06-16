@@ -3,7 +3,7 @@ package com.company.mcp.model;
 import jakarta.persistence.*;
 
 @Entity
-@Table(name = "system_config")
+@Table(name = "system_config", schema = "config")
 public class SystemConfig {
 
     @Id

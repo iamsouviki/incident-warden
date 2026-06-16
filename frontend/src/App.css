@@ -289,6 +289,7 @@ body::before {
 /* Ingest forms and elements refinement */
 input[type="text"], 
 input[type="password"], 
+input[type="date"],
 textarea, 
 select {
   width: 100%; 
@@ -306,6 +307,7 @@ select {
 
 input[type="text"]:focus, 
 input[type="password"]:focus, 
+input[type="date"]:focus,
 textarea:focus, 
 select:focus {
   border-color: var(--accent);
@@ -339,3 +341,254 @@ button {
   .content { padding: 16px; } 
   .topbar { padding: 16px; } 
 }
+
+/* ── Unified Top Navigation Layout (ServiceNow & Michaels.com theme) ── */
+:root {
+  --michaels-red: #c8102e;
+  --michaels-red-glow: rgba(200, 16, 46, 0.15);
+  --michaels-red-dark: #a00d24;
+  --topbar-bg: #111111;
+}
+
+.top-nav-layout {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: var(--bg);
+}
+
+.topbar-unified {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 64px;
+  background: var(--topbar-bg);
+  border-bottom: 3px solid var(--michaels-red);
+  padding: 0 24px;
+  color: #ffffff;
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+}
+
+.topbar-left-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.logo-text {
+  font-family: var(--sans);
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: -0.5px;
+}
+
+.brand-primary {
+  color: #ffffff;
+}
+
+.brand-secondary {
+  color: var(--michaels-red);
+}
+
+.tenant-badge {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #e2e8f0;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 12px;
+  letter-spacing: 0.2px;
+}
+
+.topbar-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+}
+
+.topbar-nav-btn {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 0 16px;
+  height: 100%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.2s ease;
+  position: relative;
+  user-select: none;
+}
+
+.topbar-nav-btn:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.topbar-nav-btn:focus,
+.topbar-nav-btn:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.topbar-nav-btn.active {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.topbar-nav-btn.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--michaels-red);
+}
+
+.topbar-right-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.btn-create-incident-top {
+  background: var(--michaels-red);
+  color: #ffffff;
+  border: none;
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  box-shadow: 0 2px 8px rgba(200, 16, 46, 0.3);
+}
+
+.btn-create-incident-top:hover {
+  background: var(--michaels-red-dark);
+  box-shadow: 0 4px 12px rgba(200, 16, 46, 0.4);
+  transform: translateY(-1px);
+}
+
+.btn-create-incident-top:active {
+  transform: translateY(0);
+}
+
+.live-status-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  color: #10b981;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 10px;
+  letter-spacing: 0.5px;
+}
+
+.live-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 6px #10b981;
+  animation: pulse 2s infinite;
+}
+
+.user-profile-pill {
+  display: flex;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 6px;
+}
+
+.btn-logout-unified {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #94a3b8;
+  padding: 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.btn-logout-unified:hover {
+  border-color: var(--michaels-red);
+  color: #ffffff;
+  background: rgba(200, 16, 46, 0.1);
+}
+
+.main-content-layout {
+  flex: 1;
+  padding: 24px 40px 40px;
+  max-width: 100% !important;
+  width: 100%;
+  margin: 0 auto;
+  animation: fadeUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  display: flex;
+  flex-direction: column;
+}
+
+.content-page-header {
+  margin-bottom: 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+}
+
+.content-title {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  color: var(--text);
+  text-transform: uppercase;
+}
+
+.content-subtitle {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.content-view-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Override existing active tag styles for buttons to prevent conflicts */
+.btn-primary {
+  background: var(--michaels-red) !important;
+  border-color: var(--michaels-red) !important;
+  color: white !important;
+}
+.btn-primary:hover {
+  background: var(--michaels-red-dark) !important;
+}
+

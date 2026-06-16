@@ -37,4 +37,12 @@
         <sqlFile path="versions/1.5/teams.sql" relativeToChangelogFile="true" />
     </changeSet>
 
+    <changeSet id="1.6-statuses" author="mcp-incident-automation">
+        <sqlFile path="versions/1.6/statuses.sql" relativeToChangelogFile="true" />
+    </changeSet>
+
+    <changeSet id="1.7-schema-refactoring" author="mcp-incident-automation">
+        <sqlFile path="versions/1.7/schema_refactoring.sql" relativeToChangelogFile="true" />
+    </changeSet>
+
 </databaseChangeLog>

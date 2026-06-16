@@ -1,19 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import './App.css';
 import LoginPage from './pages/LoginPage';
-import RagIngestPage from './pages/RagIngestPage';
+import SopPage from './pages/SopPage';
+import TeamsPage from './pages/TeamsPage';
 import AiConfigPage from './pages/AiConfigPage';
 import IncidentManagementPage from './pages/IncidentManagementPage';
+import ToolsPage from './pages/ToolsPage';
 import ChatbotWidget from './components/ChatbotWidget';
-import { Database, Settings, LogOut, User, ShieldAlert, Plus } from 'lucide-react';
-import { AuthUser, getToken, getStoredUser, clearAuth, refreshToken, isTokenExpiringSoon } from './services/api';
+import { Database, Settings, LogOut, User, ShieldAlert, Plus, Terminal, Wrench, BookOpen, Clock, Users } from 'lucide-react';
+import { AuthUser, getStoredUser, clearAuth, refreshToken, isTokenExpiringSoon } from './services/api';
 
 const DEFAULT_TENANT_ID = 'tenant-1';
 
 const PAGE_TITLES: Record<string, string> = {
-  sop: 'SOP INGEST & RAG KNOWLEDGE BASE',
-  ai_config: 'AI CONFIGURATION',
-  incidents: 'INCIDENT DIRECTORY'
+  incidents: 'INCIDENT DIRECTORY',
+  sop: 'STANDARD OPERATING PROCEDURES (SOP)',
+  tools: 'REMEDIATION TOOLS & SCRIPTS',
+  teams: 'SUPPORT TEAMS & MEMBERS',
+  ai_config: 'AI CONFIGURATION'
 };
 
 const App: React.FC = () => {
@@ -22,7 +26,16 @@ const App: React.FC = () => {
   const [now, setNow]   = useState(new Date());
   const [showCreateModal, setShowCreateModal] = useState(false);
 
-  // Keep topbar clock updated
+  // Parse query parameters on load
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const pageParam = params.get('page');
+    if (pageParam && PAGE_TITLES[pageParam]) {
+      setPage(pageParam);
+    }
+  }, []);
+
+  // Keep clock updated
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
@@ -64,7 +77,6 @@ const App: React.FC = () => {
     };
   }, [user]);
 
-  // ── Show login when no user ──
   if (!user) {
     return <LoginPage onLogin={(u) => setUser(u)} />;
   }
@@ -79,104 +91,108 @@ const App: React.FC = () => {
     || (activeTenantId === DEFAULT_TENANT_ID ? 'Primary Workspace' : 'Workspace');
 
   return (
-    <div className="shell">
-      {/* ── Sidebar ───────────────────────────────────────────────── */}
-      <nav className="sidebar">
-        <div className="logo">
-          <div className="logo-tag">MCP Automation</div>
-          <div className="logo-name">INCIDENT.AI</div>
+    <div className="shell top-nav-layout">
+      {/* ── ServiceNow & Michaels-themed Top Banner Header ────────────────── */}
+      <header className="topbar-unified">
+        <div className="topbar-left-brand">
+          <div className="logo-text">
+            <span className="brand-primary">INCIDENT</span>
+            <span className="brand-secondary">.AI</span>
+          </div>
+          <span className="tenant-badge" title={`Workspace ID: ${activeTenantId}`}>{activeWorkspaceName}</span>
         </div>
 
-        <div className="nav-section">
-          <div className="nav-label">Knowledge</div>
-          <div className={`nav-item ${page === 'sop' ? 'active' : ''}`}
-               onClick={() => setPage('sop')}>
-            <span className="nav-icon"><Database size={18} /></span> SOP Ingest
+        {/* Top Navigation Tabs */}
+        <nav className="topbar-nav">
+          <button 
+            className={`topbar-nav-btn ${page === 'incidents' ? 'active' : ''}`}
+            onClick={() => setPage('incidents')}
+          >
+            <ShieldAlert size={16} /> Incident
+          </button>
+          <button 
+            className={`topbar-nav-btn ${page === 'sop' ? 'active' : ''}`}
+            onClick={() => setPage('sop')}
+          >
+            <BookOpen size={16} /> SOPs
+          </button>
+          <button 
+            className={`topbar-nav-btn ${page === 'tools' ? 'active' : ''}`}
+            onClick={() => setPage('tools')}
+          >
+            <Wrench size={16} /> Tools
+          </button>
+          <button 
+            className={`topbar-nav-btn ${page === 'teams' ? 'active' : ''}`}
+            onClick={() => setPage('teams')}
+          >
+            <Users size={16} /> Teams
+          </button>
+          <button 
+            className={`topbar-nav-btn ${page === 'ai_config' ? 'active' : ''}`}
+            onClick={() => setPage('ai_config')}
+          >
+            <Settings size={16} /> Config
+          </button>
+        </nav>
+
+        {/* Topbar Actions & Profile */}
+        <div className="topbar-right-actions">
+          <button 
+            className="btn-create-incident-top"
+            onClick={() => {
+              setPage('incidents');
+              setShowCreateModal(true);
+            }}
+          >
+            <Plus size={16} /> New Incident
+          </button>
+
+          <div className="live-status-pill">
+            <span className="live-status-dot"></span>LIVE
           </div>
 
-          <div className="nav-label" style={{ marginTop: '20px' }}>Operations</div>
-          <div className={`nav-item ${page === 'incidents' ? 'active' : ''}`}
-               onClick={() => setPage('incidents')}>
-            <span className="nav-icon"><ShieldAlert size={18} /></span> Incidents
+          <div className="user-profile-pill" title={`Role: ${user.role}`}>
+            <User size={14} style={{ marginRight: '6px' }} />
+            {user.username}
           </div>
-          
-          <div className="nav-label" style={{ marginTop: '20px' }}>Settings</div>
-          <div className={`nav-item ${page === 'ai_config' ? 'active' : ''}`}
-               onClick={() => setPage('ai_config')}>
-            <span className="nav-icon"><Settings size={18} /></span> AI Config
-          </div>
+
+          <button className="btn-logout-unified" onClick={handleLogout} title="Log Out">
+            <LogOut size={14} />
+          </button>
         </div>
+      </header>
 
-        <div className="sidebar-footer">
-          <div className="nav-item text-muted" onClick={handleLogout}>
-            <span className="nav-icon"><LogOut size={18} /></span> Log Out
-          </div>
-          <div className="tenant-chip" title={activeTenantId}>
-            <div className="label">WORKSPACE</div>
-            <div className="name">{activeWorkspaceName}</div>
-          </div>
-          <div className="status-dot"></div>
-        </div>
-      </nav>
-
-      {/* ── Main ──────────────────────────────────────────────────── */}
-      <div className="main">
-        {/* Topbar */}
-        <div className="topbar">
+      {/* ── Main Content Container ────────────────────────────────── */}
+      <main className="main-content-layout">
+        {/* Page title header */}
+        <div className="content-page-header">
           <div>
-            <div className="page-title">{PAGE_TITLES[page] ?? 'DASHBOARD'}</div>
-            <div className="page-subtitle">
-              Last updated: {now.toUTCString().replace('GMT', 'UTC')}
-            </div>
-          </div>
-          <div className="topbar-right">
-            <div className="pill">
-              <span className="live-dot"></span>LIVE
-            </div>
-            <div className="pill user-pill" title={`Role: ${user.role}`}>
-              <User size={14} style={{ marginRight: '6px' }} />
-              {user.username}
-            </div>
-            <button className="btn-logout" onClick={handleLogout} title="Sign out">
-              ⎋ Logout
-            </button>
+            <h1 className="content-title">{PAGE_TITLES[page]}</h1>
+            <p className="content-subtitle">System Time: {now.toUTCString().replace('GMT', 'UTC')}</p>
           </div>
         </div>
 
-        {/* Page content */}
-        {page === 'sop' && <RagIngestPage />}
-        {page === 'ai_config' && <AiConfigPage />}
-        {page === 'incidents' && (
-          <IncidentManagementPage
-            showCreateModal={showCreateModal}
-            setShowCreateModal={setShowCreateModal}
-          />
-        )}
-      </div>
+        {/* Page switcher */}
+        <div className="content-view-wrap">
+          {page === 'sop' && <SopPage />}
+          {page === 'teams' && <TeamsPage />}
+          {page === 'ai_config' && <AiConfigPage />}
+          {page === 'incidents' && (
+            <IncidentManagementPage
+              showCreateModal={showCreateModal}
+              setShowCreateModal={setShowCreateModal}
+            />
+          )}
+          {page === 'tools' && <ToolsPage />}
+        </div>
+      </main>
 
-      {/* ── Floating Create Incident Button (below the chat toggle) ── */}
-      <button
-        className="cb-toggle cb-toggle-incident"
-        style={{
-          bottom: '28px',
-          right: '28px',
-          background: 'var(--red)',
-          boxShadow: '0 8px 30px rgba(220,38,38,0.25)'
-        }}
-        onClick={() => {
-          setPage('incidents');
-          setShowCreateModal(true);
-        }}
-        title="Create Incident"
-      >
-        <Plus size={24} />
-        <span className="cb-toggle-label">Create Incident</span>
-      </button>
-      
-      {/* ── Floating Chatbot ── */}
+      {/* ── Floating Chatbot (Only one floating widget now) ── */}
       <ChatbotWidget tenantId={activeTenantId} />
     </div>
   );
 };
 
 export default App;
+

@@ -683,4 +683,8 @@ public class IncidentService {
         }
         return "No web results found due to network error.";
     }
+
+    public List<IncidentHistory> getAllHistory() {
+        return incidentHistoryRepository.findAll(org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "updatedAt"));
+    }
 }

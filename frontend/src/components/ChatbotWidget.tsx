@@ -57,10 +57,10 @@ const ChatbotWidget: React.FC<Props> = ({ tenantId }) => {
     setLoading(true);
 
     try {
-      const response = await fetch('/api/v1/rag/chat', {
+      const response = await authFetch('/api/v1/rag/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: q }),
+        body: JSON.stringify({ question: q, tenantId }),
       });
 
       if (response.ok) {
@@ -117,7 +117,6 @@ const ChatbotWidget: React.FC<Props> = ({ tenantId }) => {
         title="SOP Assistant"
       >
         {open ? <X size={20} /> : <MessageCircle size={24} />}
-        {!open && <span className="cb-toggle-label">SOP Chat</span>}
       </button>
 
       {/* Chat panel */}

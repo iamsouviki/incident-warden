@@ -165,17 +165,6 @@
 }
 
 /* Layout Grid */
-.main-content-layout {
-  display: grid;
-  grid-template-columns: 280px 1fr;
-  gap: 24px;
-  align-items: start;
-}
-
-/* When side panel is open, sidebar is hidden, we use 45% / 55% split for table/details */
-.main-content-layout:has(.details-panel-container) {
-  grid-template-columns: 1fr 1.2fr;
-}
 
 /* Sidebar Filters */
 .filters-sidebar {
@@ -815,4 +804,19 @@
   justify-content: flex-end;
   gap: 12px;
   margin-top: 8px;
+}
+
+/* Spinning loader icon */
+.spin-icon {
+  animation: spinAnim 1s linear infinite;
+}
+
+@keyframes spinAnim {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* AI Suggestion card */
+.ai-suggestion-card select {
+  cursor: pointer;
 }

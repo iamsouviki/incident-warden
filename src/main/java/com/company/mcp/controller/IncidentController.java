@@ -91,4 +91,9 @@ public class IncidentController {
         Map<String, String> result = incidentService.analyzeIncident(subject, description);
         return ResponseEntity.ok(result);
     }
+
+    @GetMapping("/history")
+    public ResponseEntity<List<IncidentHistory>> getAllHistory() {
+        return ResponseEntity.ok(incidentService.getAllHistory());
+    }
 }

@@ -23,6 +23,11 @@ public class AiConfigService {
     private String apiKey = "";
     private String activeChatModel = "qwen2.5-coder:3b";
     private String activeEmbeddingModel = "nomic-embed-text:latest";
+    private String autoResolveThreshold = "1.00";
+    private String hitlThreshold = "0.80";
+    private String blastRadiusThreshold = "0.40";
+    private String servicenowEnabled = "false";
+    private String freshserviceEnabled = "false";
 
     @PostConstruct
     public void init() {
@@ -49,6 +54,21 @@ public class AiConfigService {
                         break;
                     case "active_embedding_model":
                         this.activeEmbeddingModel = val;
+                        break;
+                    case "auto_resolve_threshold":
+                        this.autoResolveThreshold = val;
+                        break;
+                    case "hitl_threshold":
+                        this.hitlThreshold = val;
+                        break;
+                    case "blast_radius_threshold":
+                        this.blastRadiusThreshold = val;
+                        break;
+                    case "servicenow_enabled":
+                        this.servicenowEnabled = val;
+                        break;
+                    case "freshservice_enabled":
+                        this.freshserviceEnabled = val;
                         break;
                 }
             }
@@ -110,5 +130,50 @@ public class AiConfigService {
     public void setActiveEmbeddingModel(String activeEmbeddingModel) {
         this.activeEmbeddingModel = activeEmbeddingModel;
         updateConfig("active_embedding_model", activeEmbeddingModel);
+    }
+
+    public String getAutoResolveThreshold() {
+        return autoResolveThreshold;
+    }
+
+    public void setAutoResolveThreshold(String autoResolveThreshold) {
+        this.autoResolveThreshold = autoResolveThreshold;
+        updateConfig("auto_resolve_threshold", autoResolveThreshold);
+    }
+
+    public String getHitlThreshold() {
+        return hitlThreshold;
+    }
+
+    public void setHitlThreshold(String hitlThreshold) {
+        this.hitlThreshold = hitlThreshold;
+        updateConfig("hitl_threshold", hitlThreshold);
+    }
+
+    public String getBlastRadiusThreshold() {
+        return blastRadiusThreshold;
+    }
+
+    public void setBlastRadiusThreshold(String blastRadiusThreshold) {
+        this.blastRadiusThreshold = blastRadiusThreshold;
+        updateConfig("blast_radius_threshold", blastRadiusThreshold);
+    }
+
+    public String getServicenowEnabled() {
+        return servicenowEnabled;
+    }
+
+    public void setServicenowEnabled(String servicenowEnabled) {
+        this.servicenowEnabled = servicenowEnabled;
+        updateConfig("servicenow_enabled", servicenowEnabled);
+    }
+
+    public String getFreshserviceEnabled() {
+        return freshserviceEnabled;
+    }
+
+    public void setFreshserviceEnabled(String freshserviceEnabled) {
+        this.freshserviceEnabled = freshserviceEnabled;
+        updateConfig("freshservice_enabled", freshserviceEnabled);
     }
 }

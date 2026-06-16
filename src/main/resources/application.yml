@@ -119,7 +119,7 @@ spring:
     # Spring AI auto-creates the 'vector_store' table when initialize-schema=true.
     vectorstore:
       pgvector:
-        schema-name: mcp_rag
+        schema-name: sop
         initialize-schema: false          # ← schema now managed by Liquibase
         index-type: HNSW                  # ← HNSW | IVFFLAT (HNSW is faster for query)
         distance-type: COSINE_DISTANCE    # ← COSINE_DISTANCE | EUCLIDEAN_DISTANCE | NEGATIVE_INNER_PRODUCT

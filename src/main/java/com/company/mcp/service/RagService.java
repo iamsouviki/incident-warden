@@ -402,6 +402,41 @@ public class RagService {
         }
     }
 
+    public List<com.company.mcp.model.VectorStoreEntity> getAllSops() {
+        return vectorStoreEntityRepository.findAllSops();
+    }
+
+    public boolean updateSop(UUID id, String title, String description) {
+        if (!isVectorStoreAvailable()) return false;
+        try {
+            vectorStore.delete(List.of(id.toString()));
+            String content = String.format("SOP: %s\nDescription: %s", title, description);
+            org.springframework.ai.document.Document doc = org.springframework.ai.document.Document.builder()
+                    .id(id.toString())
+                    .text(content)
+                    .metadata(Map.of("sop_title", title, "doc_type", TYPE_SOP))
+                    .build();
+            vectorStore.add(List.of(doc));
+            log.info("[RAG] Updated and re-embedded SOP id={}", id);
+            return true;
+        } catch (Exception e) {
+            log.error("[RAG] Failed to update SOP id={}: {}", id, e.getMessage());
+            return false;
+        }
+    }
+
+    public boolean deleteSop(UUID id) {
+        if (!isVectorStoreAvailable()) return false;
+        try {
+            vectorStore.delete(List.of(id.toString()));
+            log.info("[RAG] Deleted SOP id={}", id);
+            return true;
+        } catch (Exception e) {
+            log.error("[RAG] Failed to delete SOP id={}: {}", id, e.getMessage());
+            return false;
+        }
+    }
+
     public boolean isVectorStoreAvailable() {
         return ragEnabled && vectorStore != null;
     }

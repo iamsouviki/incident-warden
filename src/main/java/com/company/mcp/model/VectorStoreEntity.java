@@ -4,7 +4,7 @@ import jakarta.persistence.*;
 import java.util.UUID;
 
 @Entity
-@Table(name = "vector_store", schema = "mcp_rag")
+@Table(name = "vector_store", schema = "sop")
 public class VectorStoreEntity {
 
     @Id

@@ -5,7 +5,7 @@ import com.fasterxml.jackson.annotation.JsonBackReference;
 import java.util.UUID;
 
 @Entity
-@Table(name = "team_employees", schema = "incident")
+@Table(name = "team_employees", schema = "teams")
 public class TeamEmployee {
 
     @Id
