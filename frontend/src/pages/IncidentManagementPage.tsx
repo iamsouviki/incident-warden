@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import './IncidentManagementPage.css';
 import { Plus, RefreshCw, Search, Calendar, User, ShieldAlert, Clock, MessageSquare, History, Edit, Save, Wrench, Play, Loader } from 'lucide-react';
 import { authFetch, getStoredUser } from '../services/api';
+import SearchableSelect from '../components/SearchableSelect';
 
 export interface Incident {
   id: string;
@@ -451,7 +452,7 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
       </div>
 
       {/* Advanced Filters topbar row */}
-      <div className="card" style={{ padding: '12px 16px', marginBottom: '16px', background: 'var(--surface2)', display: 'grid', gridTemplateColumns: 'repeat(7, 1fr) auto', gap: '10px', alignItems: 'end', flexShrink: 0 }}>
+      <div className="card" style={{ padding: '12px 16px', marginBottom: '16px', background: 'var(--surface2)', display: 'grid', gridTemplateColumns: 'repeat(7, 1fr) auto', gap: '10px', alignItems: 'end', flexShrink: 0, overflow: 'visible' }}>
         <div>
           <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Subject Search</label>
           <div style={{ position: 'relative' }}>
@@ -465,43 +466,35 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
         </div>
         <div>
           <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Assignee</label>
-          <select
+          <SearchableSelect
+            id="filter-assignee"
+            placeholder="Search assignee..."
+            allLabel="All Assignees"
             value={assignee}
-            onChange={e => setAssignee(e.target.value)}
-            style={{ height: '36px', padding: '6px 10px', fontSize: '12px', cursor: 'pointer' }}
-          >
-            <option value="">All Assignees</option>
-            {assignedGteam ? (
-              (teams.find(t => t.name === assignedGteam)?.employees || []).map(emp => (
-                <option key={emp.id} value={emp.username}>{emp.username}</option>
-              ))
-            ) : (
-              Array.from(new Map(teams.flatMap(t => t.employees).map(emp => [emp.username, emp])).values()).map(emp => (
-                <option key={emp.id} value={emp.username}>{emp.username}</option>
-              ))
-            )}
-          </select>
+            onChange={setAssignee}
+            options={(
+              assignedGteam
+                ? (teams.find(t => t.name === assignedGteam)?.employees || [])
+                : Array.from(new Map(teams.flatMap(t => t.employees).map(emp => [emp.username, emp])).values())
+            ).map(emp => ({ value: emp.username, label: emp.username }))}
+          />
         </div>
         <div>
           <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Team</label>
-          <select
+          <SearchableSelect
+            id="filter-team"
+            placeholder="Search team..."
+            allLabel="All Teams"
             value={assignedGteam}
-            onChange={e => {
-              const selectedTeam = e.target.value;
+            onChange={(selectedTeam) => {
               setAssignedGteam(selectedTeam);
               if (selectedTeam) {
                 const teamEmployees = teams.find(t => t.name === selectedTeam)?.employees || [];
-                const isAssigneeInTeam = teamEmployees.some(emp => emp.username === assignee);
-                if (!isAssigneeInTeam) {
-                  setAssignee('');
-                }
+                if (!teamEmployees.some(emp => emp.username === assignee)) setAssignee('');
               }
             }}
-            style={{ height: '36px', padding: '6px 10px', fontSize: '12px', cursor: 'pointer' }}
-          >
-            <option value="">All Teams</option>
-            {teams.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
-          </select>
+            options={teams.map(t => ({ value: t.name, label: t.name }))}
+          />
         </div>
         <div>
           <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Priority</label>
@@ -680,115 +673,32 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
                         </div>
 
                         <div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Status</label>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setShowAddStatusInput(!showAddStatusInput);
-                                setNewStatusName('');
-                              }}
-                              style={{
-                                background: 'transparent',
-                                border: 'none',
-                                color: 'var(--michaels-red)',
-                                fontSize: '10px',
-                                fontWeight: 700,
-                                cursor: 'pointer',
-                                padding: '0'
-                              }}
-                            >
-                              {showAddStatusInput ? 'Cancel' : '+ Add Status'}
-                            </button>
-                          </div>
-
-                          {showAddStatusInput ? (
-                            <div style={{ display: 'flex', gap: '6px' }}>
-                              <input
-                                type="text"
-                                value={newStatusName}
-                                onChange={e => setNewStatusName(e.target.value)}
-                                placeholder="New status..."
-                                style={{ padding: '4px 8px', fontSize: '11px', height: '32px' }}
-                              />
-                              <button
-                                type="button"
-                                onClick={async () => {
-                                  if (!newStatusName.trim()) return;
-                                  try {
-                                    const res = await authFetch('/api/v1/statuses', {
-                                      method: 'POST',
-                                      headers: { 'Content-Type': 'application/json' },
-                                      body: JSON.stringify({ name: newStatusName.trim() })
-                                    });
-                                    if (res.ok) {
-                                      const saved = await res.json();
-                                      const updatedStatuses = [...statuses, saved.name];
-                                      setStatuses(updatedStatuses);
-                                      setNewStatusName('');
-                                      setShowAddStatusInput(false);
-
-                                      if (editMode) {
-                                        setEditStatus(saved.name);
-                                      } else {
-                                        const updateRes = await authFetch(`/api/v1/incidents/${selectedIncident.id}?username=${currentUsername}`, {
-                                          method: 'PUT',
-                                          headers: { 'Content-Type': 'application/json' },
-                                          body: JSON.stringify({ ...selectedIncident, status: saved.name })
-                                        });
-                                        if (updateRes.ok) {
-                                          const updated = await updateRes.json();
-                                          setSelectedIncident(updated);
-                                          fetchIncidents();
-                                        }
-                                      }
-                                    }
-                                  } catch (err) {
-                                    console.error('Failed to create status', err);
+                          <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Status</label>
+                          <select
+                            value={editMode ? editStatus : selectedIncident.status}
+                            onChange={async (e) => {
+                              const newStatus = e.target.value;
+                              if (editMode) {
+                                setEditStatus(newStatus);
+                              } else {
+                                try {
+                                  const res = await authFetch(`/api/v1/incidents/${selectedIncident.id}?username=${currentUsername}`, {
+                                    method: 'PUT',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ ...selectedIncident, status: newStatus })
+                                  });
+                                  if (res.ok) {
+                                    const updated = await res.json();
+                                    setSelectedIncident(updated);
+                                    fetchIncidents();
                                   }
-                                }}
-                                style={{
-                                  background: 'var(--michaels-red)',
-                                  color: 'white',
-                                  border: 'none',
-                                  padding: '4px 10px',
-                                  borderRadius: '4px',
-                                  cursor: 'pointer',
-                                  fontSize: '11px',
-                                  fontWeight: 600,
-                                  height: '32px'
-                                }}
-                              >
-                                Save
-                              </button>
-                            </div>
-                          ) : (
-                            <select
-                              value={editMode ? editStatus : selectedIncident.status}
-                              onChange={async (e) => {
-                                const newStatus = e.target.value;
-                                if (editMode) {
-                                  setEditStatus(newStatus);
-                                } else {
-                                  try {
-                                    const res = await authFetch(`/api/v1/incidents/${selectedIncident.id}?username=${currentUsername}`, {
-                                      method: 'PUT',
-                                      headers: { 'Content-Type': 'application/json' },
-                                      body: JSON.stringify({ ...selectedIncident, status: newStatus })
-                                    });
-                                    if (res.ok) {
-                                      const updated = await res.json();
-                                      setSelectedIncident(updated);
-                                      fetchIncidents();
-                                    }
-                                  } catch (err) { console.error(err); }
-                                }
-                              }}
-                              style={{ cursor: 'pointer', height: '36px', padding: '6px 12px', fontSize: '13px' }}
-                            >
-                              {statuses.map(s => <option key={s} value={s}>{s}</option>)}
-                            </select>
-                          )}
+                                } catch (err) { console.error(err); }
+                              }
+                            }}
+                            style={{ cursor: 'pointer', height: '36px', padding: '6px 12px', fontSize: '13px' }}
+                          >
+                            {statuses.map(s => <option key={s} value={s}>{s}</option>)}
+                          </select>
                         </div>
                       </div>
 

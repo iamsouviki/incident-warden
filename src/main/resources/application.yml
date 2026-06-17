@@ -402,3 +402,4 @@ server:
 
 spring.mvc.async.request-timeout: -1  # no async timeout — LLM on low-spec device
 
+

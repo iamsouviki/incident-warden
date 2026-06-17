@@ -42,7 +42,16 @@
     </changeSet>
 
     <changeSet id="1.7-schema-refactoring" author="mcp-incident-automation">
-        <sqlFile path="versions/1.7/schema_refactoring.sql" relativeToChangelogFile="true" />
+        <sqlFile path="versions/1.7/schema_refactoring.sql" relativeToChangelogFile="true" splitStatements="false" />
+    </changeSet>
+
+    <changeSet id="1.8-auth-users" author="mcp-incident-automation">
+        <validCheckSum>9:2e7834de673e79d07de7c7fefacd468e</validCheckSum>
+        <sqlFile path="versions/1.8/users.sql" relativeToChangelogFile="true" splitStatements="false" />
+    </changeSet>
+
+    <changeSet id="1.9-seed-users-fix" author="mcp-incident-automation">
+        <sqlFile path="versions/1.9/seed_users_fix.sql" relativeToChangelogFile="true" />
     </changeSet>
 
 </databaseChangeLog>

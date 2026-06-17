@@ -592,3 +592,33 @@ button {
   background: var(--michaels-red-dark) !important;
 }
 
+/* ── Responsive ────────────────────────────────────────────────────────────── */
+@media (max-width: 1100px) {
+  .main-content-layout { padding: 16px 20px 32px; }
+  .topbar-nav-btn { padding: 0 10px; font-size: 12px; }
+}
+
+@media (max-width: 860px) {
+  .topbar-unified { padding: 0 12px; gap: 8px; height: auto; min-height: 56px; flex-wrap: wrap; padding-top: 8px; padding-bottom: 8px; }
+  .topbar-nav { gap: 0; flex-wrap: wrap; }
+  .topbar-nav-btn { font-size: 11px; padding: 6px 8px; height: auto; }
+  .btn-create-incident-top { display: none; }
+  .main-content-layout { padding: 12px 14px 24px; }
+}
+
+@media (max-width: 640px) {
+  .topbar-left-brand .tenant-badge { display: none; }
+  .topbar-nav-btn span { display: none; } /* hide text, keep icons */
+  .main-content-layout { padding: 10px 10px 20px; }
+  .content-title { font-size: 14px; }
+}
+
+/* spin animation reused by refresh buttons */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin 0.7s linear infinite; }
+
+/* Slide-in for floating menus and dropdowns */
+@keyframes ssSlideIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
