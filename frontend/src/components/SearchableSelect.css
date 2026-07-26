@@ -1,0 +1,136 @@
+/* ── SearchableSelect — compact enterprise style ─────────────────────────── */
+.ss-root {
+  position: relative;
+  width: 100%;
+}
+
+.ss-trigger {
+  width: 100%;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px;
+  background: var(--surface);
+  border: 1px solid var(--border-bright);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: var(--sans);
+  color: var(--text-muted);
+  transition: border-color 0.15s, box-shadow 0.15s;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.ss-trigger.ss-has-value {
+  color: var(--text);
+}
+
+.ss-trigger:hover,
+.ss-trigger.ss-open {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
+
+.ss-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.ss-arrow {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: transform 0.15s;
+  margin-left: 4px;
+}
+
+.ss-arrow-up {
+  transform: rotate(180deg);
+}
+
+/* Dropdown panel — compact, enterprise */
+.ss-dropdown {
+  position: absolute;
+  top: calc(100% + 3px);
+  left: 0;
+  right: 0;
+  min-width: 180px;
+  background: var(--surface);
+  border: 1px solid var(--border-bright);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.22);
+  z-index: 99999;
+  overflow: hidden;
+  animation: ssSlideIn 0.1s ease;
+}
+
+@keyframes ssSlideIn {
+  from { opacity: 0; transform: translateY(-3px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.ss-search-wrap {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ss-search-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.ss-search {
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  height: auto !important;
+  font-size: 12px !important;
+  color: var(--text) !important;
+  width: 100%;
+  outline: none !important;
+}
+
+.ss-list {
+  max-height: 160px;    /* compact — shows ~6 items */
+  overflow-y: auto;
+  padding: 3px;
+}
+
+.ss-option {
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background 0.08s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ss-option:hover {
+  background: var(--surface2);
+  color: var(--text);
+}
+
+.ss-option.ss-selected {
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.ss-empty {
+  padding: 8px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+}

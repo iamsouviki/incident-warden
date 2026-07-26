@@ -1,155 +1,99 @@
 package com.company.mcp.controller;
 
-import com.company.mcp.agent.AgentContext;
 import com.company.mcp.model.Incident;
-import com.company.mcp.repository.IncidentRepository;
+import com.company.mcp.model.IncidentComment;
+import com.company.mcp.model.IncidentHistory;
 import com.company.mcp.service.IncidentService;
-import com.company.mcp.util.ApiErrorResponses;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.HashMap;
+import java.security.Principal;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 
-/**
- * Incident Management API - Phase 8 REST endpoints.
- * Handles incident creation, retrieval, and HITL approval workflow.
- */
-@Slf4j
 @RestController
 @RequestMapping("/api/v1/incidents")
-@RequiredArgsConstructor
 public class IncidentController {
-    private final IncidentService incidentService;
-    private final IncidentRepository incidentRepository;
 
-    /**
-     * Create a new incident and queue it for processing.
-     */
+    @Autowired
+    private IncidentService incidentService;
+
     @PostMapping
-    public ResponseEntity<?> createIncident(@RequestBody Incident incident) {
-        try {
-            Incident created = incidentService.createIncident(incident);
-            return ResponseEntity.ok(created);
-        } catch (Exception e) {
-            log.error("Failed to create incident", e);
-            return ApiErrorResponses.badRequest();
-        }
+    public ResponseEntity<Incident> createIncident(@RequestBody Incident incident) {
+        Incident created = incidentService.createIncident(incident);
+        return ResponseEntity.ok(created);
     }
 
-    /**
-     * Get incident by ID.
-     */
-    @GetMapping("/{incidentId}")
-    public ResponseEntity<?> getIncident(@PathVariable UUID incidentId) {
-        try {
-            Optional<Incident> incident = incidentService.getIncidentById(incidentId);
-            return incident.map(ResponseEntity::ok)
-                .orElseGet(() -> ResponseEntity.notFound().build());
-        } catch (Exception e) {
-            log.error("Failed to get incident", e);
-            return ApiErrorResponses.badRequest();
-        }
-    }
-
-    /**
-     * Process a single incident through the agent pipeline.
-     */
-    @PostMapping("/{incidentId}/process")
-    public ResponseEntity<?> processIncident(
-            @PathVariable UUID incidentId,
-            @RequestParam String tenantId) {
-        try {
-            AgentContext context = incidentService.processIncident(incidentId, tenantId);
-            
-            Map<String, Object> response = new HashMap<>();
-            response.put("incidentId", incidentId);
-            response.put("decision", context.getDecision());
-            response.put("confidenceScore", context.getFinalConfidenceScore());
-            response.put("status", context.getIncident().getStatus());
-            response.put("traceId", context.getTraceId());
-
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            log.error("Failed to process incident", e);
-            return ApiErrorResponses.badRequest();
-        }
-    }
-
-    /**
-     * Retry processing a failed incident.
-     */
-    @PostMapping("/{incidentId}/retry")
-    public ResponseEntity<?> retryIncident(
-            @PathVariable UUID incidentId,
-            @RequestParam String tenantId) {
-        try {
-            AgentContext context = incidentService.retryIncident(incidentId, tenantId);
-            
-            Map<String, Object> response = new HashMap<>();
-            response.put("incidentId", incidentId);
-            response.put("decision", context.getDecision());
-            response.put("confidenceScore", context.getFinalConfidenceScore());
-
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            log.error("Failed to retry incident", e);
-            return ApiErrorResponses.badRequest();
-        }
-    }
-
-    /**
-     * List incidents for a tenant.
-     */
     @GetMapping
-    public ResponseEntity<?> listIncidents(
-            @RequestParam(required = false) String tenantId,
-            @RequestParam(required = false) String status,
-            @RequestParam(defaultValue = "20") int limit) {
-        try {
-            List<Incident> incidents;
-            if (tenantId != null) {
-                UUID tenantUuid = UUID.fromString(tenantId);
-                if (status != null) {
-                    incidents = incidentRepository.findByTenantIdAndStatusOrderByCreatedAtDesc(tenantUuid, status);
-                } else {
-                    incidents = incidentRepository.findByTenantIdOrderByCreatedAtDesc(tenantUuid);
-                }
-                if (incidents.size() > limit) {
-                    incidents = incidents.subList(0, limit);
-                }
-            } else {
-                incidents = java.util.Collections.emptyList();
-            }
-            return ResponseEntity.ok(incidents);
-        } catch (Exception e) {
-            log.error("Failed to list incidents", e);
-            return ApiErrorResponses.badRequest();
-        }
+    public ResponseEntity<List<Incident>> getIncidents(
+            @RequestParam(required = false) String subject,
+            @RequestParam(required = false) String description,
+            @RequestParam(required = false) String assignee,
+            @RequestParam(required = false) String assignedGteam,
+            @RequestParam(required = false) String priority,
+            @RequestParam(required = false) String createdDate,
+            @RequestParam(required = false) String updatedDate,
+            @RequestParam(required = false) String dueDate) {
+        
+        List<Incident> results = incidentService.searchIncidents(
+                subject, description, assignee, assignedGteam,
+                priority, createdDate, updatedDate, dueDate
+        );
+        return ResponseEntity.ok(results);
     }
 
-    /**
-     * Get incident statistics for a tenant.
-     */
-    @GetMapping("/stats/{tenantId}")
-    public ResponseEntity<?> getStats(@PathVariable String tenantId) {
-        try {
-            Map<String, Object> stats = new HashMap<>();
-            stats.put("totalPending", incidentService.countByTenantAndStatus(tenantId, "PENDING"));
-            stats.put("processing", incidentService.countByTenantAndStatus(tenantId, "PROCESSING"));
-            stats.put("autoResolved", incidentService.countAutoResolved(tenantId));
-            stats.put("hitlPending", incidentService.countByTenantAndStatus(tenantId, "HITL_PENDING"));
-            stats.put("escalated", incidentService.countByTenantAndStatus(tenantId, "ESCALATED"));
+    @GetMapping("/{id}")
+    public ResponseEntity<Incident> getIncident(@PathVariable UUID id) {
+        return ResponseEntity.ok(incidentService.getIncidentById(id));
+    }
 
-            return ResponseEntity.ok(stats);
-        } catch (Exception e) {
-            log.error("Failed to get stats", e);
-            return ApiErrorResponses.badRequest();
-        }
+    @PutMapping("/{id}")
+    public ResponseEntity<Incident> updateIncident(
+            @PathVariable UUID id,
+            @RequestBody Incident incident,
+            @RequestParam(required = false, defaultValue = "User") String username) {
+        Incident updated = incidentService.updateIncident(id, incident, username);
+        return ResponseEntity.ok(updated);
+    }
+
+    @GetMapping("/{id}/comments")
+    public ResponseEntity<List<IncidentComment>> getComments(@PathVariable UUID id) {
+        return ResponseEntity.ok(incidentService.getComments(id));
+    }
+
+    @PostMapping("/{id}/comments")
+    public ResponseEntity<IncidentComment> addComment(
+            @PathVariable UUID id,
+            @RequestBody Map<String, String> body) {
+        String author = body.getOrDefault("author", "User");
+        String text = body.get("commentText");
+        IncidentComment comment = incidentService.addComment(id, author, text);
+        return ResponseEntity.ok(comment);
+    }
+
+    @GetMapping("/{id}/history")
+    public ResponseEntity<List<IncidentHistory>> getHistory(@PathVariable UUID id) {
+        return ResponseEntity.ok(incidentService.getHistory(id));
+    }
+
+    @PostMapping("/sync")
+    public ResponseEntity<Map<String, Object>> syncIncidents() {
+        Map<String, Object> result = incidentService.syncExternalIncidents();
+        return ResponseEntity.ok(result);
+    }
+
+    @PostMapping("/analyze")
+    public ResponseEntity<Map<String, String>> analyzeIncident(@RequestBody Map<String, String> body) {
+        String subject = body.getOrDefault("subject", "");
+        String description = body.getOrDefault("description", "");
+        Map<String, String> result = incidentService.analyzeIncident(subject, description);
+        return ResponseEntity.ok(result);
+    }
+
+    @GetMapping("/history")
+    public ResponseEntity<List<IncidentHistory>> getAllHistory() {
+        return ResponseEntity.ok(incidentService.getAllHistory());
     }
 }

@@ -32,11 +32,10 @@ spring:
         jdbc:
           batch_size: 20
   
-  flyway:
+  liquibase:
     enabled: true
-    locations: classpath:db/migration
-    baseline-on-migrate: false
-    out-of-order: false
+    change-log: classpath:db/changelog/db.changelog-master.xml
+    default-schema: mcp_rag
 
   autoconfigure:
     exclude:
@@ -75,8 +74,9 @@ spring:
           temperature: 0.0
       embedding:
         enabled: ${SPRING_AI_OLLAMA_EMBED_ENABLED:true}      # ← set true when Ollama is running
+        model: nomic-embed-text
         options:
-          model: ${OLLAMA_EMBED_MODEL:nomic-embed-text}      # ← nomic-embed-text | mxbai-embed-large
+          model: nomic-embed-text
 
     # ── OpenAI ──────────────────────────────────────────────────
     openai:
@@ -119,11 +119,20 @@ spring:
     # Spring AI auto-creates the 'vector_store' table when initialize-schema=true.
     vectorstore:
       pgvector:
-        initialize-schema: true           # ← auto-creates vector_store table on startup
+        schema-name: sop
+        initialize-schema: false          # ← schema now managed by Liquibase
         index-type: HNSW                  # ← HNSW | IVFFLAT (HNSW is faster for query)
         distance-type: COSINE_DISTANCE    # ← COSINE_DISTANCE | EUCLIDEAN_DISTANCE | NEGATIVE_INNER_PRODUCT
-        dimensions: 1536                  # ← must match embedding model: 1536 for text-embedding-3-small
+        dimensions: 768                   # ← must match embedding model: 1536 for text-embedding-3-small
                                           #   768 for nomic-embed-text (Ollama)
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      ssl:
+        enabled: ${REDIS_SSL_ENABLED:false}
 
   security:
     oauth2:
@@ -392,4 +401,5 @@ server:
       max: 200
 
 spring.mvc.async.request-timeout: -1  # no async timeout — LLM on low-spec device
+
 

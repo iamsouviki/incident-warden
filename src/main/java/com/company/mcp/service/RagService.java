@@ -1,7 +1,7 @@
 package com.company.mcp.service;
 
-import com.company.mcp.model.ResolvedIncidentKb;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.vectorstore.QuestionAnswerAdvisor;
 import org.springframework.ai.document.Document;
@@ -11,53 +11,120 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.util.*;
+import org.springframework.core.io.Resource;
+import org.springframework.ai.reader.tika.TikaDocumentReader;
+import org.springframework.ai.transformer.splitter.TokenTextSplitter;
+import org.springframework.ai.ollama.OllamaChatModel;
+import org.springframework.ai.ollama.api.OllamaApi;
+import org.springframework.ai.ollama.api.OllamaOptions;
+import org.springframework.ai.openai.OpenAiChatModel;
+import org.springframework.ai.openai.api.OpenAiApi;
+import org.springframework.ai.openai.OpenAiChatOptions;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.jdbc.core.JdbcTemplate;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
-/**
- * RagService — Retrieval-Augmented Generation using Spring AI 1.0.0 GA.
- *
- * <h3>Core capabilities</h3>
- * <ul>
- *   <li><b>Ingest</b>: Store SOP steps, incident patterns, and runbook content
- *       into the pgvector {@link VectorStore} with metadata for filtering.</li>
- *   <li><b>Retrieve</b>: Similarity search against ingested documents using
- *       the active {@code EmbeddingModel} (OpenAI, Ollama, Anthropic, Gemini).</li>
- *   <li><b>Augment</b>: Wire {@link QuestionAnswerAdvisor} into a
- *       {@link ChatClient} call so the LLM answers using retrieved SOP context.</li>
- * </ul>
- *
- * <h3>Graceful degradation</h3>
- * All methods check whether {@code VectorStore} and {@code ChatClient} are
- * present. When no embedding provider is activated, the service returns empty
- * results without throwing exceptions — the existing pgvector JPA queries in
- * {@code SopRankerAgent} and {@code PatternMatcherAgent} remain the fallback.
- *
- * <h3>Activation (pgvector VectorStore)</h3>
- * <pre>
- *   # 1. Enable a provider with embedding support, e.g. Ollama:
- *   export SPRING_AI_OLLAMA_EMBED_ENABLED=true
- *
- *   # 2. Run PostgreSQL with pgvector extension:
- *   CREATE EXTENSION IF NOT EXISTS vector;
- *
- *   # 3. Start app — Spring AI auto-creates the 'vector_store' table.
- * </pre>
- *
- * @see <a href="https://docs.spring.io/spring-ai/reference/api/vectordbs/pgvector.html">
- *      Spring AI pgvector VectorStore docs</a>
- */
-@Slf4j
+import java.util.*;
+import java.util.stream.Collectors;
+
 @Service
 public class RagService {
 
-    // ── Spring AI beans (optional — null when no provider enabled) ────────────
+    private static final Logger log = LoggerFactory.getLogger(RagService.class);
+
+    @Autowired
+    private AiConfigService aiConfigService;
+
     @Autowired(required = false)
     private VectorStore vectorStore;
 
     @Autowired(required = false)
-    private ChatClient chatClient;
+    private ChatClient.Builder chatClientBuilder;
 
-    // ── Config ────────────────────────────────────────────────────────────────
+    @Autowired
+    private org.springframework.web.client.RestClient.Builder restClientBuilder;
+
+    @Autowired
+    private RagFusionService ragFusionService;
+
+    @Autowired
+    private com.company.mcp.repository.VectorStoreEntityRepository vectorStoreEntityRepository;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    @Autowired
+    private com.company.mcp.repository.IncidentRepository incidentRepository;
+
+    @Autowired
+    private com.company.mcp.repository.ExternalIncidentRepository externalIncidentRepository;
+
+    private ChatClient chatClient;
+    private String cachedProvider;
+    private String cachedBaseUrl;
+    private String cachedApiKey;
+    private String cachedModel;
+
+    @jakarta.annotation.PostConstruct
+    public void init() {
+        // Fallback to auto-configured builder initially
+        if (chatClientBuilder != null) {
+            this.chatClient = chatClientBuilder.build();
+        }
+    }
+
+    public synchronized org.springframework.ai.chat.client.ChatClient getOrBuildChatClient() {
+        String provider = aiConfigService.getProvider();
+        String baseUrl = aiConfigService.getBaseUrl();
+        String apiKey = aiConfigService.getApiKey();
+        String model = aiConfigService.getActiveChatModel();
+
+        if (chatClient != null 
+                && Objects.equals(provider, cachedProvider)
+                && Objects.equals(baseUrl, cachedBaseUrl)
+                && Objects.equals(apiKey, cachedApiKey)
+                && Objects.equals(model, cachedModel)) {
+            return chatClient;
+        }
+
+        log.info("[RAG] Configuring ChatClient dynamically for provider={} model={} url={}", provider, model, baseUrl);
+        try {
+            org.springframework.ai.chat.model.ChatModel modelInstance;
+            if ("ollama".equalsIgnoreCase(provider)) {
+                OllamaApi api = OllamaApi.builder()
+                        .baseUrl(baseUrl)
+                        .restClientBuilder(restClientBuilder)
+                        .build();
+                modelInstance = OllamaChatModel.builder()
+                        .ollamaApi(api)
+                        .defaultOptions(OllamaOptions.builder().model(model).build())
+                        .build();
+            } else {
+                // OpenAI, Groq, OpenRouter, Anthropic (if OpenAI-compatible endpoint), etc.
+                OpenAiApi api = OpenAiApi.builder()
+                        .baseUrl(baseUrl)
+                        .apiKey(apiKey)
+                        .restClientBuilder(restClientBuilder)
+                        .build();
+                modelInstance = OpenAiChatModel.builder()
+                        .openAiApi(api)
+                        .defaultOptions(OpenAiChatOptions.builder().model(model).build())
+                        .build();
+            }
+
+            this.chatClient = ChatClient.builder(modelInstance).build();
+            this.cachedProvider = provider;
+            this.cachedBaseUrl = baseUrl;
+            this.cachedApiKey = apiKey;
+            this.cachedModel = model;
+        } catch (Exception e) {
+            log.error("[RAG] Failed to build dynamic ChatClient: {}. Falling back to default.", e.getMessage());
+            if (this.chatClient == null && chatClientBuilder != null) {
+                this.chatClient = chatClientBuilder.build();
+            }
+        }
+        return chatClient;
+    }
 
     @Value("${mcp.rag.top-k:5}")
     private int defaultTopK;
@@ -68,26 +135,8 @@ public class RagService {
     @Value("${mcp.rag.enabled:true}")
     private boolean ragEnabled;
 
-    // ── Document type labels stored as metadata ───────────────────────────────
-    public static final String TYPE_SOP               = "SOP";
-    public static final String TYPE_PATTERN           = "INCIDENT_PATTERN";
-    public static final String TYPE_RUNBOOK           = "RUNBOOK";
-    /** Resolved incidents stored in the Knowledge Base — used for solution finding. */
-    public static final String TYPE_RESOLVED_INCIDENT = "RESOLVED_INCIDENT";
+    public static final String TYPE_SOP = "SOP";
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Ingestion API
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /**
-     * Ingest a single document into the VectorStore.
-     *
-     * @param id       Unique identifier (e.g. SOP UUID or incident ID)
-     * @param content  Text content to embed
-     * @param type     Document type — use {@link #TYPE_SOP}, {@link #TYPE_PATTERN}, etc.
-     * @param metadata Additional metadata for filtering (tenantId, category, etc.)
-     * @return {@code true} if ingested successfully, {@code false} if VectorStore unavailable
-     */
     public boolean ingest(String id, String content, String type, Map<String, Object> metadata) {
         if (!isVectorStoreAvailable()) return false;
 
@@ -109,457 +158,286 @@ public class RagService {
         }
     }
 
-    /**
-     * Batch ingest multiple documents.
-     *
-     * @param documents List of {@link Document} objects with content and metadata
-     * @return number of documents successfully ingested
-     */
-    public int ingestBatch(List<Document> documents) {
-        if (!isVectorStoreAvailable() || documents == null || documents.isEmpty()) return 0;
+    public boolean ingestSop(String title, String description) {
+        String content = String.format("SOP: %s\nDescription: %s", title, description);
+        String id = UUID.randomUUID().toString();
+        return ingest(id, content, TYPE_SOP, Map.of("sop_title", title));
+    }
+
+    public boolean ingestFile(Resource resource, String title) {
+        if (!isVectorStoreAvailable()) return false;
         try {
-            vectorStore.add(documents);
-            log.info("[RAG] Batch ingested {} documents", documents.size());
-            return documents.size();
+            log.info("[RAG] Parsing file: {}", resource.getFilename());
+            TikaDocumentReader documentReader = new TikaDocumentReader(resource);
+            List<Document> parsedDocs = documentReader.get();
+
+            log.info("[RAG] Chunking parsed document...");
+            TokenTextSplitter splitter = new TokenTextSplitter(800, 400, 10, 10000, true);
+            List<Document> chunkedDocs = splitter.apply(parsedDocs);
+
+            // Add metadata
+            String docId = UUID.randomUUID().toString();
+            for (Document doc : chunkedDocs) {
+                doc.getMetadata().put("source_id", docId);
+                doc.getMetadata().put("doc_type", TYPE_SOP);
+                if (title != null && !title.isBlank()) {
+                    doc.getMetadata().put("sop_title", title);
+                }
+                doc.getMetadata().put("file_name", resource.getFilename());
+            }
+
+            log.info("[RAG] Saving {} chunks to VectorStore...", chunkedDocs.size());
+            vectorStore.add(chunkedDocs);
+            log.info("[RAG] File ingested successfully.");
+            return true;
         } catch (Exception e) {
-            log.error("[RAG] Batch ingest failed: {}", e.getMessage());
-            return 0;
+            log.error("[RAG] Failed to ingest file {}: {}", resource.getFilename(), e.getMessage());
+            return false;
         }
     }
 
-    /**
-     * Remove a document by its source ID metadata field.
-     *
-     * @param sourceId the value of the {@code source_id} metadata field
-     */
-    public void delete(String sourceId) {
-        if (!isVectorStoreAvailable()) return;
+    @Cacheable(value = "ragAnswers", key = "#sessionId + '_' + #question")
+    public String askStrictSopRag(String sessionId, String question) {
+        ChatClient activeClient = getOrBuildChatClient();
+        if (!isVectorStoreAvailable() || activeClient == null) return "RAG unavailable. Please check Vector DB and ChatClient.";
         try {
-            // Spring AI VectorStore filter expression: source_id == '<id>'
-            vectorStore.delete(List.of(sourceId));
-            log.info("[RAG] Deleted document source_id={}", sourceId);
-        } catch (Exception e) {
-            log.warn("[RAG] Delete failed for source_id={}: {}", sourceId, e.getMessage());
-        }
-    }
+            if (isConversationalQuery(question)) {
+                return handleConversationalQuery(activeClient, question);
+            }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Retrieval API
-    // ─────────────────────────────────────────────────────────────────────────
+            log.info("[RAG-HYBRID] Performing advanced hybrid RAG for: {}", question);
 
-    /**
-     * Similarity search — returns top-K documents most similar to the query.
-     *
-     * @param query     Free-text query (will be embedded using the active EmbeddingModel)
-     * @param topK      Maximum number of results
-     * @param threshold Minimum cosine similarity score (0.0–1.0)
-     * @return Ordered list of matching {@link Document} objects, most similar first
-     */
-    public List<Document> findSimilar(String query, int topK, double threshold) {
-        if (!isVectorStoreAvailable() || query == null || query.isBlank()) return List.of();
+            // 1. Get fused semantic results (Vector Search + Query Expansion)
+            List<Document> semanticDocs = ragFusionService.retrieveFusedDocuments(
+                    activeClient, question, defaultTopK, defaultSimilarityThreshold);
 
-        try {
-            SearchRequest request = SearchRequest.builder()
-                    .query(query)
-                    .topK(topK)
-                    .similarityThreshold(threshold)
-                    .build();
+            // 2. Get lexical results (Full-Text Search)
+            List<Document> lexicalDocs = new ArrayList<>();
+            try {
+                java.util.List<com.company.mcp.model.VectorStoreEntity> entities = 
+                    vectorStoreEntityRepository.findByFullTextSearch(question, defaultTopK);
+                for (com.company.mcp.model.VectorStoreEntity ent : entities) {
+                    Map<String, Object> metadata = new HashMap<>();
+                    if (ent.getMetadata() != null) {
+                        try {
+                            metadata = objectMapper.readValue(ent.getMetadata(), Map.class);
+                        } catch (Exception ignored) {}
+                    }
+                    lexicalDocs.add(new Document(
+                        ent.getId() != null ? ent.getId().toString() : UUID.randomUUID().toString(),
+                        ent.getContent(),
+                        metadata
+                    ));
+                }
+                log.info("[RAG-HYBRID] Retrieved {} FTS documents", lexicalDocs.size());
+            } catch (Exception e) {
+                log.error("[RAG-HYBRID] Lexical search failed: {}", e.getMessage());
+            }
 
-            List<Document> results = vectorStore.similaritySearch(request);
-            log.debug("[RAG] Similarity search '{}' → {} results (topK={}, threshold={})",
-                    query.substring(0, Math.min(60, query.length())), results.size(), topK, threshold);
-            return results;
-        } catch (Exception e) {
-            log.error("[RAG] Similarity search failed: {}", e.getMessage());
-            return List.of();
-        }
-    }
+            // 3. Fused Semantic + Lexical via RRF
+            List<Document> hybridDocs = rrfMerge(semanticDocs, lexicalDocs, defaultTopK);
+            log.info("[RAG-HYBRID] Merged hybrid context contains {} documents", hybridDocs.size());
 
-    /**
-     * Convenience overload using configured defaults.
-     */
-    public List<Document> findSimilar(String query) {
-        return findSimilar(query, defaultTopK, defaultSimilarityThreshold);
-    }
+            // 4. Build strict context prompt
+            String context = hybridDocs.stream()
+                    .map(Document::getText)
+                    .collect(Collectors.joining("\n\n"));
 
-    /**
-     * Find similar SOPs only (filtered by doc_type metadata).
-     */
-    public List<Document> findSimilarSops(String query, int topK) {
-        if (!isVectorStoreAvailable()) return List.of();
-        try {
-            SearchRequest request = SearchRequest.builder()
-                    .query(query)
-                    .topK(topK)
-                    .similarityThreshold(defaultSimilarityThreshold)
-                    .filterExpression("doc_type == '" + TYPE_SOP + "'")
-                    .build();
-            return vectorStore.similaritySearch(request);
-        } catch (Exception e) {
-            log.error("[RAG] SOP similarity search failed: {}", e.getMessage());
-            return List.of();
-        }
-    }
+            // 5. Fetch all incidents context
+            StringBuilder incidentsContext = new StringBuilder();
+            try {
+                List<com.company.mcp.model.Incident> manual = incidentRepository.findAll();
+                List<com.company.mcp.model.ExternalIncident> external = externalIncidentRepository.findAll();
+                for (com.company.mcp.model.Incident inc : manual) {
+                    incidentsContext.append(String.format("- Ticket: %s, Subject: '%s', Status: %s, Assignee: %s, Assigned Team: %s, Priority: %s, Created: %s\n",
+                        inc.getExternalId(), inc.getSubject(), inc.getStatus(), inc.getAssignee(), inc.getAssignedGteam(), inc.getPriority(), inc.getCreatedAt()));
+                }
+                for (com.company.mcp.model.ExternalIncident ext : external) {
+                    incidentsContext.append(String.format("- Ticket: %s, Subject: '%s', Status: %s, Assignee: %s, Assigned Team: %s, Priority: %s, Source: %s, Created: %s\n",
+                        ext.getExternalId(), ext.getSubject(), ext.getStatus(), ext.getAssignee(), ext.getAssignedGteam(), ext.getPriority(), ext.getExternalSource(), ext.getCreatedAt()));
+                }
+            } catch (Exception e) {
+                log.error("[RAG] Failed to build incidents context: {}", e.getMessage());
+            }
 
-    /**
-     * Find similar incident patterns only.
-     */
-    public List<Document> findSimilarPatterns(String query, int topK) {
-        if (!isVectorStoreAvailable()) return List.of();
-        try {
-            SearchRequest request = SearchRequest.builder()
-                    .query(query)
-                    .topK(topK)
-                    .similarityThreshold(defaultSimilarityThreshold)
-                    .filterExpression("doc_type == '" + TYPE_PATTERN + "'")
-                    .build();
-            return vectorStore.similaritySearch(request);
-        } catch (Exception e) {
-            log.error("[RAG] Pattern similarity search failed: {}", e.getMessage());
-            return List.of();
-        }
-    }
+            String prompt = "You are a helpful assistant for the Incident Management and SOP platform. You have access to:\n\n" +
+                    "SOP Context:\n" + context + "\n\n" +
+                    "System Incident Data:\n" + incidentsContext.toString() + "\n\n" +
+                    "Answer the user's question: " + question + "\n\n" +
+                    "Instructions:\n" +
+                    "- If the query is about incident status, assignee, priority, or other incident details, use the System Incident Data to answer.\n" +
+                    "- If the query is about troubleshooting procedures, use the SOP Context.\n" +
+                    "- If the query cannot be answered by either the SOP Context or the System Incident Data, answer based on your general knowledge but mention that it is not in the official system database.";
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Combined SOP + Resolved-KB context (dual-source RAG)
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /**
-     * Retrieve the best context from <b>both</b> the SOP library and the
-     * Resolved Incident Knowledge Base for a given incident description.
-     *
-     * <p>Results are fetched in two parallel similarity searches then merged
-     * and de-duplicated, with SOP hits listed first (they are prescriptive
-     * procedures) followed by KB hits (they are past real-world evidence).
-     *
-     * @param query  Full incident description / query string
-     * @param topK   Maximum total results to return (split ~50/50 between sources)
-     * @return Ordered list of {@link Document} objects from both sources
-     */
-    public List<Document> findCombinedContext(String query, int topK) {
-        if (!isVectorStoreAvailable() || query == null || query.isBlank()) return List.of();
-
-        int half = Math.max(1, topK / 2);
-
-        // Fetch from SOP source
-        List<Document> sopDocs = List.of();
-        try {
-            sopDocs = vectorStore.similaritySearch(
-                    SearchRequest.builder()
-                            .query(query)
-                            .topK(half)
-                            .similarityThreshold(defaultSimilarityThreshold)
-                            .filterExpression("doc_type == '" + TYPE_SOP + "'")
-                            .build());
-        } catch (Exception e) {
-            log.warn("[RAG] Combined SOP fetch failed: {}", e.getMessage());
-        }
-
-        // Fetch from Resolved-KB source
-        List<Document> kbDocs = List.of();
-        try {
-            kbDocs = vectorStore.similaritySearch(
-                    SearchRequest.builder()
-                            .query(query)
-                            .topK(topK - half)   // remainder goes to KB
-                            .similarityThreshold(defaultSimilarityThreshold)
-                            .filterExpression("doc_type == '" + TYPE_RESOLVED_INCIDENT + "'")
-                            .build());
-        } catch (Exception e) {
-            log.warn("[RAG] Combined KB fetch failed: {}", e.getMessage());
-        }
-
-        // Merge: SOPs first, then KB hits; de-duplicate by document id
-        LinkedHashMap<String, Document> merged = new LinkedHashMap<>();
-        sopDocs.forEach(d -> merged.put(d.getId(), d));
-        kbDocs.forEach(d  -> merged.putIfAbsent(d.getId(), d));
-
-        List<Document> result = new ArrayList<>(merged.values());
-        log.debug("[RAG] Combined context: {} SOP + {} KB docs for query='{}'",
-                sopDocs.size(), kbDocs.size(),
-                query.substring(0, Math.min(60, query.length())));
-        return result;
-    }
-
-    /**
-     * Ask a question using <b>combined</b> RAG — the {@link QuestionAnswerAdvisor}
-     * searches across <em>all</em> document types (SOP + Resolved-KB + Patterns)
-     * and injects the top-K most relevant passages into the LLM prompt.
-     *
-     * <p>Use this as the primary solution-suggestion call when processing a new
-     * incident; it leverages both prescriptive SOP procedures and empirical
-     * evidence from previously resolved real-world incidents.
-     *
-     * @param incidentContext Incident title + description + classification text
-     * @return LLM-generated resolution suggestion grounded in both knowledge sources,
-     *         or empty string when RAG is unavailable
-     */
-    public String askWithCombinedRag(String incidentContext) {
-        if (!isFullRagAvailable()) {
-            log.warn("[RAG] askWithCombinedRag unavailable — VectorStore={} ChatClient={}",
-                    isVectorStoreAvailable(), chatClient != null);
-            return "";
-        }
-        try {
-            // No doc_type filter → advisor draws from ALL ingested sources:
-            // SOP procedures, resolved-incident KB entries, runbooks, patterns
-            String prompt =
-                    "You are an incident resolution assistant. Using the context retrieved "
-                    + "from our SOP library and previously resolved incident records, "
-                    + "suggest the most appropriate resolution steps for the following "
-                    + "incident. Cite whether each step comes from an SOP or a past "
-                    + "resolved incident.\n\nIncident:\n" + incidentContext;
-
-            String answer = chatClient.prompt()
-                    .advisors(QuestionAnswerAdvisor.builder(vectorStore)
-                            .searchRequest(SearchRequest.builder()
-                                    .topK(defaultTopK * 2)   // wider net across both sources
-                                    .similarityThreshold(defaultSimilarityThreshold)
-                                    .build())                // no filter — all doc types
-                            .build())
+            String activeModel = aiConfigService.getActiveChatModel();
+            log.info("[RAG] Routing chat query to model: {}", activeModel);
+ 
+            String answer = activeClient.prompt()
                     .user(prompt)
                     .call()
                     .content();
-
-            log.info("[RAG] Combined SOP+KB resolution suggestion generated ({} chars)",
-                    answer != null ? answer.length() : 0);
-            return answer != null ? answer : "";
+            
+            if (answer == null) {
+                log.info("[RAG] No answer generated.");
+                return "I'm sorry, but I couldn't generate an answer to that question.";
+            }
+            
+            log.info("[RAG] Answer generated ({} chars)", answer.length());
+            return answer;
         } catch (Exception e) {
-            log.error("[RAG] askWithCombinedRag failed: {}", e.getMessage());
-            return "";
+            log.error("[RAG] askStrictSopRag failed: {}", e.getMessage());
+            return "I'm sorry, but an error occurred while generating the answer.";
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Augmented Generation API (RAG pipeline)
-    // ─────────────────────────────────────────────────────────────────────────
+    private boolean isConversationalQuery(String query) {
+        if (query == null) return false;
+        String clean = query.trim().toLowerCase().replaceAll("[^a-z0-9\\s]", "");
+        if (clean.length() < 2) return true;
 
-    /**
-     * Ask a question using RAG — retrieves relevant SOP context first,
-     * then sends it along with the question to the LLM via {@link QuestionAnswerAdvisor}.
-     *
-     * <p>Requires both {@code VectorStore} and {@code ChatClient} to be active.
-     *
-     * @param question The question to answer (e.g. "How do I restart Tomcat safely?")
-     * @return LLM answer grounded in retrieved SOP context, or empty string if unavailable
-     */
-    public String askWithRag(String question) {
-        if (!isVectorStoreAvailable() || chatClient == null) {
-            log.warn("[RAG] askWithRag unavailable — VectorStore={} ChatClient={}",
-                    isVectorStoreAvailable(), chatClient != null);
-            return "";
-        }
-        try {
-            String answer = chatClient.prompt()
-                    .advisors(QuestionAnswerAdvisor.builder(vectorStore)
-                            .searchRequest(SearchRequest.builder()
-                                    .topK(defaultTopK)
-                                    .similarityThreshold(defaultSimilarityThreshold)
-                                    .build())
-                            .build())
-                    .user(question)
-                    .call()
-                    .content();
-            log.info("[RAG] Answered question via RAG pipeline ({} chars)", answer != null ? answer.length() : 0);
-            return answer != null ? answer : "";
-        } catch (Exception e) {
-            log.error("[RAG] askWithRag failed: {}", e.getMessage());
-            return "";
-        }
-    }
-
-    /**
-     * Ask with RAG, scoped to SOP documents only.
-     */
-    public String askSopRag(String question) {
-        if (!isVectorStoreAvailable() || chatClient == null) return "";
-        try {
-            String answer = chatClient.prompt()
-                    .advisors(QuestionAnswerAdvisor.builder(vectorStore)
-                            .searchRequest(SearchRequest.builder()
-                                    .topK(defaultTopK)
-                                    .similarityThreshold(defaultSimilarityThreshold)
-                                    .filterExpression("doc_type == '" + TYPE_SOP + "'")
-                                    .build())
-                            .build())
-                    .user(question)
-                    .call()
-                    .content();
-            return answer != null ? answer : "";
-        } catch (Exception e) {
-            log.error("[RAG] askSopRag failed: {}", e.getMessage());
-            return "";
-        }
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // SOP ingestion helpers
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /**
-     * Convenience method — ingest an SOP procedure into the vector store.
-     *
-     * @param sopId       SOP UUID
-     * @param tenantId    Tenant identifier for multi-tenant filtering
-     * @param category    SOP category (APPLICATION, DATABASE, PERFORMANCE, etc.)
-     * @param title       SOP title
-     * @param description Full SOP description / step text
-     */
-    public boolean ingestSop(String sopId, String tenantId, String category,
-                              String title, String description) {
-        String content = String.format("SOP: %s\nCategory: %s\nDescription: %s",
-                title, category, description);
-        Map<String, Object> meta = Map.of(
-                "tenant_id", tenantId != null ? tenantId : "",
-                "category",  category != null ? category : "",
-                "sop_title", title != null ? title : ""
+        Set<String> staticTriggers = Set.of(
+            "hi", "hello", "hey", "hola", "greetings", "yo", "sup",
+            "how are you", "how goes it", "whats up", "what is up",
+            "who are you", "what is your name", "whats your name",
+            "what can you do", "help", "menu", "options", "start",
+            "ok", "okay", "cool", "nice", "thanks", "thank you", "bye", "goodbye", "test", "testing"
         );
-        return ingest(sopId, content, TYPE_SOP, meta);
+        return staticTriggers.contains(clean);
     }
 
-    /**
-     * Convenience method — ingest an incident pattern into the vector store.
-     *
-     * @param patternId   Pattern UUID
-     * @param tenantId    Tenant identifier
-     * @param category    Incident category
-     * @param description Pattern description / symptoms
-     */
-    public boolean ingestIncidentPattern(String patternId, String tenantId,
-                                          String category, String description) {
-        String content = String.format("Incident Pattern — Category: %s\nDescription: %s",
-                category, description);
-        Map<String, Object> meta = Map.of(
-                "tenant_id", tenantId != null ? tenantId : "",
-                "category",  category != null ? category : ""
-        );
-        return ingest(patternId, content, TYPE_PATTERN, meta);
+    private String handleConversationalQuery(ChatClient activeClient, String question) {
+        String clean = question.trim().toLowerCase().replaceAll("[^a-z0-9\\s]", "");
+        log.info("[RAG] Handling conversational query instantly (no LLM call): '{}'", clean);
+
+        switch (clean) {
+            case "hi":
+            case "hello":
+            case "hey":
+            case "hola":
+            case "greetings":
+            case "yo":
+            case "sup":
+            case "start":
+                return "Hello! I am your SOP assistant. How can I help you today?";
+            
+            case "how are you":
+            case "how goes it":
+            case "whats up":
+            case "what is up":
+                return "I'm doing great, thank you! Ready to help you search your SOP documents.";
+            
+            case "who are you":
+            case "what is your name":
+            case "whats your name":
+                return "I am the MCP Incident Automation SOP Assistant, here to answer your SOP queries.";
+            
+            case "what can you do":
+            case "help":
+            case "menu":
+            case "options":
+                return "I can help you search and retrieve details from your ingested SOP documents. You can upload SOP files, type technical questions, or change LLM settings in the configuration tab.";
+            
+            case "ok":
+            case "okay":
+            case "cool":
+            case "nice":
+                return "Great! Let me know if you have any questions about the SOPs.";
+            
+            case "thanks":
+            case "thank you":
+                return "You're welcome! Happy to help.";
+            
+            case "bye":
+            case "goodbye":
+                return "Goodbye! Have a great day.";
+            
+            case "test":
+            case "testing":
+                return "Test successful! I am online and ready.";
+            
+            default:
+                // Fallback to quick LLM call if not in static list but matches pattern
+                log.info("[RAG] Conversational fallback to quick LLM call");
+                String prompt = "You are a helpful technical assistant for the SOP platform. Respond to: " + question;
+                return activeClient.prompt().user(prompt).call().content();
+        }
     }
 
-    /**
-     * Ingest a resolved incident KB entry into the VectorStore.
-     *
-     * <p>The document text combines the incident title, description, resolution
-     * summary, root cause, and any operator comments so that all textual signals
-     * are included in the embedding for maximum retrieval relevance.
-     *
-     * @param entry {@link ResolvedIncidentKb} entry to embed
-     * @return {@code true} if ingested successfully
-     */
-    public boolean ingestResolvedIncident(ResolvedIncidentKb entry) {
-        if (entry == null) return false;
+    private List<Document> rrfMerge(List<Document> semanticDocs, List<Document> lexicalDocs, int topK) {
+        Map<String, DocumentScore> merged = new HashMap<>();
+        double k = 60.0;
 
-        StringBuilder sb = new StringBuilder();
-        sb.append("Resolved Incident — ").append(entry.getSeverity()).append("\n");
-        sb.append("Title: ").append(entry.getTitle()).append("\n");
-        if (entry.getDescription() != null)       sb.append("Description: ").append(entry.getDescription()).append("\n");
-        if (entry.getCategory() != null)           sb.append("Category: ").append(entry.getCategory()).append("\n");
-        if (entry.getRootCause() != null)          sb.append("Root Cause: ").append(entry.getRootCause()).append("\n");
-        if (entry.getResolutionSummary() != null)  sb.append("Resolution: ").append(entry.getResolutionSummary()).append("\n");
-        if (entry.getComments() != null && !entry.getComments().isEmpty()) {
-            sb.append("Operator Comments:\n");
-            entry.getComments().forEach(c -> sb.append("  - ").append(c.get("text")).append("\n"));
+        for (int rank = 0; rank < semanticDocs.size(); rank++) {
+            Document doc = semanticDocs.get(rank);
+            double score = 1.0 / (rank + k);
+            merged.put(doc.getText(), new DocumentScore(doc, score));
         }
 
-        Map<String, Object> meta = new HashMap<>();
-        meta.put("kb_id",       entry.getId().toString());
-        meta.put("tenant_id",   entry.getTenantId() != null ? entry.getTenantId().toString() : "");
-        meta.put("category",    entry.getCategory()  != null ? entry.getCategory()  : "");
-        meta.put("severity",    entry.getSeverity()  != null ? entry.getSeverity()  : "");
-        meta.put("resolved_by", entry.getResolvedBy() != null ? entry.getResolvedBy() : "");
+        for (int rank = 0; rank < lexicalDocs.size(); rank++) {
+            Document doc = lexicalDocs.get(rank);
+            double score = 1.0 / (rank + k);
+            merged.compute(doc.getText(), (key, existing) -> {
+                if (existing == null) {
+                    return new DocumentScore(doc, score);
+                } else {
+                    existing.score += score;
+                    return existing;
+                }
+            });
+        }
 
-        return ingest(entry.getId().toString(), sb.toString(), TYPE_RESOLVED_INCIDENT, meta);
+        return merged.values().stream()
+                .sorted(Comparator.comparingDouble(d -> -d.score))
+                .limit(topK)
+                .map(d -> d.document)
+                .toList();
     }
 
-    /**
-     * Find resolved-incident KB entries similar to the given query.
-     *
-     * <p>Filtered to {@link #TYPE_RESOLVED_INCIDENT} documents only, so SOP and
-     * pattern documents are not mixed into the results.
-     *
-     * @param query Free-text incident description
-     * @param topK  Maximum results
-     * @return Ordered list of matching {@link Document} objects, most similar first
-     */
-    public List<Document> findSimilarResolved(String query, int topK) {
-        if (!isVectorStoreAvailable()) return List.of();
+    private static class DocumentScore {
+        Document document;
+        double score;
+        DocumentScore(Document document, double score) {
+            this.document = document;
+            this.score = score;
+        }
+    }
+
+    public List<com.company.mcp.model.VectorStoreEntity> getAllSops() {
+        return vectorStoreEntityRepository.findAllSops();
+    }
+
+    public boolean updateSop(UUID id, String title, String description) {
+        if (!isVectorStoreAvailable()) return false;
         try {
-            SearchRequest request = SearchRequest.builder()
-                    .query(query)
-                    .topK(topK)
-                    .similarityThreshold(defaultSimilarityThreshold)
-                    .filterExpression("doc_type == '" + TYPE_RESOLVED_INCIDENT + "'")
+            vectorStore.delete(List.of(id.toString()));
+            String content = String.format("SOP: %s\nDescription: %s", title, description);
+            org.springframework.ai.document.Document doc = org.springframework.ai.document.Document.builder()
+                    .id(id.toString())
+                    .text(content)
+                    .metadata(Map.of("sop_title", title, "doc_type", TYPE_SOP))
                     .build();
-            return vectorStore.similaritySearch(request);
+            vectorStore.add(List.of(doc));
+            log.info("[RAG] Updated and re-embedded SOP id={}", id);
+            return true;
         } catch (Exception e) {
-            log.error("[RAG] Resolved-incident similarity search failed: {}", e.getMessage());
-            return List.of();
+            log.error("[RAG] Failed to update SOP id={}: {}", id, e.getMessage());
+            return false;
         }
     }
 
-    /**
-     * Ask a question using RAG, drawing context from resolved-incident KB entries only.
-     *
-     * <p>Useful for the agent pipeline to suggest solutions for a new incident
-     * based on how similar past incidents were resolved.
-     *
-     * @param incidentDescription Full description of the new incident
-     * @return LLM answer grounded in past resolutions, or empty string if unavailable
-     */
-    public String askWithResolvedKb(String incidentDescription) {
-        if (!isFullRagAvailable()) {
-            log.warn("[RAG] askWithResolvedKb unavailable — VectorStore={} ChatClient={}",
-                    isVectorStoreAvailable(), chatClient != null);
-            return "";
-        }
+    public boolean deleteSop(UUID id) {
+        if (!isVectorStoreAvailable()) return false;
         try {
-            String prompt = "Based on similar resolved incidents in our knowledge base, "
-                    + "suggest the most likely resolution for this new incident:\n\n"
-                    + incidentDescription;
-            String answer = chatClient.prompt()
-                    .advisors(QuestionAnswerAdvisor.builder(vectorStore)
-                            .searchRequest(SearchRequest.builder()
-                                    .topK(defaultTopK)
-                                    .similarityThreshold(defaultSimilarityThreshold)
-                                    .filterExpression("doc_type == '" + TYPE_RESOLVED_INCIDENT + "'")
-                                    .build())
-                            .build())
-                    .user(prompt)
-                    .call()
-                    .content();
-            log.info("[RAG] KB-based resolution suggestion generated ({} chars)",
-                    answer != null ? answer.length() : 0);
-            return answer != null ? answer : "";
+            vectorStore.delete(List.of(id.toString()));
+            log.info("[RAG] Deleted SOP id={}", id);
+            return true;
         } catch (Exception e) {
-            log.error("[RAG] askWithResolvedKb failed: {}", e.getMessage());
-            return "";
+            log.error("[RAG] Failed to delete SOP id={}: {}", id, e.getMessage());
+            return false;
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Status helpers
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /** Returns true when the pgvector VectorStore is available and RAG is enabled. */
     public boolean isVectorStoreAvailable() {
         return ragEnabled && vectorStore != null;
-    }
-
-    /** Returns true when both ChatClient and VectorStore are configured for full RAG. */
-    public boolean isFullRagAvailable() {
-        return isVectorStoreAvailable() && chatClient != null;
-    }
-
-    /**
-     * Returns a human-readable status summary for the /actuator/info endpoint.
-     */
-    public Map<String, Object> getStatus() {
-        return Map.of(
-                "rag_enabled",         ragEnabled,
-                "vector_store_active", isVectorStoreAvailable(),
-                "chat_client_active",  chatClient != null,
-                "full_rag_available",  isFullRagAvailable(),
-                "spring_ai_version",   "1.0.0"
-        );
     }
 }

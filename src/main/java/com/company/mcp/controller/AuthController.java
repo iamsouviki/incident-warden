@@ -1,160 +1,146 @@
 package com.company.mcp.controller;
 
-import com.company.mcp.config.security.JwtUtil;
-import com.company.mcp.model.Tenant;
-import com.company.mcp.repository.TenantRepository;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import com.company.mcp.model.AppUser;
+import com.company.mcp.repository.UserRepository;
+import com.company.mcp.service.JwtService;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
-import java.util.UUID;
 
-/**
- * AuthController — spec §2 "Multi-Tenant Auth".
- *
- * POST /api/auth/login   — returns a signed JWT on valid credentials
- * POST /api/auth/refresh — (stub) refresh token flow
- * GET  /api/auth/me      — returns current user info from JWT
- *
- * ─────── Built-in development users ───────────────────────────────────
- *  username   password      role      tenantId
- * ────────────────────────────────────────────────────────────────────────
- *  admin      admin123      ADMIN     00000000-0000-0000-0000-000000000001
- *  analyst    analyst123    ANALYST   00000000-0000-0000-0000-000000000001
- *  viewer     viewer123     VIEWER    00000000-0000-0000-0000-000000000001
- * ─────────────────────────────────────────────────────────────────────
- *
- * NOTE: For production, replace the static map with a proper UserRepository
- * + BCrypt password verification.
- */
-@Slf4j
 @RestController
 @RequestMapping("/api/auth")
-@RequiredArgsConstructor
 public class AuthController {
 
-    private static final String DEFAULT_TENANT = "00000000-0000-0000-0000-000000000001";
+    private static final long TOKEN_TTL    = 60 * 60 * 1000L;           // 1h
+    private static final long REMEMBER_TTL = 7 * 24 * 60 * 60 * 1000L; // 7d
 
-    /** username → [password, role] */
-    private static final Map<String, String[]> USERS = Map.of(
-            "admin",   new String[]{"admin123",   "ADMIN"},
-            "analyst", new String[]{"analyst123", "ANALYST"},
-            "viewer",  new String[]{"viewer123",  "VIEWER"}
-    );
+    private final UserRepository users;
+    private final JwtService jwtService;
+    private final PasswordEncoder encoder;
 
-    private final JwtUtil jwtUtil;
-    private final TenantRepository tenantRepository;
+    public AuthController(UserRepository users, JwtService jwtService, PasswordEncoder encoder) {
+        this.users      = users;
+        this.jwtService = jwtService;
+        this.encoder    = encoder;
+    }
 
-    // -------------------------------------------------------------------------
-    // Login
-    // -------------------------------------------------------------------------
-
-    /**
-     * POST /api/auth/login
-     * Body: {@code { "username": "admin", "password": "admin123" }}
-     *
-     * Returns:
-     * <pre>
-     * {
-     *   "token":     "eyJ…",
-     *   "username":  "admin",
-     *   "role":      "ADMIN",
-     *   "tenantId":  "00000000-…",
-     *   "expiresIn": 86400
-     * }
-     * </pre>
-     */
+    /** POST /api/auth/login  { username, password, rememberMe? } */
     @PostMapping("/login")
-    public ResponseEntity<?> login(@RequestBody Map<String, String> body) {
-        String username = body.get("username");
-        String password = body.get("password");
+    public ResponseEntity<?> login(@RequestBody Map<String, Object> body) {
+        String username  = (String) body.getOrDefault("username", "");
+        String password  = (String) body.getOrDefault("password", "");
+        boolean remember = Boolean.TRUE.equals(body.get("rememberMe"));
 
-        if (username == null || password == null) {
-            return ResponseEntity.badRequest().body(Map.of("error", "username and password are required"));
-        }
+        if (username.isBlank() || password.isBlank())
+            return ResponseEntity.status(400).body(Map.of("error", "Username and password required"));
 
-        String[] creds = USERS.get(username.toLowerCase());
-        if (creds == null || !creds[0].equals(password)) {
-            log.warn("Login failed for user '{}'", username);
+        AppUser user = users.findByUsername(username.trim()).orElse(null);
+        if (user == null || !user.isEnabled())
             return ResponseEntity.status(401).body(Map.of("error", "Invalid username or password"));
+
+        if (user.getSsoProvider() == null) {
+            if (user.getPasswordHash() == null || !encoder.matches(password, user.getPasswordHash()))
+                return ResponseEntity.status(401).body(Map.of("error", "Invalid username or password"));
         }
 
-        String tenantId = body.getOrDefault("tenantId", DEFAULT_TENANT);
-        String role     = creds[1];
-        String token    = jwtUtil.generateToken(username, tenantId, role);
-        String tenantName = resolveTenantDisplayName(tenantId);
-
-        log.info("Login ok: user={} role={} tenant={}", username, role, tenantId);
+        long ttl     = remember ? REMEMBER_TTL : TOKEN_TTL;
+        String token = jwtService.generate(user.getUsername(),
+                Map.of("role", user.getRole(), "tenantId", user.getTenantId()), ttl);
 
         return ResponseEntity.ok(Map.of(
-                "token",     token,
-                "username",  username,
-                "role",      role,
-                "tenantId",  tenantId,
-                "tenantName", tenantName,
-                "expiresIn", 86400
+                "token",      token,
+                "username",   user.getUsername(),
+                "role",       user.getRole(),
+                "tenantId",   user.getTenantId(),
+                "tenantName", user.getTenantName() != null ? user.getTenantName() : "Primary Workspace",
+                "expiresIn",  ttl
         ));
     }
-
-    // -------------------------------------------------------------------------
-    // Me (introspect token — frontend reads user info without calling DB)
-    // -------------------------------------------------------------------------
 
     /**
-     * GET /api/auth/me
-     * Requires valid {@code Authorization: Bearer <token>} header.
+     * POST /api/auth/sso
+     * SSO token exchange — frontend calls this AFTER validating the provider token
+     * (Okta, Azure AD, Google OIDC, etc.) via their SDK / JWKS.
+     * Body: { provider, subject, email, name?, tenantId? }
+     * Auto-provisions the user on first SSO login.
+     *
+     * TODO before go-live: add JWKS endpoint validation of provider token here.
      */
-    @GetMapping("/me")
-    public ResponseEntity<?> me(@RequestHeader("Authorization") String authHeader) {
-        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-            return ResponseEntity.status(401).body(Map.of("error", "Missing or invalid Authorization header"));
-        }
-        String token = authHeader.substring(7);
-        if (!jwtUtil.validateToken(token)) {
-            return ResponseEntity.status(401).body(Map.of("error", "Token expired or invalid"));
-        }
+    @PostMapping("/sso")
+    public ResponseEntity<?> sso(@RequestBody Map<String, Object> body) {
+        String provider = (String) body.get("provider");  // e.g. "OKTA", "AZURE_AD"
+        String subject  = (String) body.get("subject");   // provider's unique user sub
+        String email    = (String) body.getOrDefault("email", "");
+        String tenantId = (String) body.getOrDefault("tenantId", "tenant-1");
+
+        if (provider == null || subject == null || email.isBlank())
+            return ResponseEntity.status(400).body(Map.of("error", "provider, subject, email required"));
+
+        AppUser user = users.findByUsername(email).orElseGet(() -> {
+            AppUser u = new AppUser();
+            u.setUsername(email);
+            u.setEmail(email);
+            u.setRole("VIEWER");
+            u.setSsoProvider(provider);
+            u.setSsoSubject(subject);
+            u.setTenantId(tenantId);
+            u.setTenantName("Primary Workspace");
+            u.setEnabled(true);
+            return users.save(u);
+        });
+
+        if (!user.isEnabled())
+            return ResponseEntity.status(403).body(Map.of("error", "Account disabled"));
+
+        String token = jwtService.generate(user.getUsername(),
+                Map.of("role", user.getRole(), "tenantId", user.getTenantId(),
+                       "ssoProvider", provider), TOKEN_TTL);
+
         return ResponseEntity.ok(Map.of(
-                "username", jwtUtil.extractUsername(token),
-                "tenantId", jwtUtil.extractTenantId(token),
-                "tenantName", resolveTenantDisplayName(jwtUtil.extractTenantId(token)),
-                "role",     jwtUtil.extractRole(token)
+                "token",      token,
+                "username",   user.getUsername(),
+                "role",       user.getRole(),
+                "tenantId",   user.getTenantId(),
+                "tenantName", user.getTenantName() != null ? user.getTenantName() : "Primary Workspace",
+                "expiresIn",  TOKEN_TTL
         ));
     }
 
-    // -------------------------------------------------------------------------
-    // Refresh stub
-    // -------------------------------------------------------------------------
-
-    /** POST /api/auth/refresh — issues a new token from a valid non-expired one. */
+    /** POST /api/auth/refresh  { token } */
     @PostMapping("/refresh")
     public ResponseEntity<?> refresh(@RequestBody Map<String, String> body) {
-        String token = body.get("token");
-        if (token == null || !jwtUtil.validateToken(token)) {
-            return ResponseEntity.status(401).body(Map.of("error", "Invalid or expired token"));
-        }
-        String newToken = jwtUtil.generateToken(
-                jwtUtil.extractUsername(token),
-                jwtUtil.extractTenantId(token),
-                jwtUtil.extractRole(token));
-        return ResponseEntity.ok(Map.of("token", newToken, "expiresIn", 86400));
+        String old = body.get("token");
+        if (old == null || !jwtService.isValid(old))
+            return ResponseEntity.status(401).body(Map.of("error", "Token invalid or expired"));
+
+        var claims   = jwtService.parse(old);
+        String fresh = jwtService.generate(claims.getSubject(),
+                Map.of("role", claims.getOrDefault("role", "VIEWER"),
+                       "tenantId", claims.getOrDefault("tenantId", "tenant-1")), TOKEN_TTL);
+        return ResponseEntity.ok(Map.of("token", fresh, "expiresIn", TOKEN_TTL));
     }
 
-    private String resolveTenantDisplayName(String tenantId) {
-        if (tenantId == null || tenantId.isBlank()) {
-            return "Workspace";
-        }
-        if (DEFAULT_TENANT.equals(tenantId)) {
-            return "Primary Workspace";
-        }
-        try {
-            return tenantRepository.findById(UUID.fromString(tenantId))
-                    .map(Tenant::getName)
-                    .filter(name -> !name.isBlank())
-                    .orElse("Workspace");
-        } catch (IllegalArgumentException ex) {
-            return "Workspace";
-        }
+    /** GET /api/auth/me */
+    @GetMapping("/me")
+    public ResponseEntity<?> me(@RequestHeader("Authorization") String authHeader) {
+        String token = authHeader.startsWith("Bearer ") ? authHeader.substring(7) : authHeader;
+        if (!jwtService.isValid(token))
+            return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+
+        var claims = jwtService.parse(token);
+        AppUser user = users.findByUsername(claims.getSubject()).orElse(null);
+        if (user == null)
+            return ResponseEntity.status(404).body(Map.of("error", "User not found"));
+
+        return ResponseEntity.ok(Map.of(
+                "username",    user.getUsername(),
+                "email",       user.getEmail() != null ? user.getEmail() : "",
+                "role",        user.getRole(),
+                "tenantId",    user.getTenantId(),
+                "tenantName",  user.getTenantName() != null ? user.getTenantName() : "Primary Workspace",
+                "ssoProvider", user.getSsoProvider() != null ? user.getSsoProvider() : ""
+        ));
     }
 }

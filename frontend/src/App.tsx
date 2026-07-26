@@ -1,126 +1,76 @@
 import React, { useState, useEffect } from 'react';
 import './App.css';
-import OverviewPage from './pages/OverviewPage';
-import HitlPage from './pages/HitlPage';
-import SopPage from './pages/SopPage';
-import ToolsPage from './pages/ToolsPage';
-import AnalyticsPage from './pages/AnalyticsPage';
-import AuditLogPage from './pages/AuditLogPage';
 import LoginPage from './pages/LoginPage';
-import KnowledgeBasePage from './pages/KnowledgeBasePage';
+import SopPage from './pages/SopPage';
+import TeamsPage from './pages/TeamsPage';
+import AiConfigPage from './pages/AiConfigPage';
+import IncidentManagementPage from './pages/IncidentManagementPage';
+import ToolsPage from './pages/ToolsPage';
+import AccountPage from './pages/AccountPage';
 import ChatbotWidget from './components/ChatbotWidget';
-import SettingsPage from './pages/SettingsPage';
-import IncidentChatPage from './pages/IncidentChatPage';
-import { AuthUser, clearAuth, getStoredUser, getTokenExpiry, authFetch, refreshToken, isTokenExpiringSoon } from './services/api';
+import { Settings, LogOut, User, ShieldAlert, Plus, Wrench, BookOpen, Users, ChevronDown } from 'lucide-react';
+import { AuthUser, getStoredUser, clearAuth, refreshToken, isTokenExpiringSoon } from './services/api';
 
-const DEFAULT_TENANT_ID = '00000000-0000-0000-0000-000000000001';
+const DEFAULT_TENANT_ID = 'tenant-1';
 
-type Page = 'overview' | 'chat' | 'hitl' | 'sop' | 'kb' | 'analytics' | 'audit' | 'health' | 'tools' | 'settings';
-
-const PAGE_TITLES: Record<Page, string> = {
-  overview:  'OPERATIONS DASHBOARD',
-  chat:      'INCIDENT COLLABORATION',
-  hitl:      'HITL APPROVAL QUEUE',
-  sop:       'SOP LIBRARY',
-  kb:        'RESOLVED INCIDENTS',
-  analytics: 'ANALYTICS',
-  audit:     'AUDIT LOG',
-  health:    'MCP TOOL HEALTH',
-  tools:     'MCP TOOLS',
-  settings:  'SETTINGS',
+const PAGE_TITLES: Record<string, string> = {
+  incidents: 'INCIDENT DIRECTORY',
+  sop:       'STANDARD OPERATING PROCEDURES',
+  tools:     'REMEDIATION TOOLS & SCRIPTS',
+  teams:     'SUPPORT TEAMS & MEMBERS',
+  ai_config: 'AI CONFIGURATION',
+  account:   'MY ACCOUNT',
 };
 
 const App: React.FC = () => {
-  const [user, setUser]     = useState<AuthUser | null>(() => {
-    const stored = getStoredUser();
-    if (!stored) return null;
-    // If the stored token is already expired, discard it immediately so the app
-    // never enters the authenticated view with a dead JWT (prevents a burst of
-    // 401 errors on every useEffect that fires before the mcp:auth-expired
-    // listener can attach).
-    const exp = getTokenExpiry();
-    if (exp !== null && exp < Date.now()) {
-      clearAuth();
-      return null;
-    }
-    return stored;
-  });
-  const [page, setPage]     = useState<Page>(() => {
-    const path = window.location.pathname.replace(/^\//, '') as Page;
-    return path in PAGE_TITLES ? path : 'overview';
-  });
-  const [now, setNow]       = useState(new Date());
-  const [hitlCount, setHitlCount] = useState(0);
+  const [user, setUser]                   = useState<AuthUser | null>(getStoredUser());
+  const [page, setPage]                   = useState<string>('incidents');
+  const [now,  setNow]                    = useState(new Date());
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [userMenuOpen, setUserMenuOpen]   = useState(false);
 
-  /** Navigate to a page and push a clean URL path (no hash) for bookmarkable links. */
-  const navigate = (p: Page) => {
-    setPage(p);
-    window.history.pushState(null, '', '/' + p);
-  };
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const p = params.get('page');
+    if (p && PAGE_TITLES[p]) setPage(p);
+  }, []);
 
-  // ── clock ──
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
 
-  // ── Sync page state with browser back / forward buttons ──
   useEffect(() => {
-    const handler = () => {
-      const path = window.location.pathname.replace(/^\//, '') as Page;
-      if (path in PAGE_TITLES) setPage(path);
-    };
-    window.addEventListener('popstate', handler);
-    return () => window.removeEventListener('popstate', handler);
+    const handleAuthExpired = () => { console.warn('Auth expired'); setUser(null); };
+    window.addEventListener('mcp:auth-expired', handleAuthExpired);
+    return () => window.removeEventListener('mcp:auth-expired', handleAuthExpired);
   }, []);
 
-  // ── Handle expired/rejected token without a hard page reload ──
-  // authFetch dispatches this event instead of calling window.location.reload(),
-  // which prevents the React component tree from being torn down mid-render
-  // (the main cause of the white-page flash on ToolsPage / HITL polling).
+  // Close user menu on outside click
   useEffect(() => {
-    const handler = () => { clearAuth(); setUser(null); };
-    window.addEventListener('mcp:auth-expired', handler);
-    return () => window.removeEventListener('mcp:auth-expired', handler);
-  }, []);
-
-  // ── HITL badge poll ──
-  useEffect(() => {
-    if (!user) return;
-    const poll = async () => {
-      try {
-        const r = await authFetch(`/api/v1/hitl/pending?tenantId=${user.tenantId || DEFAULT_TENANT_ID}`);
-        if (r.ok) { const d = await r.json(); setHitlCount(d.count ?? 0); }
-      } catch {}
+    if (!userMenuOpen) return;
+    const handler = (e: MouseEvent) => {
+      const menu = document.getElementById('user-menu-root');
+      if (menu && !menu.contains(e.target as Node)) setUserMenuOpen(false);
     };
-    poll();
-    const t = setInterval(poll, 15000);
-    return () => clearInterval(t);
-  }, [user]);
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [userMenuOpen]);
 
-  // ── Activity-based token auto-refresh ──────────────────────────────────────
-  // Tracks the last user interaction. Every 4 minutes, if the user was active
-  // in the past 10 minutes and the token expires within 30 minutes, silently
-  // exchange it for a fresh one — so active sessions never expire mid-use.
   useEffect(() => {
     if (!user) return;
     let lastActivity = Date.now();
-
     const onActivity = () => { lastActivity = Date.now(); };
     const events = ['click', 'keydown', 'scroll', 'mousemove', 'touchstart'] as const;
     events.forEach(e => window.addEventListener(e, onActivity, { passive: true }));
 
     const interval = setInterval(async () => {
-      const recentlyActive = Date.now() - lastActivity < 10 * 60 * 1000; // active in last 10 min
-      if (recentlyActive && isTokenExpiringSoon(30 * 60 * 1000)) {        // expires within 30 min
+      const recentlyActive = Date.now() - lastActivity < 10 * 60 * 1000;
+      if (recentlyActive && isTokenExpiringSoon(30 * 60 * 1000)) {
         const ok = await refreshToken();
-        if (!ok) {
-          // Token already expired and could not be refreshed — force re-login
-          clearAuth();
-          setUser(null);
-        }
+        if (!ok) { clearAuth(); setUser(null); }
       }
-    }, 4 * 60 * 1000); // check every 4 minutes
+    }, 4 * 60 * 1000);
 
     return () => {
       events.forEach(e => window.removeEventListener(e, onActivity));
@@ -128,166 +78,140 @@ const App: React.FC = () => {
     };
   }, [user]);
 
-  // ── Show login when no user ──
-  if (!user) {
-    return <LoginPage onLogin={(u) => setUser(u)} />;
-  }
+  if (!user) return <LoginPage onLogin={(u) => setUser(u)} />;
 
-  const handleLogout = () => {
-    clearAuth();
-    setUser(null);
-  };
+  const handleLogout = () => { clearAuth(); setUser(null); };
 
-  const activeTenantId = user.tenantId || DEFAULT_TENANT_ID;
-  const activeWorkspaceName = user.tenantName?.trim()
-    || (activeTenantId === DEFAULT_TENANT_ID ? 'Primary Workspace' : 'Workspace');
+  const activeTenantId   = user.tenantId || DEFAULT_TENANT_ID;
+  const activeWorkspace  = user.tenantName?.trim() || 'Primary Workspace';
 
   return (
-    <div className="shell">
-      {/* ── Sidebar ───────────────────────────────────────────────── */}
-      <nav className="sidebar">
-        <div className="logo">
-          <div className="logo-tag">MCP Automation</div>
-          <div className="logo-name">INCIDENT.AI</div>
+    <div className="shell top-nav-layout">
+      <header className="topbar-unified">
+        <div className="topbar-left-brand">
+          <div className="logo-text">
+            <span className="brand-primary">INCIDENT</span>
+            <span className="brand-secondary">.AI</span>
+          </div>
+          <span className="tenant-badge" title={`Workspace: ${activeTenantId}`}>{activeWorkspace}</span>
         </div>
 
-        <div className="nav-section">
-          <div className={`nav-item ${page === 'overview' ? 'active' : ''}`}
-               onClick={() => navigate('overview')}>
-            <span className="nav-icon">⬡</span> Dashboard
-          </div>
-        </div>
-
-        <div className="nav-section">
-          <div className="nav-label">Incidents</div>
-          <div className={`nav-item ${page === 'overview' ? 'active' : ''}`}
-               onClick={() => navigate('overview')}>
-            <span className="nav-icon">◉</span> Live Incidents
-          </div>
-          <div className={`nav-item ${page === 'chat' ? 'active' : ''}`}
-               onClick={() => navigate('chat')}>
-            <span className="nav-icon">✎</span> Incident Chat
-          </div>
-          <div className={`nav-item ${page === 'analytics' ? 'active' : ''}`}
-               onClick={() => navigate('analytics')}>
-            <span className="nav-icon">⤢</span> Analytics
-          </div>
-        </div>
-
-        <div className="nav-section">
-          <div className="nav-label">Approvals</div>
-          <div className={`nav-item ${page === 'hitl' ? 'active' : ''}`}
-               onClick={() => navigate('hitl')}>
-            <span className="nav-icon">✋</span> Pending HITL
-            {hitlCount > 0 && <span className="nav-badge amber">{hitlCount}</span>}
-          </div>
-        </div>
-
-        <div className="nav-section">
-          <div className="nav-label">Knowledge</div>
-          <div className={`nav-item ${page === 'sop' ? 'active' : ''}`}
-               onClick={() => navigate('sop')}>
-            <span className="nav-icon">⊞</span> SOP Library
-          </div>
-          <div className={`nav-item ${page === 'kb' ? 'active' : ''}`}
-               onClick={() => navigate('kb')}>
-            <span className="nav-icon">⧗</span> Resolved Incidents
-          </div>
-        </div>
-
-        <div className="nav-section">
-          <div className="nav-label">System</div>
-          <div className={`nav-item ${page === 'tools' ? 'active' : ''}`}
-               onClick={() => navigate('tools')}>
-            <span className="nav-icon">⬡</span> MCP Tools
-          </div>
-          <div className={`nav-item ${page === 'audit' ? 'active' : ''}`}
-               onClick={() => navigate('audit')}>
-            <span className="nav-icon">⊟</span> Audit Log
-          </div>
-          <div className={`nav-item ${page === 'settings' ? 'active' : ''}`}
-               onClick={() => navigate('settings')}>
-            <span className="nav-icon">⚙</span> Settings
-          </div>
-        </div>
-
-        <div className="sidebar-footer">
-          <div className="tenant-chip" title={activeTenantId}>
-            <div className="label">WORKSPACE</div>
-            <div className="name">{activeWorkspaceName}</div>
-          </div>
-          <div className="status-dot"></div>
-        </div>
-      </nav>
-
-      {/* ── Main ──────────────────────────────────────────────────── */}
-      <div className="main">
-        {/* Topbar */}
-        <div className="topbar">
-          <div>
-            <div className="page-title">{PAGE_TITLES[page] ?? 'DASHBOARD'}</div>
-            <div className="page-subtitle">
-              Last updated: {now.toUTCString().replace('GMT', 'UTC')}
-            </div>
-          </div>
-          <div className="topbar-right">
-            <div className="pill">
-              <span className="live-dot"></span>LIVE
-            </div>
-            <div className="pill user-pill" title={`Role: ${user.role}`}>
-              👤 {user.username}
-            </div>
-            <button className="btn-logout" onClick={handleLogout} title="Sign out">
-              ⎋ Logout
+        <nav className="topbar-nav">
+          {[
+            { key: 'incidents', icon: <ShieldAlert size={16}/>, label: 'Incidents' },
+            { key: 'sop',       icon: <BookOpen  size={16}/>, label: 'SOPs' },
+            { key: 'tools',     icon: <Wrench    size={16}/>, label: 'Tools' },
+            { key: 'teams',     icon: <Users     size={16}/>, label: 'Teams' },
+            { key: 'ai_config', icon: <Settings  size={16}/>, label: 'Config' },
+          ].map(({ key, icon, label }) => (
+            <button
+              key={key}
+              className={`topbar-nav-btn ${page === key ? 'active' : ''}`}
+              onClick={() => setPage(key)}
+            >
+              {icon} {label}
             </button>
+          ))}
+        </nav>
+
+        <div className="topbar-right-actions">
+          <button
+            className="btn-create-incident-top"
+            onClick={() => { setPage('incidents'); setShowCreateModal(true); }}
+          >
+            <Plus size={14}/> New Incident
+          </button>
+
+          <div className="live-status-pill">
+            <span className="live-status-dot" />LIVE
+          </div>
+
+          {/* User menu */}
+          <div id="user-menu-root" style={{ position: 'relative' }}>
+            <button
+              id="user-profile-btn"
+              onClick={() => setUserMenuOpen(o => !o)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '6px',
+                background: userMenuOpen ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.05)',
+                border: '1px solid rgba(255,255,255,0.12)',
+                color: '#cbd5e1', fontSize: '12px', fontWeight: 600,
+                padding: '6px 12px', borderRadius: '6px',
+                cursor: 'pointer', transition: 'all 0.2s',
+                fontFamily: 'var(--sans)',
+              }}
+            >
+              <User size={14}/> {user.username}
+              <ChevronDown size={12} style={{ transition: 'transform 0.2s', transform: userMenuOpen ? 'rotate(180deg)' : 'none' }}/>
+            </button>
+
+            {userMenuOpen && (
+              <div style={{
+                position: 'absolute', top: 'calc(100% + 8px)', right: 0,
+                background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '10px', minWidth: '200px', overflow: 'hidden',
+                boxShadow: '0 16px 40px rgba(0,0,0,0.5)',
+                animation: 'ssSlideIn 0.15s ease',
+                zIndex: 9999,
+              }}>
+                {/* Header */}
+                <div style={{ padding: '14px 16px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: '#f1f5f9' }}>{user.username}</div>
+                  <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>{user.role} · {activeWorkspace}</div>
+                </div>
+                {/* Menu items */}
+                {[
+                  { label: 'My Account', icon: <User size={13}/>, action: () => { setPage('account'); setUserMenuOpen(false); } },
+                  { label: 'Sign out',   icon: <LogOut size={13}/>, action: handleLogout, danger: true },
+                ].map(item => (
+                  <button
+                    key={item.label}
+                    onClick={item.action}
+                    style={{
+                      width: '100%', display: 'flex', alignItems: 'center', gap: '10px',
+                      padding: '11px 16px', background: 'transparent', border: 'none',
+                      color: (item as any).danger ? '#f87171' : '#94a3b8',
+                      fontSize: '13px', fontWeight: 500, cursor: 'pointer',
+                      transition: 'all 0.15s', fontFamily: 'var(--sans)', textAlign: 'left',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.background = (item as any).danger ? 'rgba(239,68,68,0.08)' : 'rgba(255,255,255,0.05)'; e.currentTarget.style.color = (item as any).danger ? '#ef4444' : '#e2e8f0'; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = (item as any).danger ? '#f87171' : '#94a3b8'; }}
+                  >
+                    {item.icon} {item.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </header>
+
+      <main className="main-content-layout">
+        <div className="content-page-header">
+          <div>
+            <h1 className="content-title">{PAGE_TITLES[page]}</h1>
+            <p className="content-subtitle">System Time: {now.toUTCString().replace('GMT', 'UTC')}</p>
           </div>
         </div>
 
-        {/* Page content */}
-        {page === 'overview'  && <OverviewPage   onNavigate={navigate as any} tenantId={activeTenantId} />}
-        {page === 'chat'      && <IncidentChatPage tenantId={activeTenantId} />}
-        {page === 'hitl'      && <HitlPage       tenantId={activeTenantId} />}
-        {page === 'sop'       && <SopPage        tenantId={activeTenantId} />}
-        {page === 'kb'        && <KnowledgeBasePage tenantId={activeTenantId} />}
-        {page === 'analytics' && <AnalyticsPage  tenantId={activeTenantId} />}
-        {page === 'audit'     && <AuditLogPage   tenantId={activeTenantId} />}
-        {page === 'health'    && <HealthPage />}
-        {page === 'tools'     && <ToolsPage tenantId={activeTenantId} />}
-        {page === 'settings'  && <SettingsPage tenantId={activeTenantId} />}
-      </div>
-      {/* ── Floating Chatbot ── */}
+        <div className="content-view-wrap">
+          {page === 'sop'      && <SopPage />}
+          {page === 'teams'    && <TeamsPage />}
+          {page === 'ai_config'&& <AiConfigPage />}
+          {page === 'account'  && <AccountPage onLogout={handleLogout} />}
+          {page === 'incidents'&& (
+            <IncidentManagementPage
+              showCreateModal={showCreateModal}
+              setShowCreateModal={setShowCreateModal}
+            />
+          )}
+          {page === 'tools' && <ToolsPage />}
+        </div>
+      </main>
+
       <ChatbotWidget tenantId={activeTenantId} />
     </div>
   );
 };
-
-const HealthPage: React.FC = () => (
-  <div className="content">
-    <div className="health-grid" style={{ marginTop: 24 }}>
-      {[
-        { name: 'restart_k8s_pods',        val: 'Error rate: 0.2% · Last: 2 min ago',  st: 'ok',   icon: '⬡' },
-        { name: 'scale_db_pool',            val: 'Error rate: 0.0% · Last: 14 min ago', st: 'ok',   icon: '⬡' },
-        { name: 'update_servicenow_inc',    val: 'Error rate: 48.0% · Last: 3 min ago', st: 'warn', icon: '⚠' },
-        { name: 'get_prometheus_alerts',    val: 'Error rate: 0.5% · Last: 1 min ago',  st: 'ok',   icon: '⬡' },
-        { name: 'flush_redis_cache',        val: 'Error rate: 0.0% · Last: 8 min ago',  st: 'ok',   icon: '⬡' },
-        { name: 'rollback_helm_release',    val: 'Error rate: 0.0% · Last: 2 hrs ago',  st: 'ok',   icon: '⬡' },
-        { name: 'trigger_pagerduty_alert',  val: 'Error rate: 0.0% · Last: 1 hr ago',   st: 'ok',   icon: '⬡' },
-        { name: 'update_jira_ticket',       val: 'No response · Timed out',             st: 'err',  icon: '✗' },
-        { name: 'send_slack_notification',  val: 'Error rate: 1.2% · Last: 5 min ago',  st: 'ok',   icon: '⬡' },
-      ].map(h => (
-        <div key={h.name} className="health-item">
-          <div className={`health-icon ${h.st}`}>{h.icon}</div>
-          <div>
-            <div className="health-name">{h.name}</div>
-            <div className="health-val">{h.val}</div>
-          </div>
-          <div className={`health-status-tag ${h.st}`}>
-            {h.st === 'ok' ? 'CLOSED' : h.st === 'warn' ? 'HALF-OPEN' : 'OPEN'}
-          </div>
-        </div>
-      ))}
-    </div>
-  </div>
-);
 
 export default App;

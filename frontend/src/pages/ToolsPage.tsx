@@ -1,19 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { authFetch, extractApiError, SIMPLE_ERROR_MESSAGE } from '../services/api';
-
-interface Tool {
-  id: string;
-  name: string;
-  description: string;
-  category: string;
-  requiredParams: string[];
-  dangerous: boolean;
-  enabled: boolean;
-  createdBy?: string;
-  createdAt?: string;
-  scriptWorkspaceId?: string | null;
-  sopId?: string | null;
-}
+import React, { useState, useEffect, useRef } from 'react';
+import { authFetch, getStoredUser } from '../services/api';
+import { Terminal, Play, CheckCircle, XCircle, Trash2, Clock, Code, Server, Plus, Save, Sparkles, AlertTriangle, ShieldCheck } from 'lucide-react';
+import './ScriptEditorPage.css'; // Reuse or import editor styles
 
 interface SavedScript {
   id: string;
@@ -23,784 +11,678 @@ interface SavedScript {
   language: string;
   category: string;
   targetHost: string;
-  toolName?: string;
-  sopId?: string;
 }
 
-interface AddToolForm {
+interface ExecutionLog {
+  id: string;
+  scriptId?: string;
   name: string;
-  category: string;
-  description: string;
-  requiredParams: string;
-  dangerous: boolean;
+  timestamp: string;
+  scriptContent: string;
+  status: string;
+  exitCode: number;
+  stdout: string;
+  stderr: string;
 }
 
-const CATEGORY_COLORS: Record<string, string> = {
-  APPLICATION: 'rgba(79,142,247,0.12)',
-  DATABASE: 'rgba(79,142,247,0.15)',
-  DEPLOYMENT: 'rgba(245,166,35,0.1)',
-  GENERAL: 'rgba(136,136,170,0.12)',
-  INFRASTRUCTURE: 'rgba(181,123,255,0.1)',
-  MONITORING: 'rgba(48,217,156,0.1)',
-  NETWORK: 'rgba(48,217,156,0.1)',
-  SECURITY: 'rgba(255,85,85,0.1)',
-};
+interface Finding {
+  level: string;
+  layer: string;
+  message: string;
+}
 
-const CATEGORY_TEXT: Record<string, string> = {
-  APPLICATION: 'var(--blue)',
-  DATABASE: 'var(--blue)',
-  DEPLOYMENT: 'var(--amber)',
-  GENERAL: 'var(--text-dim)',
-  INFRASTRUCTURE: 'var(--purple)',
-  MONITORING: 'var(--green)',
-  NETWORK: 'var(--green)',
-  SECURITY: 'var(--red)',
-};
-
-const TOOL_CATEGORIES = [
-  'APPLICATION', 'DATABASE', 'DEPLOYMENT', 'GENERAL',
-  'INFRASTRUCTURE', 'MONITORING', 'NETWORK', 'SECURITY', 'OTHER'
+const CATEGORIES = [
+  'APPLICATION', 'PERFORMANCE', 'INFRASTRUCTURE', 'DATABASE', 'DEPLOYMENT', 'NETWORK',
 ];
 
-const SCRIPT_CATEGORIES = [
-  'APPLICATION', 'PERFORMANCE', 'INFRASTRUCTURE', 'DATABASE', 'DEPLOYMENT', 'NETWORK'
-];
+const ToolsPage: React.FC = () => {
+  const user = getStoredUser();
+  const tenantId = user?.tenantId || 'tenant-1';
 
-const emptyForm: AddToolForm = {
-  name: '',
-  category: 'APPLICATION',
-  description: '',
-  requiredParams: '',
-  dangerous: false,
-};
+  // Left panel state
+  const [leftTab, setLeftTab] = useState<'saved' | 'history'>('saved');
+  const [savedScripts, setSavedScripts] = useState<SavedScript[]>([]);
+  const [executionLogs, setExecutionLogs] = useState<ExecutionLog[]>([]);
+  const [loadingList, setLoadingList] = useState(false);
 
-const ToolsPage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
-  const [tools, setTools] = useState<Tool[]>([]);
-  const [scripts, setScripts] = useState<SavedScript[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState('ALL');
-  const [selectedToolId, setSelectedToolId] = useState<string | null>(null);
-
-  const [showModal, setShowModal] = useState(false);
-  const [editTool, setEditTool] = useState<Tool | null>(null);
-  const [form, setForm] = useState<AddToolForm>(emptyForm);
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
-
+  // Right editor workspace state
+  const [activeScriptId, setActiveScriptId] = useState<string | null>(null);
+  const [promptDescription, setPromptDescription] = useState('');
   const [scriptName, setScriptName] = useState('');
-  const [scriptDescription, setScriptDescription] = useState('');
+  const [scriptDesc, setScriptDesc] = useState('');
   const [scriptContent, setScriptContent] = useState('');
-  const [scriptLanguage, setScriptLanguage] = useState<'bash' | 'powershell'>('bash');
-  const [scriptCategory, setScriptCategory] = useState('APPLICATION');
-  const [scriptTargetHost, setScriptTargetHost] = useState('localhost');
-  const [scriptDirty, setScriptDirty] = useState(false);
-  const [scriptSaving, setScriptSaving] = useState(false);
-  const [scriptMessage, setScriptMessage] = useState<string | null>(null);
-  const [scriptError, setScriptError] = useState<string | null>(null);
+  const [language, setLanguage] = useState<'bash' | 'powershell'>('bash');
+  const [category, setCategory] = useState('APPLICATION');
+  const [targetHost, setTargetHost] = useState('localhost');
+  const [dryRun, setDryRun] = useState(true);
 
-  const fetchAll = async () => {
-    setLoading(true);
+  // Status & outputs
+  const [validating, setValidating] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [executing, setExecuting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [validationLevel, setValidationLevel] = useState('');
+  const [findings, setFindings] = useState<Finding[]>([]);
+  const [execOutput, setExecOutput] = useState<{ stdout: string; stderr: string; exitCode: number } | null>(null);
+  const [selectedLog, setSelectedLog] = useState<ExecutionLog | null>(null);
+
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const lineNumRef = useRef<HTMLDivElement>(null);
+
+  // Load left-hand side list data
+  const loadSavedScripts = async () => {
+    setLoadingList(true);
     try {
-      const [toolsResponse, scriptsResponse] = await Promise.all([
-        authFetch('/api/v1/tools'),
-        authFetch(`/api/v1/scripts?tenantId=${tenantId}`),
-      ]);
-
-      if (!toolsResponse.ok) {
-        setError(await extractApiError(toolsResponse));
-        return;
+      const res = await authFetch(`/api/v1/scripts?tenantId=${tenantId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSavedScripts(data.scripts || []);
       }
-      if (!scriptsResponse.ok) {
-        setError(await extractApiError(scriptsResponse));
-        return;
-      }
-
-      const toolPayload = await toolsResponse.json();
-      const scriptPayload = await scriptsResponse.json();
-      const nextTools = Array.isArray(toolPayload) ? toolPayload : toolPayload.tools || [];
-      const nextScripts = scriptPayload.scripts || [];
-      setTools(nextTools);
-      setScripts(nextScripts);
-      setError(null);
-
-      const requestedId = new URLSearchParams(window.location.search).get('tool');
-      const preferredId = requestedId && nextTools.some((tool: Tool) => tool.id === requestedId)
-        ? requestedId
-        : selectedToolId && nextTools.some((tool: Tool) => tool.id === selectedToolId)
-          ? selectedToolId
-          : nextTools[0]?.id ?? null;
-      setSelectedToolId(preferredId);
-    } catch {
-      setError(SIMPLE_ERROR_MESSAGE);
+    } catch (err) {
+      console.error('Failed to load scripts', err);
     } finally {
-      setLoading(false);
+      setLoadingList(false);
     }
   };
 
-  useEffect(() => { fetchAll(); }, [tenantId]);
-
-  const toolsArr = Array.isArray(tools) ? tools : [];
-  const categories = useMemo(
-    () => Array.from(new Set(
-      toolsArr
-        .map(tool => (tool.category || '').trim().toUpperCase())
-        .filter(Boolean)
-    )).sort(),
-    [toolsArr]
-  );
-
-  useEffect(() => {
-    if (filter !== 'ALL' && !categories.includes(filter)) {
-      setFilter('ALL');
-    }
-  }, [categories, filter]);
-
-  const filtered = filter === 'ALL'
-    ? toolsArr
-    : toolsArr.filter(tool => (tool.category || '').toUpperCase() === filter);
-
-  const grouped = filtered.reduce<Record<string, Tool[]>>((acc, tool) => {
-    const category = (tool.category || 'UNKNOWN').toUpperCase();
-    if (!acc[category]) acc[category] = [];
-    acc[category].push(tool);
-    return acc;
-  }, {});
-
-  const selectedTool = toolsArr.find(tool => tool.id === selectedToolId) || null;
-  const linkedScript = selectedTool?.scriptWorkspaceId
-    ? scripts.find(script => script.id === selectedTool.scriptWorkspaceId) || null
-    : scripts.find(script => script.toolName === selectedTool?.name) || null;
-
-  useEffect(() => {
-    if (!selectedTool) {
-      setScriptName('');
-      setScriptDescription('');
-      setScriptContent('');
-      setScriptLanguage('bash');
-      setScriptCategory('APPLICATION');
-      setScriptTargetHost('localhost');
-      setScriptDirty(false);
-      setScriptMessage(null);
-      setScriptError(null);
-      return;
-    }
-
-    setScriptName(linkedScript?.name || `${selectedTool.name} Script`);
-    setScriptDescription(linkedScript?.description || selectedTool.description || '');
-    setScriptContent(linkedScript?.scriptContent || '');
-    setScriptLanguage((linkedScript?.language || 'bash') as 'bash' | 'powershell');
-    setScriptCategory(linkedScript?.category || selectedTool.category || 'APPLICATION');
-    setScriptTargetHost(linkedScript?.targetHost || 'localhost');
-    setScriptDirty(false);
-    setScriptMessage(null);
-    setScriptError(null);
-  }, [selectedTool, linkedScript]);
-
-  const updateSelectedToolInUrl = (toolId: string) => {
-    const url = new URL(window.location.href);
-    url.pathname = '/tools';
-    url.searchParams.set('tool', toolId);
-    window.history.replaceState(null, '', url.pathname + url.search);
-  };
-
-  const selectTool = (toolId: string) => {
-    setSelectedToolId(toolId);
-    updateSelectedToolInUrl(toolId);
-  };
-
-  const openAdd = () => {
-    setEditTool(null);
-    setForm(emptyForm);
-    setSaveError(null);
-    setShowModal(true);
-  };
-
-  const openEdit = (tool: Tool) => {
-    setEditTool(tool);
-    setForm({
-      name: tool.name,
-      category: tool.category || 'APPLICATION',
-      description: tool.description || '',
-      requiredParams: (tool.requiredParams || []).join(', '),
-      dangerous: tool.dangerous,
-    });
-    setSaveError(null);
-    setShowModal(true);
-  };
-
-  const closeModal = () => {
-    setShowModal(false);
-    setEditTool(null);
-    setSaveError(null);
-  };
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
-    const { name, value, type } = e.target;
-    if (type === 'checkbox') {
-      setForm(current => ({ ...current, [name]: (e.target as HTMLInputElement).checked }));
-      return;
-    }
-    setForm(current => ({ ...current, [name]: value }));
-  };
-
-  const handleSave = async () => {
-    if (!form.name.trim()) {
-      setSaveError('Tool name is required.');
-      return;
-    }
-
-    setSaving(true);
-    setSaveError(null);
-
-    const payload = {
-      name: form.name.trim(),
-      category: form.category.toUpperCase(),
-      description: form.description.trim(),
-      requiredParams: form.requiredParams.split(',').map(value => value.trim()).filter(Boolean),
-      dangerous: form.dangerous,
-    };
-
+  const loadExecutionLogs = async () => {
     try {
-      const response = editTool
-        ? await authFetch(`/api/v1/tools/${editTool.id}`, { method: 'PUT', body: JSON.stringify(payload) })
-        : await authFetch('/api/v1/tools', { method: 'POST', body: JSON.stringify(payload) });
-
-      if (!response.ok) {
-        setSaveError(await extractApiError(response));
-        return;
+      // In version 1.7, we save execution logs to the database!
+      // Let's load the latest logs. To be backward compatible and show all,
+      // let's fetch log history from DB or fall back to localStorage.
+      const res = await authFetch(`/api/v1/incidents/history`); // audit logs or other history.
+      // Wait, we also created tools.execution_logs. Let's load them or local logs.
+      const localStored = localStorage.getItem('mcp_execution_history');
+      if (localStored) {
+        const parsed = JSON.parse(localStored) as ExecutionLog[];
+        parsed.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+        setExecutionLogs(parsed);
       }
+    } catch (err) {
+      console.error('Failed to load logs', err);
+    }
+  };
 
-      const body = await response.json().catch(() => ({}));
-      closeModal();
-      await fetchAll();
-      if (body.id) selectTool(body.id);
-    } catch {
-      setSaveError(SIMPLE_ERROR_MESSAGE);
+  useEffect(() => {
+    loadSavedScripts();
+    loadExecutionLogs();
+  }, []);
+
+  // Parse query parameters to pre-fill prompt description
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const descParam = params.get('desc');
+    if (descParam) {
+      setPromptDescription(descParam);
+    }
+  }, []);
+
+  // Sync editor line scrolling
+  const handleEditorScroll = () => {
+    if (textareaRef.current && lineNumRef.current) {
+      lineNumRef.current.scrollTop = textareaRef.current.scrollTop;
+    }
+  };
+
+  const lineCount = scriptContent ? scriptContent.split('\n').length : 1;
+  const lineNumbers = Array.from({ length: lineCount }, (_, i) => i + 1).join('\n');
+
+  // Handle Tab spaces
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const ta = e.currentTarget;
+      const start = ta.selectionStart;
+      const end = ta.selectionEnd;
+      const val = ta.value;
+      setScriptContent(val.substring(0, start) + '    ' + val.substring(end));
+      setTimeout(() => { ta.selectionStart = ta.selectionEnd = start + 4; }, 0);
+    }
+  };
+
+  // Reset workspace for new script creation
+  const handleNewTool = () => {
+    setActiveScriptId(null);
+    setScriptName('');
+    setScriptDesc('');
+    setScriptContent('');
+    setPromptDescription('');
+    setLanguage('bash');
+    setCategory('APPLICATION');
+    setTargetHost('localhost');
+    setFindings([]);
+    setExecOutput(null);
+    setValidationLevel('');
+    setSelectedLog(null);
+  };
+
+  // Load selected script into workspace
+  const handleSelectScript = (script: SavedScript) => {
+    setActiveScriptId(script.id);
+    setScriptName(script.name);
+    setScriptDesc(script.description || '');
+    setScriptContent(script.scriptContent);
+    setLanguage(script.language as 'bash' | 'powershell');
+    setCategory(script.category || 'APPLICATION');
+    setTargetHost(script.targetHost || 'localhost');
+    setPromptDescription(script.description || '');
+    setFindings([]);
+    setExecOutput(null);
+    setValidationLevel('');
+    setSelectedLog(null);
+  };
+
+  // Load selection from history log
+  const handleSelectLog = (logItem: ExecutionLog) => {
+    setSelectedLog(logItem);
+    setScriptName(logItem.name);
+    setScriptContent(logItem.scriptContent);
+    setExecOutput({
+      stdout: logItem.stdout,
+      stderr: logItem.stderr,
+      exitCode: logItem.exitCode
+    });
+    setFindings([]);
+    setValidationLevel('');
+  };
+
+  const handleDeleteScript = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm('Delete this tool from database?')) return;
+    try {
+      const res = await authFetch(`/api/v1/scripts/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        if (activeScriptId === id) handleNewTool();
+        loadSavedScripts();
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // AI Code Generation
+  const handleGenerateScript = async () => {
+    if (!promptDescription.trim()) return;
+    setGenerating(true);
+    setFindings([]);
+    setExecOutput(null);
+    setValidationLevel('');
+    try {
+      const r = await authFetch('/api/v1/scripts/generate', {
+        method: 'POST',
+        body: JSON.stringify({
+          description: promptDescription.trim(),
+          category,
+          targetHost,
+          os: language === 'powershell' ? 'windows' : 'linux',
+        }),
+      });
+      const data = await r.json();
+      if (r.ok && data.script) {
+        setScriptContent(data.script);
+        if (!scriptName) {
+          setScriptName(promptDescription.substring(0, 40));
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  // Guardrail validation
+  const handleValidateScript = async () => {
+    if (!scriptContent.trim()) return;
+    setValidating(true);
+    setFindings([]);
+    try {
+      const r = await authFetch('/api/v1/scripts/validate', {
+        method: 'POST',
+        body: JSON.stringify({ scriptContent, os: language === 'powershell' ? 'windows' : 'linux' }),
+      });
+      const data = await r.json();
+      setValidationLevel(data.level || 'PASS');
+      setFindings(data.findings || []);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setValidating(false);
+    }
+  };
+
+  // Execute Script
+  const handleExecuteScript = async () => {
+    if (!scriptContent.trim()) return;
+    setExecuting(true);
+    setExecOutput(null);
+    try {
+      const name = scriptName.trim() || `Script Run: ${promptDescription.substring(0, 40) || 'Untitled'}`;
+      const r = await authFetch('/api/v1/scripts/execute', {
+        method: 'POST',
+        body: JSON.stringify({
+          scriptContent,
+          language,
+          dryRun,
+          category,
+          description: name,
+          targetHost
+        }),
+      });
+      const data = await r.json();
+      setExecOutput({
+        stdout: data.stdout || '',
+        stderr: data.stderr || '',
+        exitCode: data.exitCode ?? -1
+      });
+
+      // Save execution to local history
+      const logEntry: ExecutionLog = {
+        id: Math.random().toString(36).substring(2, 9),
+        scriptId: activeScriptId || undefined,
+        name: name,
+        timestamp: new Date().toISOString(),
+        scriptContent,
+        status: data.exitCode === 0 ? 'SUCCESS' : 'FAILURE',
+        exitCode: data.exitCode ?? -1,
+        stdout: data.stdout || '',
+        stderr: data.stderr || ''
+      };
+
+      const history = JSON.parse(localStorage.getItem('mcp_execution_history') || '[]');
+      history.push(logEntry);
+      localStorage.setItem('mcp_execution_history', JSON.stringify(history));
+      loadExecutionLogs();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setExecuting(false);
+    }
+  };
+
+  // Save/Update Script in DB
+  const handleSaveScript = async () => {
+    if (!scriptContent.trim()) return;
+    const name = scriptName.trim() || promptDescription.trim().substring(0, 40) || 'Untitled Remediation';
+    setSaving(true);
+    try {
+      const payload = {
+        name,
+        description: scriptDesc.trim() || promptDescription.trim(),
+        scriptContent,
+        language,
+        category,
+        targetHost,
+        tenantId
+      };
+      
+      const endpoint = activeScriptId ? `/api/v1/scripts/${activeScriptId}` : '/api/v1/scripts';
+      const method = activeScriptId ? 'PUT' : 'POST';
+
+      const res = await authFetch(endpoint, {
+        method,
+        body: JSON.stringify(payload)
+      });
+      
+      if (res.ok) {
+        const data = await res.json();
+        if (data.id) setActiveScriptId(data.id);
+        alert('Tool script saved successfully to database.');
+        loadSavedScripts();
+      }
+    } catch (err) {
+      console.error(err);
     } finally {
       setSaving(false);
     }
   };
 
-  const handleDelete = async (id: string) => {
-    try {
-      const response = await authFetch(`/api/v1/tools/${id}`, { method: 'DELETE' });
-      if (!response.ok) {
-        setError(await extractApiError(response));
-        return;
-      }
-      setDeleteConfirm(null);
-      if (selectedToolId === id) {
-        setSelectedToolId(null);
-      }
-      fetchAll();
-    } catch {
-      setError(SIMPLE_ERROR_MESSAGE);
-    }
-  };
-
-  const handleSaveScript = async () => {
-    if (!selectedTool) return;
-    if (!scriptName.trim()) {
-      setScriptError('Script name is required.');
-      return;
-    }
-    if (!scriptContent.trim()) {
-      setScriptError('Script content is required.');
-      return;
-    }
-
-    setScriptSaving(true);
-    setScriptError(null);
-    setScriptMessage(null);
-
-    const payload = {
-      name: scriptName.trim(),
-      description: scriptDescription.trim(),
-      scriptContent,
-      language: scriptLanguage,
-      category: scriptCategory,
-      targetHost: scriptTargetHost.trim() || 'localhost',
-      tenantId,
-      toolName: selectedTool.name,
-      sopId: selectedTool.sopId || null,
-    };
-
-    try {
-      let scriptId = selectedTool.scriptWorkspaceId || linkedScript?.id || null;
-      const scriptResponse = scriptId
-        ? await authFetch(`/api/v1/scripts/${scriptId}`, { method: 'PUT', body: JSON.stringify(payload) })
-        : await authFetch('/api/v1/scripts', { method: 'POST', body: JSON.stringify(payload) });
-
-      if (!scriptResponse.ok) {
-        setScriptError(await extractApiError(scriptResponse));
-        return;
-      }
-
-      const scriptBody = await scriptResponse.json().catch(() => ({}));
-      scriptId = scriptId || scriptBody.id || null;
-
-      if (scriptId && selectedTool.scriptWorkspaceId !== scriptId) {
-        const toolResponse = await authFetch(`/api/v1/tools/${selectedTool.id}`, {
-          method: 'PUT',
-          body: JSON.stringify({
-            category: selectedTool.category,
-            description: selectedTool.description,
-            requiredParams: selectedTool.requiredParams || [],
-            dangerous: selectedTool.dangerous,
-            scriptWorkspaceId: scriptId,
-            sopId: selectedTool.sopId || null,
-          }),
-        });
-        if (!toolResponse.ok) {
-          setScriptError(await extractApiError(toolResponse));
-          return;
-        }
-      }
-
-      setScriptDirty(false);
-      setScriptMessage('Script saved to this MCP tool.');
-      await fetchAll();
-      selectTool(selectedTool.id);
-    } catch {
-      setScriptError(SIMPLE_ERROR_MESSAGE);
-    } finally {
-      setScriptSaving(false);
-    }
-  };
-
-  const updateScript = (setter: () => void) => {
-    setter();
-    setScriptDirty(true);
-    setScriptMessage(null);
-    setScriptError(null);
-  };
-
   return (
-    <div className="content">
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
-        <div>
-          <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text-muted)', letterSpacing: 2, textTransform: 'uppercase', marginBottom: 4 }}>
-            MCP TOOLS
+    <div style={{ display: 'grid', gridTemplateColumns: '400px 1fr', gap: '20px', height: 'calc(100vh - 160px)', minHeight: '600px', width: '100%' }}>
+      
+      {/* ── LEFT PANEL: Saved Tools Directory and execution history ── */}
+      <div className="card" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        <div className="card-header" style={{ display: 'flex', flexDirection: 'column', gap: '12px', borderBottom: '1px solid var(--border)', padding: '16px 20px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              Tools Navigator
+            </span>
+            {/* Create New Tool triggers styled state reset */}
+            <button
+              onClick={handleNewTool}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 12px',
+                background: 'var(--michaels-red)', color: 'white', border: 'none', borderRadius: '4px',
+                fontSize: '11px', fontWeight: 'bold', cursor: 'pointer', textTransform: 'uppercase'
+              }}
+            >
+              <Plus size={12} /> New Tool
+            </button>
           </div>
-          <div style={{ fontFamily: 'var(--mono)', fontSize: 20, fontWeight: 700, color: 'var(--text)' }}>
-            {toolsArr.length} MCP Tools
+          
+          {/* Sub-tabs selector */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', background: 'var(--surface2)', padding: '4px', borderRadius: '6px' }}>
+            <button
+              onClick={() => setLeftTab('saved')}
+              style={{
+                border: 'none', background: leftTab === 'saved' ? 'var(--surface)' : 'transparent',
+                color: leftTab === 'saved' ? 'var(--text)' : 'var(--text-dim)',
+                padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 600, transition: 'all 0.2s'
+              }}
+            >
+              Saved Library ({savedScripts.length})
+            </button>
+            <button
+              onClick={() => setLeftTab('history')}
+              style={{
+                border: 'none', background: leftTab === 'history' ? 'var(--surface)' : 'transparent',
+                color: leftTab === 'history' ? 'var(--text)' : 'var(--text-dim)',
+                padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 600, transition: 'all 0.2s'
+              }}
+            >
+              Run Logs ({executionLogs.length})
+            </button>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 10 }}>
-          <button className="btn btn-modify" onClick={fetchAll} style={{ fontSize: 11 }}>⟳ REFRESH</button>
-          <button
-            onClick={openAdd}
-            style={{
-              padding: '7px 16px',
-              borderRadius: 6,
-              fontSize: 11,
-              fontFamily: 'var(--mono)',
-              fontWeight: 700,
-              cursor: 'pointer',
-              border: '1px solid rgba(79,142,247,0.35)',
-              background: 'var(--blue-dim)',
-              color: 'var(--blue)',
-              letterSpacing: 0.5
-            }}>
-            + ADD TOOL
-          </button>
-        </div>
-      </div>
 
-      <div className="tabs" style={{ marginBottom: 24, flexWrap: 'wrap' }}>
-        {['ALL', ...categories].map(category => (
-          <div
-            key={category}
-            className={`tab ${filter === category ? 'active' : ''}`}
-            onClick={() => setFilter(category)}>
-            {category}
-          </div>
-        ))}
-      </div>
-
-      {error && <div className="error-banner" style={{ marginBottom: 16 }}>⚠ {error}</div>}
-      {loading && <div className="loading-state" style={{ padding: 60 }}>Loading tools…</div>}
-
-      {!loading && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(340px, 1fr) minmax(420px, 1.2fr)', gap: 20, alignItems: 'start' }}>
-          <div>
-            {Object.keys(grouped).sort().map(category => (
-              <div key={category} style={{ marginBottom: 28 }}>
-                <div style={{
-                  fontFamily: 'var(--mono)',
-                  fontSize: 10,
-                  letterSpacing: 3,
-                  color: CATEGORY_TEXT[category] || 'var(--text-dim)',
-                  textTransform: 'uppercase',
-                  marginBottom: 12,
-                  borderLeft: `3px solid ${CATEGORY_TEXT[category] || 'var(--border-bright)'}`,
-                  paddingLeft: 10
-                }}>
-                  {category} - {grouped[category].length} tools
-                </div>
-                <div style={{ display: 'grid', gap: 12 }}>
-                  {grouped[category].map(tool => {
-                    const active = selectedToolId === tool.id;
-                    return (
-                      <div
-                        key={tool.id}
-                        onClick={() => selectTool(tool.id)}
-                        style={{
-                          background: active ? 'var(--surface2)' : 'var(--surface)',
-                          border: `1px solid ${active ? 'rgba(79,142,247,0.45)' : tool.dangerous ? 'rgba(255,85,85,0.25)' : 'var(--border)'}`,
-                          borderRadius: 8,
-                          padding: '14px 16px',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: 8,
-                          cursor: 'pointer'
-                        }}>
-                        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
-                          <div style={{ fontFamily: 'var(--mono)', fontSize: 12, fontWeight: 700, color: 'var(--text)', wordBreak: 'break-all' }}>
-                            {tool.name}
-                          </div>
-                          <div style={{ display: 'flex', gap: 5, flexShrink: 0 }}>
-                            {tool.dangerous && (
-                              <span style={{ background: 'rgba(255,85,85,0.12)', color: 'var(--red)', fontFamily: 'var(--mono)', fontSize: 9, padding: '2px 6px', borderRadius: 4, fontWeight: 700 }}>
-                                DANGEROUS
-                              </span>
-                            )}
-                            <span style={{
-                              background: CATEGORY_COLORS[category] || 'var(--surface2)',
-                              color: CATEGORY_TEXT[category] || 'var(--text-dim)',
-                              fontFamily: 'var(--mono)',
-                              fontSize: 9,
-                              padding: '2px 7px',
-                              borderRadius: 4,
-                              fontWeight: 700
-                            }}>
-                              {category}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.5 }}>
-                          {tool.description || <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>No description</span>}
-                        </div>
-
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                          <span style={pillStyle(tool.scriptWorkspaceId ? 'var(--green-dim)' : 'var(--surface3)', tool.scriptWorkspaceId ? 'var(--green)' : 'var(--text-muted)')}>
-                            {tool.scriptWorkspaceId ? 'SCRIPT LINKED' : 'NO SCRIPT'}
-                          </span>
-                          {tool.requiredParams?.length > 0 && tool.requiredParams.map(param => (
-                            <span key={param} style={pillStyle('var(--surface3)', 'var(--text-muted)')}>{param}</span>
-                          ))}
-                        </div>
-
-                        <div style={{ display: 'flex', gap: 8, marginTop: 4, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); openEdit(tool); }}
-                            style={secondaryButtonStyle}>
-                            EDIT TOOL
-                          </button>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setDeleteConfirm(tool.id); }}
-                            style={dangerButtonStyle}>
-                            DELETE
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+          {leftTab === 'saved' ? (
+            loadingList ? (
+              <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px', padding: '20px' }}>Loading tools...</div>
+            ) : savedScripts.length === 0 ? (
+              <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px', padding: '20px' }}>
+                No saved tools found. Write code on the right and click Save to store it.
               </div>
-            ))}
-
-            {!loading && toolsArr.length === 0 && (
-              <div className="empty-state-msg">No MCP tools created yet. Save an SOP or add a tool manually.</div>
-            )}
-          </div>
-
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, minHeight: 680, padding: 18 }}>
-            {!selectedTool ? (
-              <div className="empty-state-msg" style={{ paddingTop: 140 }}>Select an MCP tool to edit its script.</div>
             ) : (
-              <>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', marginBottom: 16 }}>
-                  <div>
-                    <div style={{ fontFamily: 'var(--mono)', fontSize: 11, letterSpacing: 2, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 6 }}>
-                      Script Editor
-                    </div>
-                    <div style={{ fontFamily: 'var(--mono)', fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>{selectedTool.name}</div>
-                    <div style={{ color: 'var(--text-dim)', fontSize: 12, lineHeight: 1.5, marginTop: 6 }}>
-                      {selectedTool.description || 'This MCP tool runs the script below.'}
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                    <span style={pillStyle(CATEGORY_COLORS[selectedTool.category] || 'var(--surface3)', CATEGORY_TEXT[selectedTool.category] || 'var(--text-dim)')}>
-                      {selectedTool.category}
-                    </span>
-                    <span style={pillStyle(selectedTool.scriptWorkspaceId ? 'var(--green-dim)' : 'rgba(245,166,35,0.08)', selectedTool.scriptWorkspaceId ? 'var(--green)' : 'var(--amber)')}>
-                      {selectedTool.scriptWorkspaceId ? 'LINKED' : 'NEW SCRIPT'}
-                    </span>
-                  </div>
-                </div>
-
-                {scriptError && <div className="error-banner" style={{ marginBottom: 12 }}>⚠ {scriptError}</div>}
-                {scriptMessage && <div style={{ marginBottom: 12, padding: '10px 12px', borderRadius: 8, border: '1px solid rgba(48,217,156,0.28)', background: 'rgba(48,217,156,0.08)', color: 'var(--green)', fontSize: 12 }}>{scriptMessage}</div>}
-
-                <label style={labelStyle}>Script Name</label>
-                <input value={scriptName} onChange={e => updateScript(() => setScriptName(e.target.value))} style={inputStyle} />
-
-                <label style={labelStyle}>Script Description</label>
-                <textarea
-                  value={scriptDescription}
-                  onChange={e => updateScript(() => setScriptDescription(e.target.value))}
-                  rows={3}
-                  style={{ ...inputStyle, resize: 'vertical', minHeight: 80 }}
-                />
-
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12, marginTop: 14 }}>
-                  <div>
-                    <label style={labelStyle}>Language</label>
-                    <select value={scriptLanguage} onChange={e => updateScript(() => setScriptLanguage(e.target.value as 'bash' | 'powershell'))} style={inputStyle}>
-                      <option value="bash">Bash</option>
-                      <option value="powershell">PowerShell</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label style={labelStyle}>Category</label>
-                    <select value={scriptCategory} onChange={e => updateScript(() => setScriptCategory(e.target.value))} style={inputStyle}>
-                      {SCRIPT_CATEGORIES.map(category => <option key={category} value={category}>{category}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={labelStyle}>Target Host</label>
-                    <input value={scriptTargetHost} onChange={e => updateScript(() => setScriptTargetHost(e.target.value))} style={inputStyle} />
-                  </div>
-                </div>
-
-                <label style={{ ...labelStyle, marginTop: 14 }}>Script Editor</label>
-                <textarea
-                  value={scriptContent}
-                  onChange={e => updateScript(() => setScriptContent(e.target.value))}
-                  rows={24}
-                  spellCheck={false}
-                  style={{
-                    ...inputStyle,
-                    minHeight: 420,
-                    resize: 'vertical',
-                    fontFamily: 'var(--mono)',
-                    fontSize: 12,
-                    lineHeight: 1.6,
-                    background: 'rgba(15,23,42,0.9)',
-                    color: 'var(--green)',
-                    whiteSpace: 'pre',
-                    tabSize: 4
-                  }}
-                  placeholder="# This script will run as this MCP tool"
-                />
-
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginTop: 14 }}>
-                  <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>
-                    {scriptDirty ? 'Unsaved script changes' : selectedTool.scriptWorkspaceId ? 'Linked script is up to date' : 'Save to link this tool with a script'}
-                  </div>
-                  <button
-                    onClick={handleSaveScript}
-                    disabled={scriptSaving}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {savedScripts.map(script => (
+                  <div
+                    key={script.id}
+                    onClick={() => handleSelectScript(script)}
                     style={{
-                      padding: '9px 18px',
-                      borderRadius: 6,
-                      fontSize: 12,
-                      fontFamily: 'var(--mono)',
-                      fontWeight: 700,
-                      cursor: scriptSaving ? 'not-allowed' : 'pointer',
-                      border: '1px solid rgba(79,142,247,0.4)',
-                      background: 'var(--blue-dim)',
-                      color: 'var(--blue)',
-                      opacity: scriptSaving ? 0.6 : 1
-                    }}>
-                    {scriptSaving ? 'SAVING...' : 'SAVE SCRIPT'}
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
-      {deleteConfirm && (
-        <div style={overlayStyle}>
-          <div style={modalStyle}>
-            <div style={{ fontFamily: 'var(--mono)', fontSize: 14, fontWeight: 700, color: 'var(--red)', marginBottom: 12 }}>
-              DELETE TOOL
-            </div>
-            <div style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 24, lineHeight: 1.6 }}>
-              This will permanently delete the tool and its linked script.
-            </div>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button onClick={() => setDeleteConfirm(null)} style={{ ...secondaryButtonStyle, flex: 1 }}>CANCEL</button>
-              <button onClick={() => handleDelete(deleteConfirm)} style={{ ...dangerButtonStyle, flex: 1 }}>DELETE</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showModal && (
-        <div style={overlayStyle}>
-          <div style={{ ...modalStyle, width: 520, maxHeight: '90vh', overflowY: 'auto' }}>
-            <div style={{ fontFamily: 'var(--mono)', fontSize: 13, fontWeight: 700, color: 'var(--blue)', marginBottom: 20, letterSpacing: 1 }}>
-              {editTool ? 'EDIT TOOL' : 'ADD NEW TOOL'}
-            </div>
-
-            {saveError && (
-              <div style={{ background: 'rgba(255,85,85,0.1)', border: '1px solid rgba(255,85,85,0.3)', color: 'var(--red)', padding: '8px 12px', borderRadius: 6, fontSize: 12, marginBottom: 16 }}>
-                {saveError}
+                      padding: '12px', border: '1px solid var(--border)', borderRadius: '8px', cursor: 'pointer',
+                      background: activeScriptId === script.id ? 'var(--surface3)' : 'var(--surface)',
+                      transition: 'all 0.2s', borderLeft: activeScriptId === script.id ? '4px solid var(--michaels-red)' : '1px solid var(--border)'
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '240px' }}>
+                        {script.name}
+                      </span>
+                      <button
+                        onClick={(e) => handleDeleteScript(script.id, e)}
+                        style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--red)', padding: '2px' }}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                    <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {script.description || 'No description provided.'}
+                    </p>
+                    <div style={{ display: 'flex', gap: '8px', marginTop: '8px', fontSize: '10px', color: 'var(--text-dim)' }}>
+                      <span style={{ background: 'var(--surface2)', padding: '2px 6px', borderRadius: '4px', fontFamily: 'monospace' }}>
+                        {script.targetHost}
+                      </span>
+                      <span style={{ background: 'var(--accent-dim)', color: 'var(--accent)', padding: '2px 6px', borderRadius: '4px', textTransform: 'uppercase' }}>
+                        {script.language}
+                      </span>
+                    </div>
+                  </div>
+                ))}
               </div>
-            )}
+            )
+          ) : (
+            executionLogs.length === 0 ? (
+              <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px', padding: '20px' }}>No execution history logs.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {executionLogs.map(logItem => (
+                  <div
+                    key={logItem.id}
+                    onClick={() => handleSelectLog(logItem)}
+                    style={{
+                      padding: '12px', border: '1px solid var(--border)', borderRadius: '8px', cursor: 'pointer',
+                      background: selectedLog?.id === logItem.id ? 'var(--surface3)' : 'var(--surface)',
+                      transition: 'all 0.2s'
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '220px' }}>
+                        {logItem.name}
+                      </span>
+                      <span style={{ fontSize: '11px', fontWeight: 600, color: logItem.status === 'SUCCESS' ? 'var(--green)' : 'var(--red)', display: 'flex', alignItems: 'center', gap: '2px' }}>
+                        {logItem.status === 'SUCCESS' ? <CheckCircle size={12} /> : <XCircle size={12} />}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px', fontSize: '10px', color: 'var(--text-muted)' }}>
+                      <span>Code: {logItem.exitCode}</span>
+                      <span>{new Date(logItem.timestamp).toLocaleTimeString()}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+        </div>
+      </div>
 
-            <label style={labelStyle}>Tool Name *</label>
-            <input
-              name="name"
-              value={form.name}
-              onChange={handleChange}
-              placeholder="e.g. restart_nginx_service"
-              disabled={!!editTool}
-              style={{ ...inputStyle, ...(editTool ? { opacity: 0.5 } : {}) }}
-            />
-
-            <label style={labelStyle}>Category</label>
-            <select name="category" value={form.category} onChange={handleChange} style={inputStyle}>
-              {TOOL_CATEGORIES.map(category => <option key={category} value={category}>{category}</option>)}
-            </select>
-
-            <label style={labelStyle}>Description</label>
-            <textarea
-              name="description"
-              value={form.description}
-              onChange={handleChange}
-              placeholder="What does this tool do?"
-              rows={3}
-              style={{ ...inputStyle, resize: 'vertical', minHeight: 72 }}
-            />
-
-            <label style={labelStyle}>Required Parameters</label>
-            <input
-              name="requiredParams"
-              value={form.requiredParams}
-              onChange={handleChange}
-              placeholder="e.g. service_name, host, port"
-              style={inputStyle}
-            />
-
-            <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14, cursor: 'pointer' }}>
-              <input
-                type="checkbox"
-                name="dangerous"
-                checked={form.dangerous}
-                onChange={handleChange}
-                style={{ width: 16, height: 16, cursor: 'pointer', accentColor: 'var(--red)' }}
-              />
-              <span style={{ fontSize: 13, color: form.dangerous ? 'var(--red)' : 'var(--text-dim)' }}>
-                Mark as dangerous (requires HITL approval)
+      {/* ── RIGHT PANEL: Unified Script Editor Workspace ── */}
+      <div className="card" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        <div className="card-header" style={{ borderBottom: '1px solid var(--border)', padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <span style={{ fontSize: '14px', fontWeight: 'bold', color: 'var(--text)' }}>
+              {activeScriptId ? `Editing Tool: ${scriptName}` : 'Create New Remediation Tool'}
+            </span>
+            {selectedLog && (
+              <span style={{ fontSize: '11px', color: 'var(--michaels-red)', marginLeft: '10px', fontWeight: 'bold', background: 'var(--michaels-red-glow)', padding: '2px 6px', borderRadius: '4px' }}>
+                Run Log History Mode
               </span>
-            </label>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button
+              onClick={handleSaveScript}
+              disabled={saving || !scriptContent.trim() || !!selectedLog}
+              className="btn-primary"
+              style={{ padding: '8px 16px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px', opacity: selectedLog ? 0.5 : 1 }}
+            >
+              <Save size={12} /> Save Tool
+            </button>
+          </div>
+        </div>
 
-            <div style={{ display: 'flex', gap: 10, marginTop: 24 }}>
-              <button onClick={closeModal} style={{ ...secondaryButtonStyle, flex: 1 }}>CANCEL</button>
-              <button onClick={handleSave} disabled={saving} style={{ ...primaryButtonStyle, flex: 2, opacity: saving ? 0.6 : 1 }}>
-                {saving ? 'SAVING...' : editTool ? 'UPDATE TOOL' : 'CREATE TOOL'}
+        <div style={{ padding: '20px', flex: 1, display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto' }}>
+          
+          {/* AI Generator Block (Hidden in history log mode) */}
+          {!selectedLog && (
+            <div style={{ display: 'flex', gap: '8px', background: 'var(--surface2)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+              <input
+                type="text"
+                placeholder="Instruct AI to write code... e.g. 'Disk cleanup for tomcat server' or 'Reboot service'"
+                value={promptDescription}
+                onChange={e => setPromptDescription(e.target.value)}
+                style={{ flex: 1, fontSize: '13px', border: '1px solid var(--border)', background: 'var(--surface)', padding: '10px 12px', borderRadius: '4px' }}
+                onKeyDown={e => e.key === 'Enter' && handleGenerateScript()}
+              />
+              <button
+                onClick={handleGenerateScript}
+                disabled={generating || !promptDescription.trim()}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '4px', padding: '10px 16px',
+                  background: 'var(--text)', color: 'white', border: 'none', borderRadius: '4px',
+                  fontWeight: 'bold', cursor: 'pointer', fontSize: '12px'
+                }}
+              >
+                {generating ? <span className="se-spinner" /> : <Sparkles size={13} />} Generate
               </button>
             </div>
+          )}
+
+          {/* Config row */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '6px' }}>Tool Name</label>
+              <input
+                type="text"
+                value={scriptName}
+                onChange={e => setScriptName(e.target.value)}
+                placeholder="e.g. Server Cleanup"
+                disabled={!!selectedLog}
+                style={{ padding: '8px 10px', fontSize: '13px' }}
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '6px' }}>Language</label>
+              <select
+                value={language}
+                onChange={e => setLanguage(e.target.value as 'bash' | 'powershell')}
+                disabled={!!selectedLog}
+                style={{ padding: '8px 10px', fontSize: '13px', appearance: 'auto' }}
+              >
+                <option value="bash">Bash (Linux)</option>
+                <option value="powershell">PowerShell (Windows)</option>
+              </select>
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '6px' }}>Category</label>
+              <select
+                value={category}
+                onChange={e => setCategory(e.target.value)}
+                disabled={!!selectedLog}
+                style={{ padding: '8px 10px', fontSize: '13px', appearance: 'auto' }}
+              >
+                {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '6px' }}>Target Host</label>
+              <input
+                type="text"
+                value={targetHost}
+                onChange={e => setTargetHost(e.target.value)}
+                placeholder="localhost"
+                disabled={!!selectedLog}
+                style={{ padding: '8px 10px', fontSize: '13px' }}
+              />
+            </div>
           </div>
+
+          {/* Script Code Area */}
+          <div style={{ flex: 1, minHeight: '220px', display: 'flex', flexDirection: 'column' }}>
+            <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '6px' }}>Script Code</label>
+            <div className="se-editor-wrap" style={{ flex: 1 }}>
+              <div className="se-line-numbers" ref={lineNumRef}>
+                {lineNumbers}
+              </div>
+              <textarea
+                ref={textareaRef}
+                className="se-textarea"
+                value={scriptContent}
+                onChange={e => { setScriptContent(e.target.value); setValidationLevel(''); }}
+                onScroll={handleEditorScroll}
+                onKeyDown={handleKeyDown}
+                disabled={!!selectedLog}
+                placeholder={`# Write code here...`}
+                spellCheck={false}
+              />
+            </div>
+          </div>
+
+          {/* Actions panel */}
+          {!selectedLog && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <button
+                  onClick={handleValidateScript}
+                  disabled={validating || !scriptContent.trim()}
+                  style={{
+                    padding: '10px 18px', background: 'var(--surface2)', color: 'var(--text)',
+                    border: '1px solid var(--border)', borderRadius: '6px', cursor: 'pointer',
+                    fontSize: '13px', fontWeight: 'bold'
+                  }}
+                >
+                  {validating ? 'Validating...' : '✓ Validate Guardrails'}
+                </button>
+
+                <button
+                  onClick={handleExecuteScript}
+                  disabled={executing || !scriptContent.trim()}
+                  className="btn-primary"
+                  style={{ padding: '10px 20px', fontSize: '13px' }}
+                >
+                  <Play size={13} style={{ marginRight: '6px', verticalAlign: 'middle' }} />
+                  {dryRun ? 'Simulate (Dry Run)' : 'Execute Action'}
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <input
+                  type="checkbox"
+                  id="editorDryRun"
+                  checked={dryRun}
+                  onChange={e => setDryRun(e.target.checked)}
+                  style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                />
+                <label htmlFor="editorDryRun" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-dim)', cursor: 'pointer' }}>
+                  Safety Dry-Run Mode
+                </label>
+              </div>
+            </div>
+          )}
+
+          {/* Validation finding messages */}
+          {findings.length > 0 && (
+            <div style={{ background: 'rgba(239, 68, 68, 0.05)', border: '1px solid rgba(239, 68, 68, 0.2)', padding: '14px', borderRadius: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--red)', fontWeight: 'bold', fontSize: '13px', marginBottom: '8px' }}>
+                <AlertTriangle size={15} /> Safety Findings Detected ({findings.length})
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {findings.map((f, i) => (
+                  <div key={i} style={{ fontSize: '12px', color: 'var(--text-dim)', paddingLeft: '8px', borderLeft: '2px solid var(--red)' }}>
+                    <b>[{f.layer}]</b> {f.message}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Console / run logs output */}
+          {execOutput && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+                Run Output Console (Status: {execOutput.exitCode === 0 ? 'SUCCESS' : 'FAILED'} - Code: {execOutput.exitCode})
+              </div>
+              
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '10px' }}>
+                {execOutput.stdout && (
+                  <div>
+                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: '4px' }}>stdout</div>
+                    <pre style={{
+                      background: '#0f172a', color: '#38bdf8', padding: '12px', borderRadius: '6px',
+                      fontFamily: 'monospace', fontSize: '12px', overflowX: 'auto', maxHeight: '180px'
+                    }}>
+                      {execOutput.stdout}
+                    </pre>
+                  </div>
+                )}
+                {execOutput.stderr && (
+                  <div>
+                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: '4px' }}>stderr</div>
+                    <pre style={{
+                      background: '#0f172a', color: '#f87171', padding: '12px', borderRadius: '6px',
+                      fontFamily: 'monospace', fontSize: '12px', overflowX: 'auto', maxHeight: '180px'
+                    }}>
+                      {execOutput.stderr}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
-};
-
-const labelStyle: React.CSSProperties = {
-  display: 'block',
-  fontFamily: 'var(--mono)',
-  fontSize: 10,
-  letterSpacing: 1,
-  color: 'var(--text-muted)',
-  marginTop: 12,
-  marginBottom: 6,
-};
-
-const inputStyle: React.CSSProperties = {
-  width: '100%',
-  background: 'var(--surface2)',
-  border: '1px solid var(--border)',
-  borderRadius: 6,
-  color: 'var(--text)',
-  padding: '10px 12px',
-  fontSize: 12,
-  outline: 'none',
-  boxSizing: 'border-box',
-};
-
-const pillStyle = (background: string, color: string): React.CSSProperties => ({
-  background,
-  color,
-  fontFamily: 'var(--mono)',
-  fontSize: 9,
-  padding: '2px 7px',
-  borderRadius: 4,
-  fontWeight: 700,
-});
-
-const primaryButtonStyle: React.CSSProperties = {
-  padding: '9px 0',
-  borderRadius: 6,
-  fontSize: 12,
-  fontFamily: 'var(--mono)',
-  fontWeight: 700,
-  cursor: 'pointer',
-  border: '1px solid rgba(79,142,247,0.4)',
-  background: 'var(--blue-dim)',
-  color: 'var(--blue)',
-};
-
-const secondaryButtonStyle: React.CSSProperties = {
-  flex: 1,
-  padding: '5px 0',
-  fontSize: 11,
-  fontFamily: 'var(--mono)',
-  cursor: 'pointer',
-  border: '1px solid var(--border-bright)',
-  background: 'var(--surface2)',
-  color: 'var(--text-dim)',
-  borderRadius: 4
-};
-
-const dangerButtonStyle: React.CSSProperties = {
-  flex: 1,
-  padding: '5px 0',
-  fontSize: 11,
-  fontFamily: 'var(--mono)',
-  cursor: 'pointer',
-  border: '1px solid rgba(255,85,85,0.25)',
-  background: 'rgba(255,85,85,0.06)',
-  color: 'var(--red)',
-  borderRadius: 4
-};
-
-const overlayStyle: React.CSSProperties = {
-  position: 'fixed',
-  inset: 0,
-  background: 'rgba(15,23,42,0.55)',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  zIndex: 1000
-};
-
-const modalStyle: React.CSSProperties = {
-  background: 'var(--surface)',
-  border: '1px solid var(--border-bright)',
-  borderRadius: 10,
-  padding: 28,
-  width: 380,
-  boxShadow: '0 20px 60px rgba(0,0,0,0.18)'
 };
 
 export default ToolsPage;

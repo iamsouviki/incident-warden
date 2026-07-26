@@ -131,11 +131,11 @@ export async function refreshToken(): Promise<boolean> {
 }
 
 // ─── Login ───────────────────────────────────────────────────────────────────
-export async function login(username: string, password: string): Promise<AuthUser> {
+export async function login(username: string, password: string, rememberMe = false): Promise<AuthUser> {
   const res = await fetch('/api/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ username, password, rememberMe }),
   });
 
   if (res.status === 401) {

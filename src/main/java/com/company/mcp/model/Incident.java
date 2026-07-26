@@ -1,88 +1,158 @@
 package com.company.mcp.model;
 
-import com.company.mcp.domain.Decision;
-import com.company.mcp.domain.IncidentStatus;
-import com.company.mcp.domain.Severity;
 import jakarta.persistence.*;
-import lombok.*;
-import org.hibernate.annotations.CreationTimestamp;
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.UUID;
 
-/**
- * Core incident entity. Acts as both incident record and job queue item.
- * Processing pipeline claims incidents atomically with SKIP LOCKED.
- */
 @Entity
-@Table(name = "incidents", indexes = {
-    @Index(name = "idx_incidents_queue", columnList = "tenant_id,severity,created_at"),
-    @Index(name = "idx_incidents_status", columnList = "status")
-})
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
+@Table(name = "incidents", schema = "incident")
 public class Incident {
+
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
+    @Column(name = "id", nullable = false)
     private UUID id;
 
-    @Column(name = "tenant_id", columnDefinition = "UUID")
-    private UUID tenantId;
+    @Column(name = "subject", nullable = false)
+    private String subject;
 
-    @Column(name = "source_system", nullable = false, length = 50)
-    private String sourceSystem;
-
-    @Column(name = "source_ticket_id", nullable = false, length = 100, unique = true)
-    private String sourceTicketId;
-
-    @Column(nullable = false, columnDefinition = "TEXT")
-    private String title;
-
-    @Column(columnDefinition = "TEXT")
+    @Column(name = "description", columnDefinition = "TEXT")
     private String description;
 
-    @Column(length = 100)
-    private String category;
+    @Column(name = "assignee")
+    private String assignee;
 
-    @Column(name = "sub_category", length = 100)
-    private String subCategory;
+    @Column(name = "assigned_gteam")
+    private String assignedGteam;
 
-    @Column(nullable = false, length = 5)
-    private String severity; // P1, P2, P3, P4
+    @Column(name = "priority", nullable = false)
+    private String priority;
 
-    @Column(name = "affected_systems", columnDefinition = "text[]")
-    private String[] affectedSystems;
+    @Column(name = "status", nullable = false)
+    private String status = "New";
 
-    @Column(nullable = false, length = 40)
-    private String status; // PENDING, PROCESSING, AUTO_RESOLVED, HITL_PENDING, etc.
+    @Column(name = "created_at")
+    private OffsetDateTime createdAt;
 
-    @Column(name = "final_decision", length = 20)
-    private String finalDecision; // AUTO_RESOLVE, HITL_REQUIRED, ESCALATE
+    @Column(name = "updated_at")
+    private OffsetDateTime updatedAt;
 
-    @Column(name = "confidence_score")
-    private Double confidenceScore;
+    @Column(name = "due_date")
+    private OffsetDateTime dueDate;
 
-    @Column(name = "retry_count")
-    @Builder.Default
-    private Integer retryCount = 0;
+    @Column(name = "external_source")
+    private String externalSource = "Internal";
 
-    @Column(name = "processing_started_at", columnDefinition = "TIMESTAMPTZ")
-    private LocalDateTime processingStartedAt;
+    @Column(name = "external_id")
+    private String externalId;
 
-    @Column(name = "resolved_at", columnDefinition = "TIMESTAMPTZ")
-    private LocalDateTime resolvedAt;
+    public Incident() {}
 
-    @Column(name = "matched_sop_id", columnDefinition = "UUID")
-    private UUID matchedSopId;
+    public Incident(UUID id, String subject, String description, String assignee, String assignedGteam, 
+                    String priority, String status, OffsetDateTime createdAt, OffsetDateTime updatedAt, 
+                    OffsetDateTime dueDate, String externalSource, String externalId) {
+        this.id = id;
+        this.subject = subject;
+        this.description = description;
+        this.assignee = assignee;
+        this.assignedGteam = assignedGteam;
+        this.priority = priority;
+        this.status = status;
+        this.createdAt = createdAt;
+        this.updatedAt = updatedAt;
+        this.dueDate = dueDate;
+        this.externalSource = externalSource;
+        this.externalId = externalId;
+    }
 
-    @Column(name = "matched_pattern_id", columnDefinition = "UUID")
-    private UUID matchedPatternId;
+    @PrePersist
+    protected void onCreate() {
+        if (id == null) {
+            id = UUID.randomUUID();
+        }
+        if (createdAt == null) {
+            createdAt = OffsetDateTime.now();
+        }
+        if (updatedAt == null) {
+            updatedAt = OffsetDateTime.now();
+        }
+    }
 
-    @Column(name = "pattern_similarity")
-    private Double patternSimilarity;
+    @PreUpdate
+    protected void onUpdate() {
+        updatedAt = OffsetDateTime.now();
+    }
 
-    @Column(name = "created_at", columnDefinition = "TIMESTAMPTZ", updatable = false)
-    @CreationTimestamp
-    private LocalDateTime createdAt;
+    // Getters and Setters
+    public UUID getId() { return id; }
+    public void setId(UUID id) { this.id = id; }
+
+    public String getSubject() { return subject; }
+    public void setSubject(String subject) { this.subject = subject; }
+
+    public String getDescription() { return description; }
+    public void setDescription(String description) { this.description = description; }
+
+    public String getAssignee() { return assignee; }
+    public void setAssignee(String assignee) { this.assignee = assignee; }
+
+    public String getAssignedGteam() { return assignedGteam; }
+    public void setAssignedGteam(String assignedGteam) { this.assignedGteam = assignedGteam; }
+
+    public String getPriority() { return priority; }
+    public void setPriority(String priority) { this.priority = priority; }
+
+    public String getStatus() { return status; }
+    public void setStatus(String status) { this.status = status; }
+
+    public OffsetDateTime getCreatedAt() { return createdAt; }
+    public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }
+
+    public OffsetDateTime getUpdatedAt() { return updatedAt; }
+    public void setUpdatedAt(OffsetDateTime updatedAt) { this.updatedAt = updatedAt; }
+
+    public OffsetDateTime getDueDate() { return dueDate; }
+    public void setDueDate(OffsetDateTime dueDate) { this.dueDate = dueDate; }
+
+    public String getExternalSource() { return externalSource; }
+    public void setExternalSource(String externalSource) { this.externalSource = externalSource; }
+
+    public String getExternalId() { return externalId; }
+    public void setExternalId(String externalId) { this.externalId = externalId; }
+
+    // Builder Pattern
+    public static Builder builder() {
+        return new Builder();
+    }
+
+    public static class Builder {
+        private UUID id;
+        private String subject;
+        private String description;
+        private String assignee;
+        private String assignedGteam;
+        private String priority;
+        private String status = "New";
+        private OffsetDateTime createdAt;
+        private OffsetDateTime updatedAt;
+        private OffsetDateTime dueDate;
+        private String externalSource = "None";
+        private String externalId;
+
+        public Builder id(UUID id) { this.id = id; return this; }
+        public Builder subject(String subject) { this.subject = subject; return this; }
+        public Builder description(String description) { this.description = description; return this; }
+        public Builder assignee(String assignee) { this.assignee = assignee; return this; }
+        public Builder assignedGteam(String assignedGteam) { this.assignedGteam = assignedGteam; return this; }
+        public Builder priority(String priority) { this.priority = priority; return this; }
+        public Builder status(String status) { this.status = status; return this; }
+        public Builder createdAt(OffsetDateTime createdAt) { this.createdAt = createdAt; return this; }
+        public Builder updatedAt(OffsetDateTime updatedAt) { this.updatedAt = updatedAt; return this; }
+        public Builder dueDate(OffsetDateTime dueDate) { this.dueDate = dueDate; return this; }
+        public Builder externalSource(String externalSource) { this.externalSource = externalSource; return this; }
+        public Builder externalId(String externalId) { this.externalId = externalId; return this; }
+
+        public Incident build() {
+            return new Incident(id, subject, description, assignee, assignedGteam, priority, status, createdAt, updatedAt, dueDate, externalSource, externalId);
+        }
+    }
 }
