@@ -23,7 +23,9 @@ public class AiConfigService {
     private String apiKey = "";
     private String activeChatModel = "qwen2.5-coder:3b";
     private String activeEmbeddingModel = "nomic-embed-text:latest";
+    @org.springframework.beans.factory.annotation.Value("${mcp.confidence.auto-resolve-threshold:1.00}")
     private String autoResolveThreshold = "1.00";
+    @org.springframework.beans.factory.annotation.Value("${mcp.confidence.hitl-threshold:0.80}")
     private String hitlThreshold = "0.80";
     private String blastRadiusThreshold = "0.40";
     private String servicenowEnabled = "false";

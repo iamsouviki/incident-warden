@@ -255,6 +255,40 @@ docker compose ps
 | Jaeger | http://localhost:16686 | Docker full |
 | Kibana | http://localhost:5601 | Docker full |
 
+## Autonomous operations
+
+The platform now has a closed-loop autonomous path rather than a passive approval queue:
+
+| Stage | What happens |
+|---|---|
+| Detect | A normalized store-device event is posted to `/api/v1/telemetry/events`. Actionable `HIGH`/`CRITICAL`/offline/error signals automatically create or deduplicate an incident. |
+| Decide | Existing confidence thresholds and policy gates route low-risk incidents to `AUTO_RESOLVED`, keep human-required work in `PENDING_APPROVAL`, and hold P1 actions unless explicitly enabled. |
+| Act | The scheduled autonomy worker selects safe, allow-listed actions. `SIMULATED` mode is the default; `HTTP` mode calls a reviewed executor at `MCP_AUTONOMY_EXECUTOR_URL`. |
+| Verify | The validation agent records `PASS` or `FAIL`, closes successful incidents as `RESOLVED`, retries failures within `MCP_AUTONOMY_MAX_RETRIES`, and escalates persistent failures. |
+| Learn | `/api/v1/autonomy/learning` reports validation pass rate, while `/api/v1/autonomy/traces` preserves agent, phase, incident, and validation evidence. |
+
+The operations console is available at `/autonomy`. It polls the autonomy status, live traces, device signals, and learning metrics so an operator can understand what the agents are doing without reading server logs. `POST /api/v1/autonomy/run` is available for a controlled manual cycle.
+
+### Telemetry contract
+
+```bash
+curl -X POST http://localhost:8080/api/v1/telemetry/events \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "deviceId": "pos-017",
+    "storeId": "store-042",
+    "deviceType": "POS",
+    "eventType": "POS_OFFLINE",
+    "severity": "HIGH",
+    "message": "POS terminal stopped sending heartbeats"
+  }'
+```
+
+### Enabling production execution
+
+Keep `MCP_AUTONOMY_EXECUTION_MODE=SIMULATED` while integrating and testing. For a real device executor, set `MCP_AUTONOMY_EXECUTION_MODE=HTTP`, provide `MCP_AUTONOMY_EXECUTOR_URL`, and make that endpoint perform its own authentication, authorization, idempotency, target validation, command allow-listing, timeout, rollback, and audit checks. The platform sends `incidentId`, `subject`, `script`, and `targetHost`; the executor must return JSON with `success: true|false` and an optional `message`. Do not enable P1 auto-remediation until the enterprise change policy explicitly allows it.
+
 ## SOP chatbot guardrails
 
 The chatbot is intentionally **not a general-purpose assistant**. Before any model call, the backend checks whether the request is about SOPs, runbooks, store devices, incidents, alerts, troubleshooting, remediation, or related operational records. Greetings and help requests are handled with fixed responses. Unrelated requests are declined with a scope message, and in-scope questions are answered only from retrieved SOP or incident evidence. If no supporting evidence is found, the assistant refuses to invent an answer.

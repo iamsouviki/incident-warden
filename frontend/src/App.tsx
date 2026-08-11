@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import {
+  Activity,
   Bell,
   BookOpen,
   CheckCircle2,
@@ -28,6 +29,7 @@ import IncidentManagementPage from './pages/IncidentManagementPage';
 import ToolsPage from './pages/ToolsPage';
 import HitlPage from './pages/HitlPage';
 import AccountPage from './pages/AccountPage';
+import AutonomyPage from './pages/AutonomyPage';
 import ChatbotWidget from './components/ChatbotWidget';
 import { AuthUser, clearAuth, getStoredUser, isTokenExpiringSoon, refreshToken } from './services/api';
 
@@ -36,6 +38,7 @@ const DEFAULT_TENANT_ID = 'tenant-1';
 type NavItem = { path: string; label: string; icon: React.ReactNode; group: 'Operate' | 'Manage' };
 
 const NAV_ITEMS: NavItem[] = [
+  { path: '/autonomy', label: 'Autonomous ops', icon: <Activity size={16} />, group: 'Operate' },
   { path: '/incidents', label: 'Incidents', icon: <ShieldAlert size={16} />, group: 'Operate' },
   { path: '/hitl', label: 'HITL queue', icon: <CheckCircle2 size={16} />, group: 'Operate' },
   { path: '/tools', label: 'Tools & scripts', icon: <FileCode2 size={16} />, group: 'Operate' },
@@ -45,6 +48,7 @@ const NAV_ITEMS: NavItem[] = [
 ];
 
 const PAGE_META: Record<string, { title: string; subtitle: string }> = {
+  '/autonomy': { title: 'Autonomous operations', subtitle: 'Observe the agent loop, policy gates, remediation, and verification in one place.' },
   '/incidents': { title: 'Incidents', subtitle: 'Monitor, triage, and resolve issues from every connected source.' },
   '/hitl': { title: 'HITL approval queue', subtitle: 'Review proposed actions before they affect production systems.' },
   '/tools': { title: 'Tools & scripts', subtitle: 'Manage safe remediation actions and execution history.' },
@@ -181,6 +185,7 @@ function AppContent({ user, onLogout }: { user: AuthUser; onLogout: () => void }
           {(activePath === '/incidents' || activePath === '/hitl' || activePath === '/tools') && <WorkflowRail active={activePath === '/incidents' ? 0 : activePath === '/hitl' ? 2 : 3} />}
           <div className="page-content">
             <Routes>
+              <Route path="/autonomy" element={<AutonomyPage />} />
               <Route path="/incidents" element={<IncidentManagementPage showCreateModal={showCreateModal} setShowCreateModal={setShowCreateModal} />} />
               <Route path="/incidents/:id" element={<IncidentManagementPage showCreateModal={showCreateModal} setShowCreateModal={setShowCreateModal} />} />
               <Route path="/hitl" element={<HitlPage />} />

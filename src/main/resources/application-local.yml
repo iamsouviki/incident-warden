@@ -50,6 +50,17 @@ spring:
 mcp:
   llm:
     provider: custom
+  autonomy:
+    enabled: true
+    execution-mode: SIMULATED
+    poll-interval-ms: 5000
+    batch-size: 10
+    allow-p1: false
+  telemetry:
+    auto-create-incidents: true
+  confidence:
+    auto-resolve-threshold: 0.85
+    hitl-threshold: 0.70
 
 server:
   port: ${PORT:8080}

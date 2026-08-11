@@ -128,6 +128,10 @@ public class IncidentService {
         return String.format("INC%09d", nextNum);
     }
 
+    public Optional<Incident> findTelemetryIncident(String correlationKey) {
+        return incidentRepository.findFirstByExternalSourceAndExternalId("Telemetry", correlationKey);
+    }
+
     public Incident createIncident(Incident incident) {
         if (incident.getCreatedAt() == null) {
             incident.setCreatedAt(OffsetDateTime.now());
@@ -160,6 +164,8 @@ public class IncidentService {
         String description = Optional.ofNullable(incident.getDescription()).orElse("");
         double score = 50.0;
         if (subject.contains("restart") || subject.contains("reset")) score += 20.0;
+        if (subject.contains("offline") || subject.contains("printer") || subject.contains("vpn") || subject.contains("wifi")) score += 25.0;
+        if ("Store Device".equalsIgnoreCase(incident.getCategory()) || "Telemetry".equalsIgnoreCase(incident.getExternalSource())) score += 10.0;
         if ("P1".equalsIgnoreCase(incident.getPriority())) score -= 10.0;
         if (description.length() > 50) score += 10.0;
         return Math.min(100.0, Math.max(0.0, score));

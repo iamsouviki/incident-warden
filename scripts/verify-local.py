@@ -1,5 +1,6 @@
 import json
 import sys
+import time
 import urllib.request
 
 BASE = "http://localhost:8080"
@@ -22,8 +23,20 @@ rotated = request("/api/auth/refresh", "POST", {"refreshToken": login["refreshTo
 assert rotated.get("accessToken") and rotated.get("refreshToken"), rotated
 answer = request("/api/v1/rag/chat", "POST", {"question": "What is the capital of France?"}, login["accessToken"])
 assert "only answer questions grounded" in answer["answer"].lower(), answer
+telemetry = request("/api/v1/telemetry/events", "POST", {
+    "deviceId": "pos-verify-01", "storeId": "store-verify", "deviceType": "POS",
+    "eventType": "POS_OFFLINE", "severity": "HIGH", "message": "POS terminal is offline"
+}, login["accessToken"])
+assert telemetry.get("incidentId"), telemetry
+for _ in range(8):
+    time.sleep(1)
+    traces = request("/api/v1/autonomy/traces?limit=20", token=login["accessToken"])
+    if any(t.get("incidentId") == telemetry["incidentId"] and t.get("phase") == "POST_VALIDATE" for t in traces):
+        break
+assert any(t.get("incidentId") == telemetry["incidentId"] and t.get("validationStatus") == "PASS" for t in traces), traces
 print(json.dumps({
     "health": health,
     "tokens": {"access": True, "refresh": True, "rotated": True},
     "chatbotGuardrail": "PASS",
+    "telemetryAutonomy": "PASS",
 }, indent=2))

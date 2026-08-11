@@ -226,6 +226,18 @@ mcp:
     hitl-threshold: 0.80
     enable-p1-auto-resolve: false
   
+  autonomy:
+    enabled: ${MCP_AUTONOMY_ENABLED:false}
+    execution-mode: ${MCP_AUTONOMY_EXECUTION_MODE:SIMULATED}
+    poll-interval-ms: ${MCP_AUTONOMY_POLL_INTERVAL_MS:10000}
+    batch-size: ${MCP_AUTONOMY_BATCH_SIZE:10}
+    allow-p1: ${MCP_AUTONOMY_ALLOW_P1:false}
+    max-retries: ${MCP_AUTONOMY_MAX_RETRIES:2}
+    executor-url: ${MCP_AUTONOMY_EXECUTOR_URL:}
+
+  telemetry:
+    auto-create-incidents: ${MCP_TELEMETRY_AUTO_CREATE_INCIDENTS:true}
+
   tools:
     health-check-interval-seconds: 60
     timeout-ms: 30000
