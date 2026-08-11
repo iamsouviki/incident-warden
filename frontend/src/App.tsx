@@ -6,9 +6,10 @@ import TeamsPage from './pages/TeamsPage';
 import AiConfigPage from './pages/AiConfigPage';
 import IncidentManagementPage from './pages/IncidentManagementPage';
 import ToolsPage from './pages/ToolsPage';
+import HitlPage from './pages/HitlPage';
 import AccountPage from './pages/AccountPage';
 import ChatbotWidget from './components/ChatbotWidget';
-import { Settings, LogOut, User, ShieldAlert, Plus, Wrench, BookOpen, Users, ChevronDown } from 'lucide-react';
+import { Settings, LogOut, User, ShieldAlert, Plus, Wrench, BookOpen, Users, ChevronDown, CheckCircle } from 'lucide-react';
 import { AuthUser, getStoredUser, clearAuth, refreshToken, isTokenExpiringSoon } from './services/api';
 
 const DEFAULT_TENANT_ID = 'tenant-1';
@@ -17,6 +18,7 @@ const PAGE_TITLES: Record<string, string> = {
   incidents: 'INCIDENT DIRECTORY',
   sop:       'STANDARD OPERATING PROCEDURES',
   tools:     'REMEDIATION TOOLS & SCRIPTS',
+  hitl:      'HITL APPROVAL QUEUE',
   teams:     'SUPPORT TEAMS & MEMBERS',
   ai_config: 'AI CONFIGURATION',
   account:   'MY ACCOUNT',
@@ -100,9 +102,10 @@ const App: React.FC = () => {
           {[
             { key: 'incidents', icon: <ShieldAlert size={16}/>, label: 'Incidents' },
             { key: 'sop',       icon: <BookOpen  size={16}/>, label: 'SOPs' },
-            { key: 'tools',     icon: <Wrench    size={16}/>, label: 'Tools' },
-            { key: 'teams',     icon: <Users     size={16}/>, label: 'Teams' },
-            { key: 'ai_config', icon: <Settings  size={16}/>, label: 'Config' },
+            { key: 'tools',     icon: <Wrench      size={16}/>, label: 'Tools' },
+            { key: 'hitl',      icon: <CheckCircle  size={16}/>, label: 'HITL Queue' },
+            { key: 'teams',     icon: <Users       size={16}/>, label: 'Teams' },
+            { key: 'ai_config', icon: <Settings    size={16}/>, label: 'Config' },
           ].map(({ key, icon, label }) => (
             <button
               key={key}
@@ -206,6 +209,7 @@ const App: React.FC = () => {
             />
           )}
           {page === 'tools' && <ToolsPage />}
+          {page === 'hitl'  && <HitlPage />}
         </div>
       </main>
 

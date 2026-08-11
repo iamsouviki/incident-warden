@@ -44,6 +44,9 @@ public class IncidentService {
     @Autowired
     private RagService ragService;
 
+    @Autowired
+    private AiConfigService aiConfigService;
+
     @jakarta.annotation.PostConstruct
     public void populateMissingExternalIds() {
         try {
@@ -138,12 +141,39 @@ public class IncidentService {
         if (incident.getExternalId() == null || incident.getExternalId().isBlank()) {
             incident.setExternalId(generateNextTicketNumber());
         }
+
+        // Apply Confidence Scoring and Routing
+        double score = calculateConfidenceScore(incident);
+        incident.setConfidenceScore(score);
+        routeIncident(incident, score);
         
         Incident saved = incidentRepository.save(incident);
 
         // Record initial history
-        saveHistoryRecord(saved.getId(), "Incident Created", null, "New", "System");
+        saveHistoryRecord(saved.getId(), "Incident Created", null, incident.getStatus(), "System");
         return saved;
+    }
+
+    private double calculateConfidenceScore(Incident incident) {
+        // ponytail: simple heuristic for demonstration, upgrade to full LLM scoring if needed
+        double score = 50.0;
+        if (incident.getSubject().toLowerCase().contains("restart") || incident.getSubject().toLowerCase().contains("reset")) score += 20.0;
+        if (incident.getPriority().equals("P1")) score -= 10.0; // Higher risk
+        if (incident.getDescription().length() > 50) score += 10.0;
+        return Math.min(100.0, Math.max(0.0, score));
+    }
+
+    private void routeIncident(Incident incident, double score) {
+        double autoThreshold = aiConfigService.getAutoResolveThreshold();
+        double hitlThreshold = aiConfigService.getHitlThreshold();
+
+        if (score >= autoThreshold) {
+            incident.setStatus("AUTO_RESOLVED");
+        } else if (score >= hitlThreshold) {
+            incident.setStatus("PENDING_APPROVAL");
+        } else {
+            incident.setStatus("New");
+        }
     }
 
     public OffsetDateTime calculateDueDate(OffsetDateTime createdAt, String priority) {
@@ -549,12 +579,23 @@ public class IncidentService {
 
         if (existing.isEmpty()) {
             UUID id = UUID.randomUUID();
+            // Apply Confidence Scoring and Routing for External
+            Incident dummy = Incident.builder()
+                    .subject(subject)
+                    .description(description)
+                    .priority(priority)
+                    .build();
+            double score = calculateConfidenceScore(dummy);
+            String status = "New";
+            if (score >= aiConfigService.getAutoResolveThreshold()) status = "AUTO_RESOLVED";
+            else if (score >= aiConfigService.getHitlThreshold()) status = "PENDING_APPROVAL";
+
             ExternalIncident incident = ExternalIncident.builder()
                     .id(id)
                     .subject(subject != null ? subject : "Untitled external ticket")
                     .description(description != null ? description : "")
                     .priority(priority)
-                    .status("New")
+                    .status(status)
                     .externalSource(source)
                     .externalId(extKey)
                     .assignee("Unassigned")
@@ -562,6 +603,8 @@ public class IncidentService {
                     .createdAt(OffsetDateTime.now())
                     .dueDate(calculateDueDate(OffsetDateTime.now(), priority))
                     .updatedAt(OffsetDateTime.now())
+                    .confidenceScore(score)
+                    .category("Universal")
                     .build();
             externalIncidentRepository.save(incident);
             

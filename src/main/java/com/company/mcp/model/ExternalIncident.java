@@ -45,11 +45,17 @@ public class ExternalIncident {
     @Column(name = "external_id", nullable = false)
     private String externalId;
 
+    @Column(name = "category")
+    private String category = "General";
+
+    @Column(name = "confidence_score")
+    private Double confidenceScore = 0.0;
+
     public ExternalIncident() {}
 
     public ExternalIncident(UUID id, String subject, String description, String assignee, String assignedGteam, 
                             String priority, String status, OffsetDateTime createdAt, OffsetDateTime updatedAt, 
-                            OffsetDateTime dueDate, String externalSource, String externalId) {
+                            OffsetDateTime dueDate, String externalSource, String externalId, String category, Double confidenceScore) {
         this.id = id;
         this.subject = subject;
         this.description = description;
@@ -62,6 +68,8 @@ public class ExternalIncident {
         this.dueDate = dueDate;
         this.externalSource = externalSource;
         this.externalId = externalId;
+        this.category = category;
+        this.confidenceScore = confidenceScore;
     }
 
     @PrePersist
@@ -119,6 +127,12 @@ public class ExternalIncident {
     public String getExternalId() { return externalId; }
     public void setExternalId(String externalId) { this.externalId = externalId; }
 
+    public String getCategory() { return category; }
+    public void setCategory(String category) { this.category = category; }
+
+    public Double getConfidenceScore() { return confidenceScore; }
+    public void setConfidenceScore(Double confidenceScore) { this.confidenceScore = confidenceScore; }
+
     // Builder
     public static Builder builder() {
         return new Builder();
@@ -137,6 +151,8 @@ public class ExternalIncident {
         private OffsetDateTime dueDate;
         private String externalSource;
         private String externalId;
+        private String category = "General";
+        private Double confidenceScore = 0.0;
 
         public Builder id(UUID id) { this.id = id; return this; }
         public Builder subject(String subject) { this.subject = subject; return this; }
@@ -150,9 +166,11 @@ public class ExternalIncident {
         public Builder dueDate(OffsetDateTime dueDate) { this.dueDate = dueDate; return this; }
         public Builder externalSource(String externalSource) { this.externalSource = externalSource; return this; }
         public Builder externalId(String externalId) { this.externalId = externalId; return this; }
+        public Builder category(String category) { this.category = category; return this; }
+        public Builder confidenceScore(Double confidenceScore) { this.confidenceScore = confidenceScore; return this; }
 
         public ExternalIncident build() {
-            return new ExternalIncident(id, subject, description, assignee, assignedGteam, priority, status, createdAt, updatedAt, dueDate, externalSource, externalId);
+            return new ExternalIncident(id, subject, description, assignee, assignedGteam, priority, status, createdAt, updatedAt, dueDate, externalSource, externalId, category, confidenceScore);
         }
     }
 }
