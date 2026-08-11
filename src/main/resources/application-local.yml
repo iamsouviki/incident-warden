@@ -1,0 +1,61 @@
+spring:
+  datasource:
+    url: jdbc:h2:file:./.data/mcp-local;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 1
+      connection-timeout: 10000
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        hbm2ddl:
+          create_namespaces: true
+    show-sql: false
+  liquibase:
+    enabled: false
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema-h2.sql
+  data:
+    redis:
+      repositories:
+        enabled: false
+  cache:
+    type: simple
+  cloud:
+    vault:
+      enabled: false
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
+      - org.springframework.ai.vectorstore.pgvector.autoconfigure.PgVectorStoreAutoConfiguration
+  ai:
+    ollama:
+      chat:
+        enabled: false
+      embedding:
+        enabled: false
+    vectorstore:
+      pgvector:
+        initialize-schema: false
+
+mcp:
+  llm:
+    provider: custom
+
+server:
+  port: ${PORT:8080}
+
+logging:
+  level:
+    org.springframework: WARN
+    com.company.mcp: INFO
+    org.hibernate.SQL: WARN

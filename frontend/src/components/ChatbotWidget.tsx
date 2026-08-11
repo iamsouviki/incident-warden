@@ -22,7 +22,7 @@ const ChatbotWidget: React.FC<Props> = ({ tenantId }) => {
     {
       id: 'welcome',
       role: 'bot',
-      text: "👋 Hi! I'm the SOP Assistant. Ask me a question about the inserted SOPs. I will reply ONLY if the answer is found in the documents.",
+      text: "Hi! I’m the SOP Assistant. I answer only from approved SOPs and incident records. Questions outside that scope will be declined.",
     },
   ]);
   const [loading, setLoading] = useState(false);
@@ -67,7 +67,7 @@ const ChatbotWidget: React.FC<Props> = ({ tenantId }) => {
         const d = await response.json();
         updateMessage(botId, { loading: false, text: d.answer });
       } else {
-        updateMessage(botId, { loading: false, error: true, text: 'not found (Server Error)' });
+        updateMessage(botId, { loading: false, error: true, text: 'The SOP assistant could not complete that request. Try a more specific SOP or incident question.' });
       }
     } catch {
       updateMessage(botId, {
@@ -133,6 +133,8 @@ const ChatbotWidget: React.FC<Props> = ({ tenantId }) => {
             </div>
             <button className="cb-close-btn" onClick={() => setOpen(false)}><X size={16} /></button>
           </div>
+
+          <div className="cb-scope-note">Grounded answers only · SOPs + incidents</div>
 
           {/* Messages */}
           <div className="cb-messages">

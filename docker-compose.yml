@@ -33,12 +33,14 @@ services:
       retries: 5
 
   keycloak:
+    profiles: ["full"]
     image: quay.io/keycloak/keycloak:24.0
     container_name: mcp_keycloak
     command: start-dev
     environment:
       KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_URL: jdbc:postgresql://postgres:5432/mcp_db
+      KC_DB_SCHEMA: keycloak
       KC_DB_USERNAME: mcp_user
       KC_DB_PASSWORD: changeme
       KEYCLOAK_ADMIN: admin
@@ -50,6 +52,7 @@ services:
         condition: service_healthy
 
   vault:
+    profiles: ["full"]
     image: hashicorp/vault:1.16
     container_name: mcp_vault
     cap_add:
@@ -80,6 +83,7 @@ services:
       VAULT_ADDR: http://vault:8200
       VAULT_TOKEN: dev-token
       VAULT_ENABLED: "false"
+      SPRING_PROFILES_ACTIVE: docker
       # ── LLM API credentials (secrets only — provider/model config lives in application.yml) ──
       # Populate only the key matching the provider set in application.yml → mcp.llm.provider
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}           # needed when provider=openai
@@ -101,18 +105,26 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      keycloak:
-        condition: service_started
-      vault:
-        condition: service_started
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/api/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 10
 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: mcp_frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      mcp-app:
+        condition: service_healthy
 
   jaeger:
+    profiles: ["full"]
     image: jaegertracing/all-in-one:latest
     container_name: mcp_jaeger
     ports:
@@ -120,6 +132,7 @@ services:
       - "4317:4317"    # OTLP gRPC
 
   elasticsearch:
+    profiles: ["full"]
     image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
     container_name: mcp_elasticsearch
     environment:
@@ -136,6 +149,7 @@ services:
       retries: 5
 
   kibana:
+    profiles: ["full"]
     image: docker.elastic.co/kibana/kibana:8.13.0
     container_name: mcp_kibana
     environment:
@@ -147,6 +161,7 @@ services:
         condition: service_healthy
 
   logstash:
+    profiles: ["full"]
     image: docker.elastic.co/logstash/logstash:8.13.0
     container_name: mcp_logstash
     volumes:

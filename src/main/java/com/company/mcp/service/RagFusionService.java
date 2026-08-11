@@ -17,7 +17,7 @@ public class RagFusionService {
 
     private static final Logger log = LoggerFactory.getLogger(RagFusionService.class);
 
-    @Autowired
+    @Autowired(required = false)
     private VectorStore vectorStore;
 
     /**
@@ -64,6 +64,10 @@ public class RagFusionService {
     }
 
     public List<Document> retrieveFusedDocuments(ChatClient chatClient, String query, int topK, double threshold) {
+        if (vectorStore == null) {
+            log.info("[RAG-FUSION] Vector store is unavailable; returning no local documents.");
+            return List.of();
+        }
         List<String> expandedQueries = expandQuery(chatClient, query);
 
         // Map to keep track of accumulated RRF scores per unique document content

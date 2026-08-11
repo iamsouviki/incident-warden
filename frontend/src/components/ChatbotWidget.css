@@ -274,3 +274,13 @@
   0%, 80%, 100% { transform: scale(0); }
   40% { transform: scale(1.0); }
 }
+
+.cb-scope-note {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(79, 140, 255, 0.06);
+  color: var(--text-dim);
+  font-size: 10px;
+  letter-spacing: .02em;
+  text-align: center;
+}

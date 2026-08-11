@@ -59,6 +59,9 @@ public class RagService {
     @Autowired
     private com.company.mcp.repository.ExternalIncidentRepository externalIncidentRepository;
 
+    private static final String OUT_OF_SCOPE_MESSAGE = "I can only answer questions grounded in your organization’s SOPs and incident records. Please ask about an uploaded procedure, runbook, store device, or incident.";
+    private static final String NO_EVIDENCE_MESSAGE = "I couldn’t find supporting content in the current SOPs or incident records. Please upload the relevant SOP or ask a more specific operational question.";
+
     private ChatClient chatClient;
     private String cachedProvider;
     private String cachedBaseUrl;
@@ -198,12 +201,15 @@ public class RagService {
 
     @Cacheable(value = "ragAnswers", key = "#sessionId + '_' + #question")
     public String askStrictSopRag(String sessionId, String question) {
+        if (question == null || question.isBlank()) return "Please ask a question about an SOP or incident.";
+
         ChatClient activeClient = getOrBuildChatClient();
-        if (!isVectorStoreAvailable() || activeClient == null) return "RAG unavailable. Please check Vector DB and ChatClient.";
+        if (isConversationalQuery(question)) {
+            return handleConversationalQuery(activeClient, question);
+        }
+        if (!isWithinSopScope(question)) return OUT_OF_SCOPE_MESSAGE;
+        if (!isVectorStoreAvailable() || activeClient == null) return "The SOP knowledge service is not available in this environment. Start the configured knowledge provider or use the local Docker profile.";
         try {
-            if (isConversationalQuery(question)) {
-                return handleConversationalQuery(activeClient, question);
-            }
 
             log.info("[RAG-HYBRID] Performing advanced hybrid RAG for: {}", question);
 
@@ -260,14 +266,20 @@ public class RagService {
                 log.error("[RAG] Failed to build incidents context: {}", e.getMessage());
             }
 
-            String prompt = "You are a helpful assistant for the Incident Management and SOP platform. You have access to:\n\n" +
+            if (hybridDocs.isEmpty() && incidentsContext.isEmpty()) {
+                return NO_EVIDENCE_MESSAGE;
+            }
+
+            String prompt = "You are the SOP and incident operations assistant. You must stay strictly within the supplied evidence.\n\n" +
                     "SOP Context:\n" + context + "\n\n" +
                     "System Incident Data:\n" + incidentsContext.toString() + "\n\n" +
-                    "Answer the user's question: " + question + "\n\n" +
-                    "Instructions:\n" +
-                    "- If the query is about incident status, assignee, priority, or other incident details, use the System Incident Data to answer.\n" +
-                    "- If the query is about troubleshooting procedures, use the SOP Context.\n" +
-                    "- If the query cannot be answered by either the SOP Context or the System Incident Data, answer based on your general knowledge but mention that it is not in the official system database.";
+                    "User question:\n" + question + "\n\n" +
+                    "Non-negotiable instructions:\n" +
+                    "- Answer only when the answer is directly supported by the SOP Context or System Incident Data.\n" +
+                    "- Never use general knowledge, assumptions, training data, or invented procedures.\n" +
+                    "- If the evidence is insufficient or the question is outside SOP/incident operations, reply exactly with: " + NO_EVIDENCE_MESSAGE + "\n" +
+                    "- Do not discuss politics, entertainment, coding unrelated to this platform, personal advice, or general trivia.\n" +
+                    "- Keep answers concise and cite the relevant SOP title, step, incident ID, or field when available.";
 
             String activeModel = aiConfigService.getActiveChatModel();
             log.info("[RAG] Routing chat query to model: {}", activeModel);
@@ -288,6 +300,19 @@ public class RagService {
             log.error("[RAG] askStrictSopRag failed: {}", e.getMessage());
             return "I'm sorry, but an error occurred while generating the answer.";
         }
+    }
+
+    private boolean isWithinSopScope(String query) {
+        String clean = query == null ? "" : query.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9\\s-]", " ");
+        Set<String> scopeTerms = Set.of(
+            "sop", "procedure", "runbook", "playbook", "checklist", "policy", "standard operating",
+            "troubleshoot", "troubleshooting", "diagnose", "remediate", "remediation", "resolve", "fix",
+            "incident", "alert", "outage", "error", "failure", "root cause", "postmortem", "ticket",
+            "store", "device", "pos", "register", "kiosk", "scanner", "printer", "terminal", "pinpad",
+            "payment", "network", "router", "switch", "vpn", "wifi", "inventory", "deployment", "service",
+            "restart", "reset", "configure", "configuration", "install", "escalate", "maintenance", "agent"
+        );
+        return scopeTerms.stream().anyMatch(clean::contains);
     }
 
     private boolean isConversationalQuery(String query) {
@@ -324,7 +349,7 @@ public class RagService {
             case "how goes it":
             case "whats up":
             case "what is up":
-                return "I'm doing great, thank you! Ready to help you search your SOP documents.";
+                return "I’m here to help with questions grounded in your SOPs and incident records.";
             
             case "who are you":
             case "what is your name":
@@ -356,10 +381,7 @@ public class RagService {
                 return "Test successful! I am online and ready.";
             
             default:
-                // Fallback to quick LLM call if not in static list but matches pattern
-                log.info("[RAG] Conversational fallback to quick LLM call");
-                String prompt = "You are a helpful technical assistant for the SOP platform. Respond to: " + question;
-                return activeClient.prompt().user(prompt).call().content();
+                return OUT_OF_SCOPE_MESSAGE;
         }
     }
 

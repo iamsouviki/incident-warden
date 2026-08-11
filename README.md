@@ -165,15 +165,64 @@ Those can stay as env vars in production — never commit secrets to YAML.
 ---
 
 
+## Execution modes
+
+The repository now supports three clear runtime modes. **Local mode** needs only Java 21, Maven, and Node.js; it uses an embedded H2 database and an in-memory cache, so PostgreSQL, Redis, Keycloak, Vault, and Docker are not required. **Docker quick mode** runs the production-shaped PostgreSQL/pgvector, Redis, Spring Boot API, and Nginx frontend stack. **Docker full mode** additionally enables Keycloak, Vault, Jaeger, Elasticsearch, Kibana, and Logstash through the `full` Compose profile.
+
+### Local development without Docker
+
+```bash
+cd mcp-incident-automation
+./scripts/run-local.sh
+```
+
+The local launcher starts the backend with `spring.profiles.active=local`, creates `.data/mcp-local`, starts the Vite frontend, and writes logs to `logs/backend-local.log` and `logs/frontend-local.log`. Open [http://localhost:5173](http://localhost:5173) and use the demo account `admin / admin123`. The local API is available at [http://localhost:8080](http://localhost:8080), with a public runtime probe at [http://localhost:8080/api/health](http://localhost:8080/api/health). Stop both processes with `Ctrl+C` or `./scripts/stop.sh`.
+
+You can also use the Make targets:
+
+```bash
+make local     # local H2 + Vite
+make docker    # Docker quick stack
+make docker-full
+make stop
+make build
+make test
+```
+
+### Docker quick mode
+
+```bash
+cp .env.example .env
+./scripts/run-docker.sh quick
+```
+
+Open [http://localhost:3000](http://localhost:3000). The frontend container serves the SPA and proxies `/api/*` to the backend container. The API health endpoint is [http://localhost:8080/api/health](http://localhost:8080/api/health). Stop the stack with `./scripts/stop.sh`.
+
+### Docker full mode
+
+```bash
+./scripts/run-docker.sh full
+```
+
+The full profile is intentionally opt-in because it starts heavier enterprise infrastructure. It includes Keycloak, Vault, Jaeger, Elasticsearch, Kibana, and Logstash in addition to the quick stack.
+
+### Runtime configuration
+
+| Mode | Database | Cache | Frontend | Command |
+|---|---|---|---|---|
+| Local | File-backed H2 | In-memory | Vite at `:5173` | `./scripts/run-local.sh` |
+| Docker quick | PostgreSQL + pgvector | Redis | Nginx at `:3000` | `./scripts/run-docker.sh quick` |
+| Docker full | PostgreSQL + pgvector | Redis | Nginx at `:3000` | `./scripts/run-docker.sh full` |
+
+The default LLM provider is Ollama. For local Ollama, install Ollama separately and pull the configured models. If no model provider is running, the application and UI still start, but AI-generated recommendations and RAG answers remain unavailable until a provider is configured.
+
 ## Quick Start
 
 ### Prerequisites
-- Docker & Docker Compose
-- Java 21+ (for local development)
-- Maven 3.9+
-- Node.js 18+ (for frontend)
-- LLM credentials matching `mcp.llm.provider` in `application.yml`
-  (default is **Ollama** — no API key needed)
+- Java 21+ and Maven 3.9+ for local backend development
+- Node.js 18+ and npm for the frontend
+- Docker Engine/Desktop with Compose v2 for Docker modes
+- Optional: Ollama or credentials matching `mcp.llm.provider` in `application.yml`
 
 ### Run with Docker Compose
 
@@ -187,23 +236,30 @@ cd mcp-incident-automation
 # export ANTHROPIC_API_KEY=sk-ant-...
 # export GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa.json
 
-# Start all services
-docker-compose up -d
+# Start the quick stack in the foreground
+./scripts/run-docker.sh quick
 
-# Wait for services to be healthy (about 30 seconds)
-docker-compose ps
+# Or run detached and inspect status
+docker compose up -d
+docker compose ps
 ```
 
 ### Access the Services
 
-| Service | URL | Credentials |
-|---------|-----|-------------|
-| MCP API | http://localhost:8080 | |
-| Keycloak | http://localhost:8180 | admin/admin |
-| Prometheus | http://localhost:9090 | |
-| Grafana | http://localhost:3000 | admin/admin |
-| Jaeger | http://localhost:16686 | |
-| Kibana | http://localhost:5601 | |
+| Service | URL | Mode |
+|---|---|---|
+| Frontend | http://localhost:3000 | Docker quick/full |
+| MCP API | http://localhost:8080 | Docker quick/full |
+| Keycloak | http://localhost:8180 | Docker full |
+| Vault | http://localhost:8200 | Docker full |
+| Jaeger | http://localhost:16686 | Docker full |
+| Kibana | http://localhost:5601 | Docker full |
+
+## SOP chatbot guardrails
+
+The chatbot is intentionally **not a general-purpose assistant**. Before any model call, the backend checks whether the request is about SOPs, runbooks, store devices, incidents, alerts, troubleshooting, remediation, or related operational records. Greetings and help requests are handled with fixed responses. Unrelated requests are declined with a scope message, and in-scope questions are answered only from retrieved SOP or incident evidence. If no supporting evidence is found, the assistant refuses to invent an answer.
+
+This is enforced in `RagService.askStrictSopRag`, not only in the frontend. The prompt also forbids general knowledge, assumptions, invented procedures, and unrelated topics. This server-side boundary is important because users can call the API without using the browser widget.
 
 ## API Examples
 
