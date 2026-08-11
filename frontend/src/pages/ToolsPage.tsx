@@ -254,6 +254,11 @@ const ToolsPage: React.FC = () => {
   // Execute Script
   const handleExecuteScript = async () => {
     if (!scriptContent.trim()) return;
+    if (!dryRun && (validationLevel !== 'PASS' || findings.some(f => f.level === 'BLOCK'))) {
+      setValidationLevel('BLOCK');
+      setFindings(current => current.length ? current : [{ level: 'BLOCK', layer: 'EXECUTION GATE', message: 'Run Validate Guardrails and resolve all blocking findings before executing on a live host.' }]);
+      return;
+    }
     setExecuting(true);
     setExecOutput(null);
     try {
@@ -327,7 +332,7 @@ const ToolsPage: React.FC = () => {
       if (res.ok) {
         const data = await res.json();
         if (data.id) setActiveScriptId(data.id);
-        alert('Tool script saved successfully to database.');
+        setValidationLevel('PASS');
         loadSavedScripts();
       }
     } catch (err) {

@@ -13,8 +13,9 @@ import java.util.Map;
 @RequestMapping("/api/auth")
 public class AuthController {
 
-    private static final long TOKEN_TTL    = 60 * 60 * 1000L;           // 1h
-    private static final long REMEMBER_TTL = 7 * 24 * 60 * 60 * 1000L; // 7d
+    private static final long ACCESS_TTL = 60 * 60 * 1000L;                 // 1h
+    private static final long SESSION_REFRESH_TTL = 24 * 60 * 60 * 1000L;   // 1d
+    private static final long REMEMBER_REFRESH_TTL = 7 * 24 * 60 * 60 * 1000L; // 7d
 
     private final UserRepository users;
     private final JwtService jwtService;
@@ -45,17 +46,22 @@ public class AuthController {
                 return ResponseEntity.status(401).body(Map.of("error", "Invalid username or password"));
         }
 
-        long ttl     = remember ? REMEMBER_TTL : TOKEN_TTL;
+        long refreshTtl = remember ? REMEMBER_REFRESH_TTL : SESSION_REFRESH_TTL;
         String token = jwtService.generate(user.getUsername(),
-                Map.of("role", user.getRole(), "tenantId", user.getTenantId()), ttl);
+                Map.of("role", user.getRole(), "tenantId", user.getTenantId(), "tokenType", "access"), ACCESS_TTL);
+        String refreshToken = jwtService.generate(user.getUsername(),
+                Map.of("role", user.getRole(), "tenantId", user.getTenantId(), "tokenType", "refresh", "rememberMe", remember), refreshTtl);
 
         return ResponseEntity.ok(Map.of(
-                "token",      token,
-                "username",   user.getUsername(),
-                "role",       user.getRole(),
-                "tenantId",   user.getTenantId(),
-                "tenantName", user.getTenantName() != null ? user.getTenantName() : "Primary Workspace",
-                "expiresIn",  ttl
+                "token",           token,
+                "accessToken",     token,
+                "refreshToken",    refreshToken,
+                "username",        user.getUsername(),
+                "role",            user.getRole(),
+                "tenantId",        user.getTenantId(),
+                "tenantName",      user.getTenantName() != null ? user.getTenantName() : "Primary Workspace",
+                "expiresIn",       ACCESS_TTL,
+                "refreshExpiresIn", refreshTtl
         ));
     }
 
@@ -96,30 +102,50 @@ public class AuthController {
 
         String token = jwtService.generate(user.getUsername(),
                 Map.of("role", user.getRole(), "tenantId", user.getTenantId(),
-                       "ssoProvider", provider), TOKEN_TTL);
+                       "ssoProvider", provider, "tokenType", "access"), ACCESS_TTL);
+        String refreshToken = jwtService.generate(user.getUsername(),
+                Map.of("role", user.getRole(), "tenantId", user.getTenantId(),
+                       "ssoProvider", provider, "tokenType", "refresh", "rememberMe", false), SESSION_REFRESH_TTL);
 
         return ResponseEntity.ok(Map.of(
-                "token",      token,
-                "username",   user.getUsername(),
-                "role",       user.getRole(),
-                "tenantId",   user.getTenantId(),
-                "tenantName", user.getTenantName() != null ? user.getTenantName() : "Primary Workspace",
-                "expiresIn",  TOKEN_TTL
+                "token",           token,
+                "accessToken",     token,
+                "refreshToken",    refreshToken,
+                "username",        user.getUsername(),
+                "role",            user.getRole(),
+                "tenantId",        user.getTenantId(),
+                "tenantName",      user.getTenantName() != null ? user.getTenantName() : "Primary Workspace",
+                "expiresIn",       ACCESS_TTL,
+                "refreshExpiresIn", SESSION_REFRESH_TTL
         ));
     }
 
     /** POST /api/auth/refresh  { token } */
     @PostMapping("/refresh")
     public ResponseEntity<?> refresh(@RequestBody Map<String, String> body) {
-        String old = body.get("token");
+        String old = body.get("refreshToken");
+        if (old == null || old.isBlank()) old = body.get("token");
         if (old == null || !jwtService.isValid(old))
-            return ResponseEntity.status(401).body(Map.of("error", "Token invalid or expired"));
+            return ResponseEntity.status(401).body(Map.of("error", "Refresh token invalid or expired"));
 
-        var claims   = jwtService.parse(old);
+        var claims = jwtService.parse(old);
+        boolean remember = Boolean.TRUE.equals(claims.get("rememberMe", Boolean.class));
+        long refreshTtl = remember ? REMEMBER_REFRESH_TTL : SESSION_REFRESH_TTL;
         String fresh = jwtService.generate(claims.getSubject(),
                 Map.of("role", claims.getOrDefault("role", "VIEWER"),
-                       "tenantId", claims.getOrDefault("tenantId", "tenant-1")), TOKEN_TTL);
-        return ResponseEntity.ok(Map.of("token", fresh, "expiresIn", TOKEN_TTL));
+                       "tenantId", claims.getOrDefault("tenantId", "tenant-1"),
+                       "tokenType", "access"), ACCESS_TTL);
+        String rotatedRefresh = jwtService.generate(claims.getSubject(),
+                Map.of("role", claims.getOrDefault("role", "VIEWER"),
+                       "tenantId", claims.getOrDefault("tenantId", "tenant-1"),
+                       "tokenType", "refresh", "rememberMe", remember), refreshTtl);
+        return ResponseEntity.ok(Map.of(
+                "token", fresh,
+                "accessToken", fresh,
+                "refreshToken", rotatedRefresh,
+                "expiresIn", ACCESS_TTL,
+                "refreshExpiresIn", refreshTtl
+        ));
     }
 
     /** GET /api/auth/me */

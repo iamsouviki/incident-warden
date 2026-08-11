@@ -155,17 +155,30 @@ public class IncidentService {
     }
 
     private double calculateConfidenceScore(Incident incident) {
-        // ponytail: simple heuristic for demonstration, upgrade to full LLM scoring if needed
+        // ponytail: deterministic baseline until the agent scorer exists; thresholds remain configurable.
+        String subject = Optional.ofNullable(incident.getSubject()).orElse("").toLowerCase();
+        String description = Optional.ofNullable(incident.getDescription()).orElse("");
         double score = 50.0;
-        if (incident.getSubject().toLowerCase().contains("restart") || incident.getSubject().toLowerCase().contains("reset")) score += 20.0;
-        if (incident.getPriority().equals("P1")) score -= 10.0; // Higher risk
-        if (incident.getDescription().length() > 50) score += 10.0;
+        if (subject.contains("restart") || subject.contains("reset")) score += 20.0;
+        if ("P1".equalsIgnoreCase(incident.getPriority())) score -= 10.0;
+        if (description.length() > 50) score += 10.0;
         return Math.min(100.0, Math.max(0.0, score));
     }
 
+    private double threshold(String value, double fallback) {
+        try {
+            double parsed = Double.parseDouble(value);
+            // The UI stores thresholds as 0.80 / 1.00 while scores are 0-100.
+            if (parsed > 0 && parsed <= 1.0) parsed *= 100.0;
+            return Math.min(100.0, Math.max(0.0, parsed));
+        } catch (Exception ignored) {
+            return fallback;
+        }
+    }
+
     private void routeIncident(Incident incident, double score) {
-        double autoThreshold = aiConfigService.getAutoResolveThreshold();
-        double hitlThreshold = aiConfigService.getHitlThreshold();
+        double autoThreshold = threshold(aiConfigService.getAutoResolveThreshold(), 100.0);
+        double hitlThreshold = threshold(aiConfigService.getHitlThreshold(), 80.0);
 
         if (score >= autoThreshold) {
             incident.setStatus("AUTO_RESOLVED");
@@ -174,6 +187,39 @@ public class IncidentService {
         } else {
             incident.setStatus("New");
         }
+    }
+
+    public Map<String, Object> decideIncident(UUID id, String decision, String reason, String actor) {
+        String normalized = Optional.ofNullable(decision).orElse("").trim().toUpperCase(Locale.ROOT);
+        String nextStatus = switch (normalized) {
+            case "APPROVE" -> "APPROVED";
+            case "REJECT" -> "REJECTED";
+            default -> throw new IllegalArgumentException("decision must be APPROVE or REJECT");
+        };
+        String by = actor == null || actor.isBlank() ? "User" : actor;
+        String note = reason == null || reason.isBlank() ? "HITL decision: " + normalized : reason;
+
+        Optional<Incident> manual = incidentRepository.findById(id);
+        if (manual.isPresent()) {
+            Incident incident = manual.get();
+            String previous = incident.getStatus();
+            incident.setStatus(nextStatus);
+            incident.setUpdatedAt(OffsetDateTime.now());
+            incidentRepository.save(incident);
+            saveHistoryRecord(id, "status", previous, nextStatus, by);
+            addComment(id, by, note);
+            return Map.of("id", id, "status", nextStatus, "decision", normalized);
+        }
+
+        ExternalIncident incident = externalIncidentRepository.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Incident not found with ID: " + id));
+        String previous = incident.getStatus();
+        incident.setStatus(nextStatus);
+        incident.setUpdatedAt(OffsetDateTime.now());
+        externalIncidentRepository.save(incident);
+        saveHistoryRecord(id, "status", previous, nextStatus, by);
+        addComment(id, by, note);
+        return Map.of("id", id, "status", nextStatus, "decision", normalized);
     }
 
     public OffsetDateTime calculateDueDate(OffsetDateTime createdAt, String priority) {
@@ -431,6 +477,8 @@ public class IncidentService {
         inc.setDueDate(ext.getDueDate());
         inc.setExternalSource(ext.getExternalSource());
         inc.setExternalId(ext.getExternalId());
+        inc.setCategory(ext.getCategory());
+        inc.setConfidenceScore(ext.getConfidenceScore());
         return inc;
     }
 
@@ -587,8 +635,8 @@ public class IncidentService {
                     .build();
             double score = calculateConfidenceScore(dummy);
             String status = "New";
-            if (score >= aiConfigService.getAutoResolveThreshold()) status = "AUTO_RESOLVED";
-            else if (score >= aiConfigService.getHitlThreshold()) status = "PENDING_APPROVAL";
+            if (score >= threshold(aiConfigService.getAutoResolveThreshold(), 100.0)) status = "AUTO_RESOLVED";
+            else if (score >= threshold(aiConfigService.getHitlThreshold(), 80.0)) status = "PENDING_APPROVAL";
 
             ExternalIncident incident = ExternalIncident.builder()
                     .id(id)

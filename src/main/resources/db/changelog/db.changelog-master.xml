@@ -54,4 +54,8 @@
         <sqlFile path="versions/1.9/seed_users_fix.sql" relativeToChangelogFile="true" />
     </changeSet>
 
+    <changeSet id="1.10-universal-incident-metadata" author="mcp-incident-automation">
+        <sqlFile path="versions/1.10/universal_incident_metadata.sql" relativeToChangelogFile="true" />
+    </changeSet>
+
 </databaseChangeLog>

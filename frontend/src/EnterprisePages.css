@@ -1,0 +1,67 @@
+/* Shared enterprise surface layer used by all legacy pages. */
+.card { background: var(--surface-1) !important; border: 1px solid var(--border) !important; border-radius: var(--radius-lg) !important; color: var(--text-1); box-shadow: none !important; }
+.card-header { background: transparent !important; color: var(--text-1) !important; border-color: var(--border) !important; }
+.card-title, .content-title { color: var(--text-1) !important; }
+.content { color: var(--text-1); }
+.content p, .content small { color: var(--text-3); }
+input, select, textarea { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-md); color: var(--text-1); outline: none; font-family: var(--font-sans); }
+input:focus, select:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(79, 140, 255, .12); }
+input::placeholder, textarea::placeholder { color: var(--text-3); }
+button { font-family: var(--font-sans); }
+.btn-primary, .btn-sync { border: 1px solid var(--accent) !important; border-radius: var(--radius-md) !important; background: var(--accent) !important; color: white !important; font-weight: 600; }
+.btn-primary:hover, .btn-sync:hover:not(:disabled) { background: var(--accent-hover) !important; border-color: var(--accent-hover) !important; }
+.btn-secondary { border: 1px solid var(--border) !important; border-radius: var(--radius-md) !important; background: var(--surface-2) !important; color: var(--text-2) !important; }
+.btn-secondary:hover { background: var(--surface-1) !important; border-color: var(--text-3) !important; color: var(--text-1) !important; }
+
+/* Shared list/detail pages: retain context while making the selected state obvious. */
+.page-content > div[style*="grid-template-columns: 400px 1fr"],
+.page-content > div[style*="grid-template-columns: 280px 1fr"] { min-height: 520px !important; }
+.page-content > div[style*="grid-template-columns: 400px 1fr"] > .card:first-child,
+.page-content > div[style*="grid-template-columns: 280px 1fr"] > .card:first-child { background: var(--surface-1) !important; }
+
+/* Inline legacy surfaces */
+[style*="background: var(--surface2)"], [style*="background: var(--surface2)"] { background: var(--surface-2) !important; }
+[style*="background: var(--surface3)"], [style*="background: var(--surface3)"] { background: var(--surface-3) !important; }
+[style*="background: var(--surface)"], [style*="background: var(--surface)"] { background: var(--surface-1) !important; }
+
+/* Account and settings are intentionally narrower and quieter than operational pages. */
+.page-content > .content { max-width: 980px; margin: 0 auto; }
+
+/* Responsive management grids */
+@media (max-width: 860px) {
+  .page-content > div[style*="grid-template-columns: 400px 1fr"],
+  .page-content > div[style*="grid-template-columns: 280px 1fr"] { grid-template-columns: 1fr !important; height: auto !important; }
+  .page-content > div[style*="grid-template-columns: 400px 1fr"] > .card,
+  .page-content > div[style*="grid-template-columns: 280px 1fr"] > .card { min-height: 360px; }
+}
+@media (max-width: 640px) {
+  .page-content > .content { max-width: none; }
+}
+
+.workflow-rail { display: flex; align-items: center; gap: 8px; margin: 0 28px 4px; padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-1); }
+.workflow-step { display: inline-flex; align-items: center; gap: 6px; color: var(--text-3); font-size: 10px; font-weight: 700; letter-spacing: .03em; white-space: nowrap; }
+.workflow-step span { display: grid; place-items: center; width: 18px; height: 18px; border: 1px solid var(--border); border-radius: 50%; color: var(--text-3); font-family: var(--font-mono); font-size: 9px; }
+.workflow-step.active { color: var(--accent); }
+.workflow-step.active span { background: var(--accent); border-color: var(--accent); color: white; }
+.workflow-step.complete { color: var(--ok); }
+.workflow-step.complete span { border-color: var(--ok); color: var(--ok); }
+.workflow-connector { flex: 1; min-width: 12px; height: 1px; background: var(--border); }
+.workflow-connector.complete { background: rgba(47, 191, 113, .55); }
+
+/* SOP and tool workbenches */
+.page-content > div[style*="grid-template-columns: 400px 1fr"] > .card,
+.page-content > div[style*="grid-template-columns: 280px 1fr"] > .card { min-width: 0; overflow: hidden; }
+.page-content > div[style*="grid-template-columns: 400px 1fr"] .card-header,
+.page-content > div[style*="grid-template-columns: 280px 1fr"] .card-header { background: var(--surface-1) !important; }
+.page-content > div[style*="grid-template-columns: 400px 1fr"] button,
+.page-content > div[style*="grid-template-columns: 280px 1fr"] button { transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast); }
+.se-textarea, .se-editor-wrap { border-color: var(--border) !important; background: #0b0f14 !important; }
+.se-line-numbers { background: #0b0f14 !important; border-color: var(--border) !important; color: var(--text-3) !important; }
+.se-saved-panel, .se-output-panel, .se-findings { background: var(--surface-2) !important; border-color: var(--border) !important; }
+.se-saved-item { border-color: transparent !important; color: var(--text-2) !important; }
+.se-saved-item.active { background: rgba(79,140,255,.12) !important; border-color: rgba(79,140,255,.26) !important; }
+.se-btn.primary, .se-btn.green { background: var(--accent) !important; border-color: var(--accent) !important; }
+.se-btn.amber { background: rgba(240,165,58,.15) !important; border-color: rgba(240,165,58,.35) !important; color: #ffc873 !important; }
+.se-btn.red { background: rgba(239,77,86,.13) !important; border-color: rgba(239,77,86,.3) !important; color: #ff9a9e !important; }
+
+@media (max-width: 650px) { .workflow-rail { margin-left: 18px; margin-right: 18px; overflow-x: auto; } .workflow-step { font-size: 9px; } .workflow-connector { min-width: 18px; } }

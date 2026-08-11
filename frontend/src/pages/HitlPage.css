@@ -1,0 +1,8 @@
+.hitl-page { display: grid; gap: 12px; }
+.hitl-explainer { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 12px 14px; border: 1px solid rgba(47,191,113,.2); border-radius: var(--radius-lg); background: rgba(47,191,113,.06); }
+.hitl-explainer-title { display: inline-flex; align-items: center; gap: 7px; color: var(--ok); font-size: 11px; font-weight: 750; white-space: nowrap; }
+.hitl-explainer p { color: var(--text-2); font-size: 11px; line-height: 1.5; }
+.hitl-explainer-flow { display: flex; align-items: center; gap: 7px; color: var(--text-3); font-size: 10px; white-space: nowrap; }
+.hitl-explainer-flow span { display: inline-flex; align-items: center; gap: 5px; }
+.hitl-explainer-flow svg { color: var(--ok); }
+@media (max-width: 880px) { .hitl-explainer { grid-template-columns: 1fr; gap: 8px; } .hitl-explainer-flow { overflow-x: auto; } }

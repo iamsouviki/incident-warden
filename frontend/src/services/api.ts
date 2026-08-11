@@ -11,6 +11,7 @@
 
 // ─── Storage keys ────────────────────────────────────────────────────────────
 const TOKEN_KEY = 'mcp_jwt_token';
+const REFRESH_TOKEN_KEY = 'mcp_refresh_token';
 const USER_KEY  = 'mcp_user';
 export const SIMPLE_ERROR_MESSAGE = 'Something went wrong. Please try again.';
 
@@ -22,25 +23,33 @@ export interface AuthUser {
   tenantName?: string;
   token: string;
   expiresIn: number;
+  refreshToken?: string;
+  refreshExpiresIn?: number;
 }
 
 export interface LoginResponse {
-  token: string;
+  token?: string;
+  accessToken?: string;
+  refreshToken?: string;
   username: string;
   role: string;
   tenantId: string;
   tenantName?: string;
   expiresIn: number;
+  refreshExpiresIn?: number;
 }
 
 // ─── Token storage ───────────────────────────────────────────────────────────
 export function setAuth(user: AuthUser): void {
   localStorage.setItem(TOKEN_KEY, user.token);
+  if (user.refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, user.refreshToken);
+  else localStorage.removeItem(REFRESH_TOKEN_KEY);
   localStorage.setItem(USER_KEY, JSON.stringify(user));
 }
 
 export function clearAuth(): void {
   localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(REFRESH_TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
 }
 
@@ -98,24 +107,33 @@ let _refreshPromise: Promise<boolean> | null = null;
 export async function refreshToken(): Promise<boolean> {
   if (_refreshPromise) return _refreshPromise;
   const token = getToken();
-  if (!token) return false;
+  const refreshTokenValue = localStorage.getItem(REFRESH_TOKEN_KEY) || token;
+  if (!refreshTokenValue) return false;
 
   _refreshPromise = (async (): Promise<boolean> => {
     try {
       const res = await fetch('/api/auth/refresh', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token }),
+        body: JSON.stringify({ refreshToken: refreshTokenValue }),
       });
       if (!res.ok) return false;
       const data = await res.json();
-      if (data.token) {
+      const accessToken = data.accessToken || data.token;
+      if (accessToken) {
         const stored = getStoredUser();
         if (stored) {
-          const updated: AuthUser = { ...stored, token: data.token, expiresIn: data.expiresIn ?? stored.expiresIn };
+          const updated: AuthUser = {
+            ...stored,
+            token: accessToken,
+            expiresIn: data.expiresIn ?? stored.expiresIn,
+            refreshToken: data.refreshToken || stored.refreshToken,
+            refreshExpiresIn: data.refreshExpiresIn ?? stored.refreshExpiresIn,
+          };
           setAuth(updated);
         } else {
-          localStorage.setItem(TOKEN_KEY, data.token);
+          localStorage.setItem(TOKEN_KEY, accessToken);
+          if (data.refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, data.refreshToken);
         }
         return true;
       }
@@ -147,7 +165,12 @@ export async function login(username: string, password: string, rememberMe = fal
   }
 
   const data = (await res.json()) as LoginResponse;
-  const user: AuthUser = { ...data };
+  const user: AuthUser = {
+    ...data,
+    token: data.accessToken || data.token || '',
+    refreshToken: data.refreshToken,
+  };
+  if (!user.token) throw new Error(SIMPLE_ERROR_MESSAGE);
   setAuth(user);
   return user;
 }

@@ -73,6 +73,20 @@ public class IncidentController {
         return ResponseEntity.ok(comment);
     }
 
+    @PostMapping("/{id}/decision")
+    public ResponseEntity<Map<String, Object>> decideIncident(
+            @PathVariable UUID id,
+            @RequestBody Map<String, String> body,
+            Principal principal) {
+        String actor = principal != null ? principal.getName() : body.getOrDefault("actor", "User");
+        return ResponseEntity.ok(incidentService.decideIncident(
+                id,
+                body.get("decision"),
+                body.get("reason"),
+                actor
+        ));
+    }
+
     @GetMapping("/{id}/history")
     public ResponseEntity<List<IncidentHistory>> getHistory(@PathVariable UUID id) {
         return ResponseEntity.ok(incidentService.getHistory(id));

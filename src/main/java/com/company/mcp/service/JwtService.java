@@ -53,4 +53,12 @@ public class JwtService {
             return false;
         }
     }
+
+    public boolean isRefreshToken(String token) {
+        try {
+            return "refresh".equals(parse(token).get("tokenType", String.class));
+        } catch (JwtException | IllegalArgumentException e) {
+            return false;
+        }
+    }
 }

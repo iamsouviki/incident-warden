@@ -21,7 +21,7 @@ const AccountPage: React.FC<Props> = ({ onLogout }) => {
     ? new Date(expiry).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
     : 'Unknown';
 
-  const isLongSession = expiry && (expiry - Date.now()) > 2 * 60 * 60 * 1000; // >2h means remember-me
+  const refreshWindowLabel = user?.refreshExpiresIn ? `${Math.round(user.refreshExpiresIn / (24 * 60 * 60 * 1000)) || 1} day${Math.round(user.refreshExpiresIn / (24 * 60 * 60 * 1000)) === 1 ? '' : 's'}` : 'Available while session is valid';
 
   const getColorForUser = (u: string) => {
     const colors = ['#c8102e', '#2563eb', '#10b981', '#8b5cf6', '#f59e0b'];
@@ -97,12 +97,11 @@ const AccountPage: React.FC<Props> = ({ onLogout }) => {
           { icon: <Key size={16}/>,      label: 'Tenant ID', value: user?.tenantId || '—' },
           {
             icon: <Clock size={16}/>,
-            label: 'Session expires',
+            label: 'Access token expires',
             value: expiryLabel,
-            extra: isLongSession
-              ? <span style={{ fontSize: '10px', color: '#10b981', fontWeight: 700, background: 'rgba(16,185,129,0.1)', padding: '1px 6px', borderRadius: '8px' }}>EXTENDED (7d)</span>
-              : null,
+            extra: <span style={{ fontSize: '10px', color: '#10b981', fontWeight: 700, background: 'rgba(16,185,129,0.1)', padding: '1px 6px', borderRadius: '8px' }}>AUTO REFRESH</span>,
           },
+          { icon: <Key size={16}/>, label: 'Refresh window', value: refreshWindowLabel },
         ].map((item, i) => (
           <div key={i} className="card" style={{ padding: '18px 20px', display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
             <div style={{ padding: '8px', borderRadius: '8px', background: 'var(--surface2)', color: 'var(--text-muted)', flexShrink: 0 }}>

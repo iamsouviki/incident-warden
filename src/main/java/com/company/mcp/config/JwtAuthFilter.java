@@ -38,6 +38,10 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             String token = header.substring(7);
             try {
                 Claims claims = jwtService.parse(token);
+                if (jwtService.isRefreshToken(token)) {
+                    chain.doFilter(request, response);
+                    return;
+                }
                 String username = claims.getSubject();
                 String role = (String) claims.getOrDefault("role", "VIEWER");
                 var auth = new UsernamePasswordAuthenticationToken(

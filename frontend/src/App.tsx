@@ -1,5 +1,25 @@
-import React, { useState, useEffect } from 'react';
-import './App.css';
+import React, { useEffect, useMemo, useState } from 'react';
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import {
+  Bell,
+  BookOpen,
+  CheckCircle2,
+  ChevronDown,
+  Command,
+  FileCode2,
+  LayoutDashboard,
+  LogOut,
+  Plus,
+  Search,
+  Settings,
+  ShieldAlert,
+  SlidersHorizontal,
+  User,
+  Users,
+  X,
+} from 'lucide-react';
+import './AppShell.css';
+import './EnterprisePages.css';
 import LoginPage from './pages/LoginPage';
 import SopPage from './pages/SopPage';
 import TeamsPage from './pages/TeamsPage';
@@ -9,213 +29,201 @@ import ToolsPage from './pages/ToolsPage';
 import HitlPage from './pages/HitlPage';
 import AccountPage from './pages/AccountPage';
 import ChatbotWidget from './components/ChatbotWidget';
-import { Settings, LogOut, User, ShieldAlert, Plus, Wrench, BookOpen, Users, ChevronDown, CheckCircle } from 'lucide-react';
-import { AuthUser, getStoredUser, clearAuth, refreshToken, isTokenExpiringSoon } from './services/api';
+import { AuthUser, clearAuth, getStoredUser, isTokenExpiringSoon, refreshToken } from './services/api';
 
 const DEFAULT_TENANT_ID = 'tenant-1';
 
-const PAGE_TITLES: Record<string, string> = {
-  incidents: 'INCIDENT DIRECTORY',
-  sop:       'STANDARD OPERATING PROCEDURES',
-  tools:     'REMEDIATION TOOLS & SCRIPTS',
-  hitl:      'HITL APPROVAL QUEUE',
-  teams:     'SUPPORT TEAMS & MEMBERS',
-  ai_config: 'AI CONFIGURATION',
-  account:   'MY ACCOUNT',
+type NavItem = { path: string; label: string; icon: React.ReactNode; group: 'Operate' | 'Manage' };
+
+const NAV_ITEMS: NavItem[] = [
+  { path: '/incidents', label: 'Incidents', icon: <ShieldAlert size={16} />, group: 'Operate' },
+  { path: '/hitl', label: 'HITL queue', icon: <CheckCircle2 size={16} />, group: 'Operate' },
+  { path: '/tools', label: 'Tools & scripts', icon: <FileCode2 size={16} />, group: 'Operate' },
+  { path: '/sops', label: 'SOP library', icon: <BookOpen size={16} />, group: 'Manage' },
+  { path: '/teams', label: 'Teams', icon: <Users size={16} />, group: 'Manage' },
+  { path: '/settings/ai', label: 'AI configuration', icon: <SlidersHorizontal size={16} />, group: 'Manage' },
+];
+
+const PAGE_META: Record<string, { title: string; subtitle: string }> = {
+  '/incidents': { title: 'Incidents', subtitle: 'Monitor, triage, and resolve issues from every connected source.' },
+  '/hitl': { title: 'HITL approval queue', subtitle: 'Review proposed actions before they affect production systems.' },
+  '/tools': { title: 'Tools & scripts', subtitle: 'Manage safe remediation actions and execution history.' },
+  '/sops': { title: 'SOP library', subtitle: 'Maintain the operational knowledge agents use for recommendations.' },
+  '/teams': { title: 'Teams', subtitle: 'Manage ownership, escalation paths, and support coverage.' },
+  '/settings/ai': { title: 'AI configuration', subtitle: 'Tune providers, confidence thresholds, and integration sync.' },
+  '/account': { title: 'My account', subtitle: 'Manage your profile and session.' },
 };
 
-const App: React.FC = () => {
-  const [user, setUser]                   = useState<AuthUser | null>(getStoredUser());
-  const [page, setPage]                   = useState<string>('incidents');
-  const [now,  setNow]                    = useState(new Date());
+function WorkflowRail({ active }: { active: number }) {
+  const steps = ['Intake', 'Understand', 'Decide', 'Act', 'Verify'];
+  return <div className="workflow-rail" aria-label="Incident operations workflow">{steps.map((step, index) => <React.Fragment key={step}><div className={`workflow-step ${index === active ? 'active' : ''} ${index < active ? 'complete' : ''}`}><span>{index + 1}</span>{step}</div>{index < steps.length - 1 && <div className={`workflow-connector ${index < active ? 'complete' : ''}`} />}</React.Fragment>)}</div>;
+}
+
+function AppContent({ user, onLogout }: { user: AuthUser; onLogout: () => void }) {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [userMenuOpen, setUserMenuOpen]   = useState(false);
+  const [commandOpen, setCommandOpen] = useState(false);
+  const [commandQuery, setCommandQuery] = useState('');
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+
+  const activePath = location.pathname.startsWith('/incidents/') ? '/incidents' : location.pathname;
+  const meta = PAGE_META[activePath] || PAGE_META['/incidents'];
+  const tenantId = user.tenantId || DEFAULT_TENANT_ID;
+  const workspace = user.tenantName?.trim() || 'Primary workspace';
+  const initials = user.username.slice(0, 2).toUpperCase();
+
+  const filteredCommands = useMemo(() => {
+    const q = commandQuery.trim().toLowerCase();
+    return NAV_ITEMS.filter(item => !q || item.label.toLowerCase().includes(q));
+  }, [commandQuery]);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const p = params.get('page');
-    if (p && PAGE_TITLES[p]) setPage(p);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setCommandOpen(true);
+      }
+      if (event.key === 'Escape') {
+        setCommandOpen(false);
+        setUserMenuOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
   useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(t);
-  }, []);
+    if (!user) return;
+    const interval = window.setInterval(async () => {
+      if (isTokenExpiringSoon(30 * 60 * 1000)) {
+        const ok = await refreshToken();
+        if (!ok) onLogout();
+      }
+    }, 4 * 60 * 1000);
+    return () => window.clearInterval(interval);
+  }, [user, onLogout]);
+
+  const go = (path: string) => {
+    navigate(path);
+    setCommandOpen(false);
+    setCommandQuery('');
+    setUserMenuOpen(false);
+  };
+
+  return (
+    <div className="shell">
+      <aside className="app-sidebar" aria-label="Primary navigation">
+        <div className="brand-block">
+          <div className="brand-mark">I</div>
+          <div className="brand-name">incident<span>.ai</span></div>
+        </div>
+
+        {(['Operate', 'Manage'] as const).map(group => (
+          <div className="sidebar-section" key={group}>
+            <div className="sidebar-label">{group}</div>
+            <nav className="sidebar-nav">
+              {NAV_ITEMS.filter(item => item.group === group).map(item => (
+                <button
+                  key={item.path}
+                  className={`sidebar-link ${activePath === item.path ? 'active' : ''}`}
+                  onClick={() => go(item.path)}
+                  aria-current={activePath === item.path ? 'page' : undefined}
+                >
+                  {item.icon}<span>{item.label}</span>
+                </button>
+              ))}
+            </nav>
+          </div>
+        ))}
+
+        <div className="sidebar-spacer" />
+        <div className="sidebar-footer">
+          <div className="workspace-card">
+            <div className="workspace-card-label">Workspace</div>
+            <div className="workspace-card-name" title={tenantId}>{workspace}</div>
+          </div>
+        </div>
+      </aside>
+
+      <div className="app-main">
+        <header className="app-topbar">
+          <button className="topbar-search" onClick={() => setCommandOpen(true)} aria-label="Open command palette">
+            <Search size={14} /><span>Search or jump to…</span><kbd>⌘K</kbd>
+          </button>
+          <div className="topbar-spacer" />
+          <div className="live-indicator">LIVE</div>
+          <button className="topbar-action" onClick={() => go('/hitl')} aria-label="Open notifications">
+            <Bell size={14} /><span>Alerts</span>
+          </button>
+          <button className="topbar-action primary" onClick={() => { go('/incidents'); setShowCreateModal(true); }}>
+            <Plus size={14} /><span>New incident</span>
+          </button>
+          <div style={{ position: 'relative' }}>
+            <button className="user-button" onClick={() => setUserMenuOpen(value => !value)} aria-expanded={userMenuOpen}>
+              <span className="user-avatar">{initials}</span><span>{user.username}</span><ChevronDown size={13} />
+            </button>
+            {userMenuOpen && (
+              <div className="user-menu">
+                <div className="user-menu-head"><div className="user-menu-name">{user.username}</div><div className="user-menu-meta">{user.role} · {workspace}</div></div>
+                <button className="user-menu-item" onClick={() => go('/account')}><User size={14} /> My account</button>
+                <button className="user-menu-item" onClick={() => go('/settings/ai')}><Settings size={14} /> Settings</button>
+                <button className="user-menu-item danger" onClick={onLogout}><LogOut size={14} /> Sign out</button>
+              </div>
+            )}
+          </div>
+        </header>
+
+        <main className="page-area">
+          <div className="page-header">
+            <div><h1>{meta.title}</h1><p>{meta.subtitle}</p></div>
+          </div>
+          {(activePath === '/incidents' || activePath === '/hitl' || activePath === '/tools') && <WorkflowRail active={activePath === '/incidents' ? 0 : activePath === '/hitl' ? 2 : 3} />}
+          <div className="page-content">
+            <Routes>
+              <Route path="/incidents" element={<IncidentManagementPage showCreateModal={showCreateModal} setShowCreateModal={setShowCreateModal} />} />
+              <Route path="/incidents/:id" element={<IncidentManagementPage showCreateModal={showCreateModal} setShowCreateModal={setShowCreateModal} />} />
+              <Route path="/hitl" element={<HitlPage />} />
+              <Route path="/tools" element={<ToolsPage />} />
+              <Route path="/sops" element={<SopPage />} />
+              <Route path="/teams" element={<TeamsPage />} />
+              <Route path="/settings/ai" element={<AiConfigPage />} />
+              <Route path="/account" element={<AccountPage onLogout={onLogout} />} />
+              <Route path="*" element={<Navigate to="/incidents" replace />} />
+            </Routes>
+          </div>
+        </main>
+      </div>
+
+      <ChatbotWidget tenantId={tenantId} />
+
+      {commandOpen && (
+        <div className="command-backdrop" role="dialog" aria-modal="true" aria-label="Command palette" onMouseDown={event => { if (event.currentTarget === event.target) setCommandOpen(false); }}>
+          <div className="command-dialog">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 14px' }}><Command size={15} color="var(--text-3)" /><input autoFocus className="command-input" value={commandQuery} onChange={event => setCommandQuery(event.target.value)} placeholder="Jump to a workspace…" /><button className="user-menu-item" style={{ width: 'auto' }} onClick={() => setCommandOpen(false)} aria-label="Close command palette"><X size={15} /></button></div>
+            <div className="command-list">
+              {filteredCommands.map(item => <button key={item.path} className="command-item" onClick={() => go(item.path)}>{item.icon}<span>{item.label}</span></button>)}
+              {!filteredCommands.length && <div className="command-empty">No matching destinations.</div>}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const App: React.FC = () => {
+  const [user, setUser] = useState<AuthUser | null>(getStoredUser());
+  const handleLogout = () => { clearAuth(); setUser(null); };
 
   useEffect(() => {
-    const handleAuthExpired = () => { console.warn('Auth expired'); setUser(null); };
+    const handleAuthExpired = () => setUser(null);
     window.addEventListener('mcp:auth-expired', handleAuthExpired);
     return () => window.removeEventListener('mcp:auth-expired', handleAuthExpired);
   }, []);
 
-  // Close user menu on outside click
-  useEffect(() => {
-    if (!userMenuOpen) return;
-    const handler = (e: MouseEvent) => {
-      const menu = document.getElementById('user-menu-root');
-      if (menu && !menu.contains(e.target as Node)) setUserMenuOpen(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [userMenuOpen]);
-
-  useEffect(() => {
-    if (!user) return;
-    let lastActivity = Date.now();
-    const onActivity = () => { lastActivity = Date.now(); };
-    const events = ['click', 'keydown', 'scroll', 'mousemove', 'touchstart'] as const;
-    events.forEach(e => window.addEventListener(e, onActivity, { passive: true }));
-
-    const interval = setInterval(async () => {
-      const recentlyActive = Date.now() - lastActivity < 10 * 60 * 1000;
-      if (recentlyActive && isTokenExpiringSoon(30 * 60 * 1000)) {
-        const ok = await refreshToken();
-        if (!ok) { clearAuth(); setUser(null); }
-      }
-    }, 4 * 60 * 1000);
-
-    return () => {
-      events.forEach(e => window.removeEventListener(e, onActivity));
-      clearInterval(interval);
-    };
-  }, [user]);
-
-  if (!user) return <LoginPage onLogin={(u) => setUser(u)} />;
-
-  const handleLogout = () => { clearAuth(); setUser(null); };
-
-  const activeTenantId   = user.tenantId || DEFAULT_TENANT_ID;
-  const activeWorkspace  = user.tenantName?.trim() || 'Primary Workspace';
-
-  return (
-    <div className="shell top-nav-layout">
-      <header className="topbar-unified">
-        <div className="topbar-left-brand">
-          <div className="logo-text">
-            <span className="brand-primary">INCIDENT</span>
-            <span className="brand-secondary">.AI</span>
-          </div>
-          <span className="tenant-badge" title={`Workspace: ${activeTenantId}`}>{activeWorkspace}</span>
-        </div>
-
-        <nav className="topbar-nav">
-          {[
-            { key: 'incidents', icon: <ShieldAlert size={16}/>, label: 'Incidents' },
-            { key: 'sop',       icon: <BookOpen  size={16}/>, label: 'SOPs' },
-            { key: 'tools',     icon: <Wrench      size={16}/>, label: 'Tools' },
-            { key: 'hitl',      icon: <CheckCircle  size={16}/>, label: 'HITL Queue' },
-            { key: 'teams',     icon: <Users       size={16}/>, label: 'Teams' },
-            { key: 'ai_config', icon: <Settings    size={16}/>, label: 'Config' },
-          ].map(({ key, icon, label }) => (
-            <button
-              key={key}
-              className={`topbar-nav-btn ${page === key ? 'active' : ''}`}
-              onClick={() => setPage(key)}
-            >
-              {icon} {label}
-            </button>
-          ))}
-        </nav>
-
-        <div className="topbar-right-actions">
-          <button
-            className="btn-create-incident-top"
-            onClick={() => { setPage('incidents'); setShowCreateModal(true); }}
-          >
-            <Plus size={14}/> New Incident
-          </button>
-
-          <div className="live-status-pill">
-            <span className="live-status-dot" />LIVE
-          </div>
-
-          {/* User menu */}
-          <div id="user-menu-root" style={{ position: 'relative' }}>
-            <button
-              id="user-profile-btn"
-              onClick={() => setUserMenuOpen(o => !o)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '6px',
-                background: userMenuOpen ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.05)',
-                border: '1px solid rgba(255,255,255,0.12)',
-                color: '#cbd5e1', fontSize: '12px', fontWeight: 600,
-                padding: '6px 12px', borderRadius: '6px',
-                cursor: 'pointer', transition: 'all 0.2s',
-                fontFamily: 'var(--sans)',
-              }}
-            >
-              <User size={14}/> {user.username}
-              <ChevronDown size={12} style={{ transition: 'transform 0.2s', transform: userMenuOpen ? 'rotate(180deg)' : 'none' }}/>
-            </button>
-
-            {userMenuOpen && (
-              <div style={{
-                position: 'absolute', top: 'calc(100% + 8px)', right: 0,
-                background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)',
-                borderRadius: '10px', minWidth: '200px', overflow: 'hidden',
-                boxShadow: '0 16px 40px rgba(0,0,0,0.5)',
-                animation: 'ssSlideIn 0.15s ease',
-                zIndex: 9999,
-              }}>
-                {/* Header */}
-                <div style={{ padding: '14px 16px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                  <div style={{ fontSize: '13px', fontWeight: 700, color: '#f1f5f9' }}>{user.username}</div>
-                  <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>{user.role} · {activeWorkspace}</div>
-                </div>
-                {/* Menu items */}
-                {[
-                  { label: 'My Account', icon: <User size={13}/>, action: () => { setPage('account'); setUserMenuOpen(false); } },
-                  { label: 'Sign out',   icon: <LogOut size={13}/>, action: handleLogout, danger: true },
-                ].map(item => (
-                  <button
-                    key={item.label}
-                    onClick={item.action}
-                    style={{
-                      width: '100%', display: 'flex', alignItems: 'center', gap: '10px',
-                      padding: '11px 16px', background: 'transparent', border: 'none',
-                      color: (item as any).danger ? '#f87171' : '#94a3b8',
-                      fontSize: '13px', fontWeight: 500, cursor: 'pointer',
-                      transition: 'all 0.15s', fontFamily: 'var(--sans)', textAlign: 'left',
-                    }}
-                    onMouseEnter={e => { e.currentTarget.style.background = (item as any).danger ? 'rgba(239,68,68,0.08)' : 'rgba(255,255,255,0.05)'; e.currentTarget.style.color = (item as any).danger ? '#ef4444' : '#e2e8f0'; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = (item as any).danger ? '#f87171' : '#94a3b8'; }}
-                  >
-                    {item.icon} {item.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </header>
-
-      <main className="main-content-layout">
-        <div className="content-page-header">
-          <div>
-            <h1 className="content-title">{PAGE_TITLES[page]}</h1>
-            <p className="content-subtitle">System Time: {now.toUTCString().replace('GMT', 'UTC')}</p>
-          </div>
-        </div>
-
-        <div className="content-view-wrap">
-          {page === 'sop'      && <SopPage />}
-          {page === 'teams'    && <TeamsPage />}
-          {page === 'ai_config'&& <AiConfigPage />}
-          {page === 'account'  && <AccountPage onLogout={handleLogout} />}
-          {page === 'incidents'&& (
-            <IncidentManagementPage
-              showCreateModal={showCreateModal}
-              setShowCreateModal={setShowCreateModal}
-            />
-          )}
-          {page === 'tools' && <ToolsPage />}
-          {page === 'hitl'  && <HitlPage />}
-        </div>
-      </main>
-
-      <ChatbotWidget tenantId={activeTenantId} />
-    </div>
-  );
+  if (!user) return <LoginPage onLogin={setUser} />;
+  return <BrowserRouter><AppContent user={user} onLogout={handleLogout} /></BrowserRouter>;
 };
 
 export default App;

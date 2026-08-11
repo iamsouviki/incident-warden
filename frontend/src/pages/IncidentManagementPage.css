@@ -820,3 +820,23 @@
 .ai-suggestion-card select {
   cursor: pointer;
 }
+
+/* Enterprise dark ops-console override. Keep the existing page logic; style the workbench once. */
+.incident-page { color: var(--text-1); }
+.incident-page .card, .incident-page .kpi-card { background: var(--surface-1) !important; border-color: var(--border) !important; box-shadow: none !important; }
+.incident-page .kpi-card { border-radius: var(--radius-lg); }
+.incident-page .kpi-title, .incident-page label { color: var(--text-3) !important; }
+.incident-page .kpi-value, .incident-page .content-title { color: var(--text-1) !important; }
+.incident-page input, .incident-page select, .incident-page textarea { background: var(--surface-2) !important; border-color: var(--border) !important; color: var(--text-1) !important; border-radius: var(--radius-md) !important; }
+.incident-page input::placeholder, .incident-page textarea::placeholder { color: var(--text-3); }
+.incident-page input:focus, .incident-page select:focus, .incident-page textarea:focus { border-color: var(--accent) !important; box-shadow: 0 0 0 2px rgba(79, 140, 255, 0.12) !important; }
+.incident-page .btn-primary, .incident-page .btn-sync { background: var(--accent) !important; border-color: var(--accent) !important; color: #fff !important; }
+.incident-page .btn-secondary { background: var(--surface-2) !important; border-color: var(--border) !important; color: var(--text-2) !important; }
+.incident-page .btn-secondary:hover { border-color: var(--text-3) !important; color: var(--text-1) !important; }
+.incident-page .status-badge, .incident-page .priority-badge { border: 1px solid var(--border); }
+.incident-page .tabs-bar { border-color: var(--border) !important; }
+.incident-page .tab-btn { color: var(--text-3) !important; }
+.incident-page .tab-btn.active { color: var(--text-1) !important; border-bottom-color: var(--accent) !important; }
+.incident-page .ai-suggestion-card { background: var(--surface-2) !important; border-color: var(--border) !important; }
+@media (max-width: 1180px) { .incident-page > div:nth-child(2) { grid-template-columns: repeat(4, 1fr) !important; } .incident-page > div:nth-child(3) { grid-template-columns: 300px 1fr !important; } }
+@media (max-width: 780px) { .incident-page > div:nth-child(2) { grid-template-columns: repeat(2, 1fr) !important; } .incident-page > div:nth-child(3) { grid-template-columns: 1fr !important; height: auto !important; } .incident-page > div:nth-child(3) > div:nth-child(2) { min-height: 520px; } }
