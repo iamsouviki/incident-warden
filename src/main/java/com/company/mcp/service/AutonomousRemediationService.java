@@ -38,7 +38,7 @@ public class AutonomousRemediationService {
     private String executionMode;
     @Value("${mcp.autonomy.batch-size:10}")
     private int batchSize;
-    @Value("${mcp.autonomy.poll-interval-ms:10000}")
+    @Value("${mcp.autonomy.poll-interval-ms:60000}")
     private long pollIntervalMs;
     @Value("${mcp.autonomy.allow-p1:false}")
     private boolean allowP1;
@@ -59,7 +59,7 @@ public class AutonomousRemediationService {
         this.restClientBuilder = restClientBuilder;
     }
 
-    @Scheduled(fixedDelayString = "${mcp.autonomy.poll-interval-ms:10000}")
+    @Scheduled(fixedDelayString = "${mcp.autonomy.poll-interval-ms:60000}")
     public void scheduledCycle() {
         if (enabled) runCycle();
     }
@@ -113,7 +113,8 @@ public class AutonomousRemediationService {
     }
 
     private boolean isReady(String status) {
-        return "AUTO_RESOLVED".equalsIgnoreCase(status) || "APPROVED".equalsIgnoreCase(status) || "AUTO_RETRY".equalsIgnoreCase(status);
+        // Legacy direct execution is intentionally disabled. Remediation must use a persisted HITL request and dry-run path.
+        return false;
     }
 
     private Outcome process(Incident incident) {

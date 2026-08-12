@@ -12,6 +12,9 @@ public class Incident {
     @Column(name = "id", nullable = false)
     private UUID id;
 
+    @Column(name = "tenant_id", nullable = false)
+    private String tenantId;
+
     @Column(name = "subject", nullable = false)
     private String subject;
 
@@ -94,6 +97,9 @@ public class Incident {
     public UUID getId() { return id; }
     public void setId(UUID id) { this.id = id; }
 
+    public String getTenantId() { return tenantId; }
+    public void setTenantId(String tenantId) { this.tenantId = tenantId; }
+
     public String getSubject() { return subject; }
     public void setSubject(String subject) { this.subject = subject; }
 
@@ -140,6 +146,7 @@ public class Incident {
 
     public static class Builder {
         private UUID id;
+        private String tenantId;
         private String subject;
         private String description;
         private String assignee;
@@ -155,6 +162,7 @@ public class Incident {
         private Double confidenceScore = 0.0;
 
         public Builder id(UUID id) { this.id = id; return this; }
+        public Builder tenantId(String tenantId) { this.tenantId = tenantId; return this; }
         public Builder subject(String subject) { this.subject = subject; return this; }
         public Builder description(String description) { this.description = description; return this; }
         public Builder assignee(String assignee) { this.assignee = assignee; return this; }
@@ -170,7 +178,9 @@ public class Incident {
         public Builder confidenceScore(Double confidenceScore) { this.confidenceScore = confidenceScore; return this; }
 
         public Incident build() {
-            return new Incident(id, subject, description, assignee, assignedGteam, priority, status, createdAt, updatedAt, dueDate, externalSource, externalId, category, confidenceScore);
+            Incident incident = new Incident(id, subject, description, assignee, assignedGteam, priority, status, createdAt, updatedAt, dueDate, externalSource, externalId, category, confidenceScore);
+            incident.setTenantId(tenantId);
+            return incident;
         }
     }
 }

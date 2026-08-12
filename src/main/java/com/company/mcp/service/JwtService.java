@@ -21,6 +21,9 @@ public class JwtService {
     private final SecretKey key;
 
     public JwtService(@Value("${mcp.jwt.secret:mcp-incident-automation-jwt-secret-key-change-in-prod-32ch}") String secret) {
+        if (secret == null || secret.isBlank() || secret.getBytes(StandardCharsets.UTF_8).length < 32) {
+            throw new IllegalStateException("MCP_JWT_SECRET must contain at least 32 bytes");
+        }
         this.key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
     }
 

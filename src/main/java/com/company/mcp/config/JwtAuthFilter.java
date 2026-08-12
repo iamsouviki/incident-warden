@@ -43,9 +43,14 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                     return;
                 }
                 String username = claims.getSubject();
-                String role = (String) claims.getOrDefault("role", "VIEWER");
+                String role = String.valueOf(claims.getOrDefault("role", "VIEWER")).toUpperCase();
+                String tenantId = String.valueOf(claims.get("tenantId"));
+                if (username == null || username.isBlank() || tenantId == null || tenantId.isBlank() || "null".equals(tenantId)) {
+                    throw new JwtException("JWT is missing required identity claims");
+                }
+                var principal = new AuthenticatedUser(username, tenantId, role);
                 var auth = new UsernamePasswordAuthenticationToken(
-                        username, null,
+                        principal, null,
                         List.of(new SimpleGrantedAuthority("ROLE_" + role)));
                 SecurityContextHolder.getContext().setAuthentication(auth);
             } catch (JwtException | IllegalArgumentException ignored) {

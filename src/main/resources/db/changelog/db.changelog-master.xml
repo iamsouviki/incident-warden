@@ -58,8 +58,10 @@
         <sqlFile path="versions/1.10/universal_incident_metadata.sql" relativeToChangelogFile="true" />
     </changeSet>
 
-    <changeSet id="1.11-autonomy-trace" author="mcp-incident-automation">
+        <changeSet id="1.11-autonomy-trace" author="mcp-incident-automation">
         <sqlFile path="versions/1.11/autonomy_trace.sql" relativeToChangelogFile="true" />
     </changeSet>
-
+    <changeSet id="1.12-universal-hitl-foundation" author="mcp-incident-automation">
+        <sqlFile path="versions/1.12/universal_hitl_foundation.sql" relativeToChangelogFile="true" />
+    </changeSet>
 </databaseChangeLog>

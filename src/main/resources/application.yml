@@ -229,7 +229,8 @@ mcp:
   autonomy:
     enabled: ${MCP_AUTONOMY_ENABLED:false}
     execution-mode: ${MCP_AUTONOMY_EXECUTION_MODE:SIMULATED}
-    poll-interval-ms: ${MCP_AUTONOMY_POLL_INTERVAL_MS:10000}
+    poll-interval-ms: ${MCP_AUTONOMY_POLL_INTERVAL_MS:60000}
+    execution-enabled: ${MCP_AUTONOMY_EXECUTION_ENABLED:false}
     batch-size: ${MCP_AUTONOMY_BATCH_SIZE:10}
     allow-p1: ${MCP_AUTONOMY_ALLOW_P1:false}
     max-retries: ${MCP_AUTONOMY_MAX_RETRIES:2}

@@ -11,4 +11,5 @@ import java.util.Optional;
 @Repository
 public interface IncidentRepository extends JpaRepository<Incident, UUID>, JpaSpecificationExecutor<Incident> {
     Optional<Incident> findFirstByExternalSourceAndExternalId(String externalSource, String externalId);
+    Optional<Incident> findFirstByTenantIdAndExternalSourceAndExternalId(String tenantId, String externalSource, String externalId);
 }

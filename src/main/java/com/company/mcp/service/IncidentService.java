@@ -1,5 +1,6 @@
 package com.company.mcp.service;
 
+import com.company.mcp.config.CurrentUser;
 import com.company.mcp.model.Incident;
 import com.company.mcp.model.ExternalIncident;
 import com.company.mcp.model.IncidentComment;
@@ -46,6 +47,9 @@ public class IncidentService {
 
     @Autowired
     private AiConfigService aiConfigService;
+
+    @Autowired
+    private CurrentUser currentUser;
 
     @jakarta.annotation.PostConstruct
     public void populateMissingExternalIds() {
@@ -133,6 +137,7 @@ public class IncidentService {
     }
 
     public Incident createIncident(Incident incident) {
+        incident.setTenantId(currentUser.tenantId());
         if (incident.getCreatedAt() == null) {
             incident.setCreatedAt(OffsetDateTime.now());
         }
@@ -186,10 +191,9 @@ public class IncidentService {
         double autoThreshold = threshold(aiConfigService.getAutoResolveThreshold(), 100.0);
         double hitlThreshold = threshold(aiConfigService.getHitlThreshold(), 80.0);
 
-        if (score >= autoThreshold) {
-            incident.setStatus("AUTO_RESOLVED");
-        } else if (score >= hitlThreshold) {
-            incident.setStatus("PENDING_APPROVAL");
+        // A score is evidence, not permission. Plans are always sent through guardrails and HITL by default.
+        if (score >= hitlThreshold || score >= autoThreshold) {
+            incident.setStatus("PENDING_ANALYSIS");
         } else {
             incident.setStatus("New");
         }
@@ -641,11 +645,11 @@ public class IncidentService {
                     .build();
             double score = calculateConfidenceScore(dummy);
             String status = "New";
-            if (score >= threshold(aiConfigService.getAutoResolveThreshold(), 100.0)) status = "AUTO_RESOLVED";
-            else if (score >= threshold(aiConfigService.getHitlThreshold(), 80.0)) status = "PENDING_APPROVAL";
+            if (score >= threshold(aiConfigService.getHitlThreshold(), 80.0)) status = "PENDING_ANALYSIS";
 
             ExternalIncident incident = ExternalIncident.builder()
                     .id(id)
+                    .tenantId(currentUser.tenantId())
                     .subject(subject != null ? subject : "Untitled external ticket")
                     .description(description != null ? description : "")
                     .priority(priority)
