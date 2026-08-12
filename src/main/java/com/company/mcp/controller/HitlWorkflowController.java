@@ -15,7 +15,7 @@ public class HitlWorkflowController {
     @PostMapping("/incidents/{incidentId}/plan")
     public ResponseEntity<?> createPlan(@PathVariable UUID incidentId) { return ResponseEntity.ok(workflow.createPlan(incidentId)); }
     @GetMapping("/requests")
-    public ResponseEntity<?> pending() { return ResponseEntity.ok(workflow.pending()); }
+    public ResponseEntity<?> pending() { return ResponseEntity.ok(workflow.pendingReviewItems()); }
     @PostMapping("/requests/{requestId}/decision")
     public ResponseEntity<?> decide(@PathVariable UUID requestId, @RequestBody Map<String,String> body) { return ResponseEntity.ok(workflow.decide(requestId, body.get("decision"), body.get("reason"))); }
     @PostMapping("/requests/{requestId}/dry-run")

@@ -18,4 +18,18 @@ public interface VectorStoreEntityRepository extends JpaRepository<VectorStoreEn
 
     @Query(value = "SELECT id, content, metadata FROM sop.vector_store WHERE metadata->>'doc_type' = 'SOP'", nativeQuery = true)
     List<VectorStoreEntity> findAllSops();
+
+    @Query(value = "SELECT id, content, metadata FROM sop.vector_store " +
+                   "WHERE metadata->>'doc_type' = 'SOP' " +
+                   "AND metadata->>'tenant_id' = :tenantId " +
+                   "AND COALESCE(metadata->>'approval_status', 'APPROVED') = 'APPROVED' " +
+                   "AND fts_vector @@ plainto_tsquery('english', :queryStr) " +
+                   "LIMIT :lim", nativeQuery = true)
+    List<VectorStoreEntity> findApprovedSopsByTenantAndFullTextSearch(@Param("tenantId") String tenantId,
+                                                                        @Param("queryStr") String queryStr,
+                                                                        @Param("lim") int lim);
+
+    @Query(value = "SELECT id, content, metadata FROM sop.vector_store " +
+                   "WHERE metadata->>'doc_type' = 'SOP' AND metadata->>'tenant_id' = :tenantId", nativeQuery = true)
+    List<VectorStoreEntity> findAllSopsByTenant(@Param("tenantId") String tenantId);
 }

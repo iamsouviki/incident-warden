@@ -164,61 +164,25 @@ public class ScriptController {
     public ResponseEntity<?> executeScript(@RequestBody Map<String, Object> body) {
         String scriptContent = (String) body.getOrDefault("scriptContent", "");
         String language = (String) body.getOrDefault("language", "bash");
-        boolean dryRun = (boolean) body.getOrDefault("dryRun", false);
-        String category = (String) body.getOrDefault("category", "APPLICATION");
+        boolean dryRun = Boolean.TRUE.equals(body.get("dryRun"));
         String targetHost = (String) body.getOrDefault("targetHost", "localhost");
-        String description = (String) body.getOrDefault("description", "Remediation Script Execution");
-
-        int exitCode = 0;
-        StringBuilder stdout = new StringBuilder();
-        StringBuilder stderr = new StringBuilder();
-
-        if (dryRun) {
-            stdout.append("[DRY-RUN] Script syntax evaluation completed successfully.\n");
-            stdout.append("[DRY-RUN] Script would target host: ").append(targetHost).append("\n");
-            stdout.append("[DRY-RUN] Language: ").append(language).append("\n");
-        } else {
-            // Mocks safe execution output based on script content
-            stdout.append("Initializing connection to host ").append(targetHost).append("...\n");
-            stdout.append("Running task: ").append(description).append("\n");
-            stdout.append("Executing script block (").append(language).append("):\n");
-            
-            String[] lines = scriptContent.split("\n");
-            int lineCount = 0;
-            for (String line : lines) {
-                if (line.trim().startsWith("#") || line.trim().isBlank()) continue;
-                stdout.append(" >> ").append(line.trim()).append("\n");
-                lineCount++;
-            }
-
-            if (scriptContent.toLowerCase().contains("error") || scriptContent.toLowerCase().contains("fail")) {
-                exitCode = 1;
-                stderr.append("Process exited with error status code 1. Check target host logs.");
-            } else {
-                stdout.append("\nExecution succeeded. ").append(lineCount).append(" command lines ran. Exit code 0.\n");
-            }
+        String description = (String) body.getOrDefault("description", "Manual Script Preview");
+        if (!dryRun) {
+            return ResponseEntity.status(409).body(Map.of("error", "Direct script execution is disabled. Create an approved HITL remediation plan instead."));
         }
-
-        // Persist execution log to the DB
+        String lower = scriptContent.toLowerCase();
+        if (lower.contains("rm -rf") || lower.contains("drop table") || lower.contains("kubectl delete") || lower.contains("terraform destroy") || lower.contains("shutdown") || lower.contains("reboot")) {
+            return ResponseEntity.unprocessableEntity().body(Map.of("error", "Unsafe script preview blocked by deterministic guardrails."));
+        }
+        String stdout = "[SIMULATION ONLY] Script preview completed. No command, host connection, or system mutation was performed.\n" +
+                "[SIMULATION ONLY] Intended target: " + targetHost + "\n" +
+                "[SIMULATION ONLY] Language: " + language + "\n";
         try {
             ExecutionLog logObj = new ExecutionLog();
-            logObj.setId(UUID.randomUUID());
-            logObj.setName(description.length() > 200 ? description.substring(0, 200) : description);
-            logObj.setTimestamp(OffsetDateTime.now());
-            logObj.setScriptContent(scriptContent);
-            logObj.setStatus(exitCode == 0 ? "SUCCESS" : "FAILURE");
-            logObj.setExitCode(exitCode);
-            logObj.setStdout(stdout.toString());
-            logObj.setStderr(stderr.toString());
-            executionLogRepository.save(logObj);
-        } catch (Exception e) {
-            log.error("[SCRIPT] Failed to persist execution log", e);
-        }
-
-        return ResponseEntity.ok(Map.of(
-                "exitCode", exitCode,
-                "stdout", stdout.toString(),
-                "stderr", stderr.toString()
-        ));
+            logObj.setId(UUID.randomUUID()); logObj.setName(description.length() > 200 ? description.substring(0, 200) : description);
+            logObj.setTimestamp(OffsetDateTime.now()); logObj.setScriptContent(scriptContent); logObj.setStatus("SIMULATED");
+            logObj.setExitCode(0); logObj.setStdout(stdout); logObj.setStderr(""); executionLogRepository.save(logObj);
+        } catch (Exception e) { log.error("[SCRIPT] Failed to persist simulation log", e); }
+        return ResponseEntity.ok(Map.of("exitCode", 0, "mode", "SIMULATED", "stdout", stdout, "stderr", "", "message", "Direct execution is disabled; this was a preview only."));
     }
 }

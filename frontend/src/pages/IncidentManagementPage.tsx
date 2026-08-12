@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import './IncidentManagementPage.css';
-import { Plus, RefreshCw, Search, Calendar, User, ShieldAlert, Clock, MessageSquare, History, Edit, Save, Wrench, Play, Loader } from 'lucide-react';
+import { Plus, RefreshCw, Search, Calendar, User, ShieldAlert, Clock, MessageSquare, History, Edit, Save, Loader } from 'lucide-react';
 import { authFetch, getStoredUser } from '../services/api';
 import SearchableSelect from '../components/SearchableSelect';
 
@@ -114,11 +114,9 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
   const [aiLoading, setAiLoading] = useState(false);
   const [modalAiLoading, setModalAiLoading] = useState(false);
 
-  // Tool matching & creation
-  const [matchingTools, setMatchingTools] = useState<{id: string; name: string; language: string; category: string}[]>([]);
-  const [toolSearchLoading, setToolSearchLoading] = useState(false);
-  const [toolRunOutput, setToolRunOutput] = useState<{stdout: string; stderr: string; exitCode: number} | null>(null);
-  const [toolRunning, setToolRunning] = useState<string | null>(null);
+  // Guarded remediation-plan creation. The backend owns all execution decisions.
+  const [planCreating, setPlanCreating] = useState(false);
+  const [planOutcome, setPlanOutcome] = useState<{ route: string; message: string; planId?: string } | null>(null);
 
   useEffect(() => {
     const fetchTeams = async () => {
@@ -152,49 +150,45 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
   const getAiSuggestion = async (sub: string, desc: string) => {
     setAiLoading(true);
     setAiSuggestion(null);
-    setMatchingTools([]);
-    setToolRunOutput(null);
     try {
       const res = await authFetch('/api/v1/incidents/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ subject: sub, description: desc }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setAiSuggestion(data);
-      }
-
-      // Search for matching tools/scripts
-      setToolSearchLoading(true);
-      try {
-        const user = getStoredUser();
-        const toolRes = await authFetch(`/api/v1/scripts?tenantId=${user?.tenantId || 'tenant-1'}`);
-        if (toolRes.ok) {
-          const toolData = await toolRes.json();
-          const scripts = toolData.scripts || [];
-          const subLower = sub.toLowerCase();
-          const matched = scripts.filter((s: any) =>
-            s.name?.toLowerCase().includes('tool:') &&
-            (s.name?.toLowerCase().includes(subLower.substring(0, 20)) ||
-             s.description?.toLowerCase().includes(subLower.substring(0, 20)))
-          ).map((s: any) => ({
-            id: s.id,
-            name: s.name,
-            language: s.language || 'bash',
-            category: s.category || 'APPLICATION'
-          }));
-          setMatchingTools(matched);
-        }
-      } catch (err) {
-        console.error('Failed to search tools', err);
-      } finally {
-        setToolSearchLoading(false);
-      }
+      if (res.ok) setAiSuggestion(await res.json());
     } catch (err) {
       console.error('Failed to get AI suggestion', err);
     } finally {
       setAiLoading(false);
+    }
+  };
+
+  const createGuardedPlan = async () => {
+    if (!selectedIncident) return;
+    setPlanCreating(true);
+    setPlanOutcome(null);
+    try {
+      const res = await authFetch(`/api/v1/hitl/incidents/${selectedIncident.id}/plan`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || 'The guarded plan could not be created.');
+      const plan = data.plan || {};
+      const route = data.route || 'ESCALATE';
+      setPlanOutcome({
+        route,
+        planId: plan.id,
+        message: route === 'HITL_REQUIRED'
+          ? 'A tenant-scoped SOP-backed plan passed the deterministic guardrails and was sent to the HITL queue.'
+          : `No approval was created. The agent escalated this incident: ${data.reason || plan.sopEvidence || 'required evidence or safety criteria were not met.'}`,
+      });
+      if (route === 'HITL_REQUIRED') {
+        setSelectedIncident(current => current ? { ...current, status: 'PENDING_APPROVAL' } : current);
+        fetchIncidents();
+      }
+    } catch (err) {
+      setPlanOutcome({ route: 'ERROR', message: err instanceof Error ? err.message : 'The guarded plan could not be created.' });
+    } finally {
+      setPlanCreating(false);
     }
   };
 
@@ -266,8 +260,7 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
       setEditGteam(selectedIncident.assignedGteam);
       setEditMode(false);
       setAiSuggestion(null);
-      setMatchingTools([]);
-      setToolRunOutput(null);
+      setPlanOutcome(null);
 
       // Auto-trigger AI suggestion
       getAiSuggestion(selectedIncident.subject, selectedIncident.description);
@@ -893,126 +886,30 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
                           </div>
                         )}
 
-                        {/* Tool Action Buttons */}
-                        {aiSuggestion && (
+                        {/* Guarded remediation plan: no incident-side script execution is available. */}
+                        {selectedIncident && (
                           <div style={{
-                            marginTop: '12px',
-                            paddingTop: '12px',
-                            borderTop: '1px solid var(--border)',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: '8px'
+                            marginTop: '12px', paddingTop: '12px', borderTop: '1px solid var(--border)',
+                            display: 'flex', flexDirection: 'column', gap: '8px'
                           }}>
-                            <span style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Automation Tools</span>
-                            
-                            {toolSearchLoading ? (
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-muted)', fontSize: '12px' }}>
-                                <Loader size={12} className="spin" /> Searching for matching tools...
+                            <span style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Guarded remediation workflow</span>
+                            <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.45 }}>
+                              Create a proposal only. The service requires approved tenant SOP evidence and all nine deterministic guardrails before routing it to human review. It cannot run a script from this screen.
+                            </p>
+                            <button
+                              type="button"
+                              className="btn-primary"
+                              style={{ width: 'fit-content', padding: '7px 12px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                              disabled={planCreating || selectedIncident.status === 'PENDING_APPROVAL'}
+                              onClick={() => void createGuardedPlan()}
+                            >
+                              {planCreating ? <><Loader size={12} className="spin" /> Evaluating SOP evidence and guardrails…</> : <><ShieldAlert size={12} /> Create guarded remediation plan</>}
+                            </button>
+                            {planOutcome && (
+                              <div style={{ padding: '9px 10px', borderRadius: '6px', fontSize: '11.5px', lineHeight: 1.45, background: planOutcome.route === 'HITL_REQUIRED' ? 'var(--green-dim)' : 'var(--red-dim)', border: `1px solid ${planOutcome.route === 'HITL_REQUIRED' ? 'var(--green)' : 'var(--red)'}` }}>
+                                <strong>{planOutcome.route === 'HITL_REQUIRED' ? 'Plan ready for HITL review.' : planOutcome.route === 'ESCALATE' ? 'Plan blocked and escalated.' : 'Plan creation failed.'}</strong><br />
+                                {planOutcome.message}
                               </div>
-                            ) : matchingTools.length > 0 ? (
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                {matchingTools.map(tool => (
-                                  <div key={tool.id} style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'space-between',
-                                    padding: '8px 12px',
-                                    background: 'var(--green-dim)',
-                                    border: '1px solid var(--green)',
-                                    borderRadius: '8px'
-                                  }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                      <Wrench size={14} style={{ color: 'var(--green)' }} />
-                                      <div>
-                                        <div style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--green)' }}>{tool.name}</div>
-                                        <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{tool.language} • {tool.category}</div>
-                                      </div>
-                                    </div>
-                                    <button
-                                      type="button"
-                                      className="btn-primary"
-                                      style={{ padding: '4px 10px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px', height: '26px' }}
-                                      disabled={toolRunning === tool.id}
-                                      onClick={async () => {
-                                        setToolRunning(tool.id);
-                                        setToolRunOutput(null);
-                                        try {
-                                          const loadRes = await authFetch(`/api/v1/scripts/${tool.id}`);
-                                          if (loadRes.ok) {
-                                            const script = await loadRes.json();
-                                            const execRes = await authFetch('/api/v1/scripts/execute', {
-                                              method: 'POST',
-                                              headers: { 'Content-Type': 'application/json' },
-                                              body: JSON.stringify({
-                                                scriptContent: script.scriptContent,
-                                                language: script.language,
-                                                dryRun: true,
-                                                category: script.category,
-                                                description: script.description || 'Tool execution',
-                                                targetHost: script.targetHost || 'localhost',
-                                              })
-                                            });
-                                            const output = await execRes.json();
-                                            setToolRunOutput({
-                                              stdout: output.stdout || '',
-                                              stderr: output.stderr || output.error || '',
-                                              exitCode: output.exitCode ?? -1
-                                            });
-                                          }
-                                        } catch (err) {
-                                          console.error(err);
-                                          setToolRunOutput({ stdout: '', stderr: 'Failed to execute tool', exitCode: -1 });
-                                        } finally {
-                                          setToolRunning(null);
-                                        }
-                                      }}
-                                    >
-                                      {toolRunning === tool.id ? <><Loader size={12} className="spin" /> Running...</> : <><Play size={12} /> Run Tool</>}
-                                    </button>
-                                  </div>
-                                ))}
-
-                                {/* Tool run output */}
-                                {toolRunOutput && (
-                                  <div style={{
-                                    padding: '10px',
-                                    background: 'var(--surface)',
-                                    border: '1px solid var(--border)',
-                                    borderRadius: '6px',
-                                    fontSize: '11.5px',
-                                    fontFamily: 'var(--mono)',
-                                    whiteSpace: 'pre-wrap',
-                                    maxHeight: '180px',
-                                    overflowY: 'auto'
-                                  }}>
-                                    <div style={{ marginBottom: '4px', color: toolRunOutput.exitCode === 0 ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
-                                      Exit Code: {toolRunOutput.exitCode}
-                                    </div>
-                                    {toolRunOutput.stdout && <div style={{ color: 'var(--text-dim)' }}>{toolRunOutput.stdout}</div>}
-                                    {toolRunOutput.stderr && <div style={{ color: 'var(--red)' }}>{toolRunOutput.stderr}</div>}
-                                  </div>
-                                )}
-                              </div>
-                            ) : (
-                              <button
-                                type="button"
-                                className="btn-secondary"
-                                style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: '6px',
-                                  padding: '6px 12px',
-                                  fontSize: '11px',
-                                  width: 'fit-content',
-                                  height: '28px'
-                                }}
-                                onClick={() => {
-                                  const remediationPrompt = `Remediation script for: ${selectedIncident.subject}. Resolution: ${aiSuggestion?.suggestedResolution?.substring(0, 500) || ''}`;
-                                  window.open(`/?page=tools&desc=${encodeURIComponent(remediationPrompt)}`, '_blank');
-                                }}
-                              >
-                                <Wrench size={12} /> Create Tool in New Tab
-                              </button>
                             )}
                           </div>
                         )}

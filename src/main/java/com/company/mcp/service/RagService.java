@@ -162,12 +162,20 @@ public class RagService {
     }
 
     public boolean ingestSop(String title, String description) {
+        return ingestSop("tenant-1", title, description);
+    }
+
+    public boolean ingestSop(String tenantId, String title, String description) {
         String content = String.format("SOP: %s\nDescription: %s", title, description);
         String id = UUID.randomUUID().toString();
-        return ingest(id, content, TYPE_SOP, Map.of("sop_title", title));
+        return ingest(id, content, TYPE_SOP, Map.of("sop_title", title, "tenant_id", tenantId, "approval_status", "APPROVED"));
     }
 
     public boolean ingestFile(Resource resource, String title) {
+        return ingestFile(resource, title, "tenant-1");
+    }
+
+    public boolean ingestFile(Resource resource, String title, String tenantId) {
         if (!isVectorStoreAvailable()) return false;
         try {
             log.info("[RAG] Parsing file: {}", resource.getFilename());
@@ -183,6 +191,8 @@ public class RagService {
             for (Document doc : chunkedDocs) {
                 doc.getMetadata().put("source_id", docId);
                 doc.getMetadata().put("doc_type", TYPE_SOP);
+                doc.getMetadata().put("tenant_id", tenantId);
+                doc.getMetadata().put("approval_status", "APPROVED");
                 if (title != null && !title.isBlank()) {
                     doc.getMetadata().put("sop_title", title);
                 }
@@ -196,6 +206,31 @@ public class RagService {
         } catch (Exception e) {
             log.error("[RAG] Failed to ingest file {}: {}", resource.getFilename(), e.getMessage());
             return false;
+        }
+    }
+
+    /**
+     * Returns only approved SOP chunks owned by the requested tenant. This is
+     * the planner contract; conversational answers are intentionally not used
+     * as proof that a remediation procedure exists.
+     */
+    public SopEvidence findApprovedSopEvidence(String tenantId, String query) {
+        if (tenantId == null || tenantId.isBlank()) return SopEvidence.unavailable("TENANT_CONTEXT_MISSING");
+        if (!isVectorStoreAvailable()) return SopEvidence.unavailable("SOP_SERVICE_UNAVAILABLE");
+        if (query == null || query.isBlank()) return SopEvidence.noMatch("EMPTY_INCIDENT_CONTEXT");
+        try {
+            List<com.company.mcp.model.VectorStoreEntity> entities = vectorStoreEntityRepository
+                    .findApprovedSopsByTenantAndFullTextSearch(tenantId, query, Math.max(1, defaultTopK));
+            if (entities.isEmpty()) return SopEvidence.noMatch("NO_APPROVED_TENANT_SOP_MATCH");
+            List<UUID> ids = entities.stream().map(com.company.mcp.model.VectorStoreEntity::getId)
+                    .filter(Objects::nonNull).toList();
+            String excerpt = entities.stream().map(com.company.mcp.model.VectorStoreEntity::getContent)
+                    .filter(Objects::nonNull).collect(Collectors.joining("\n\n"));
+            if (ids.isEmpty() || excerpt.isBlank()) return SopEvidence.noMatch("EMPTY_APPROVED_SOP_MATCH");
+            return new SopEvidence(true, true, ids, excerpt.substring(0, Math.min(6000, excerpt.length())), 0.90, "APPROVED_TENANT_SOP_MATCH");
+        } catch (Exception e) {
+            log.warn("[RAG] Approved SOP evidence lookup failed: {}", e.getMessage());
+            return SopEvidence.unavailable("SOP_EVIDENCE_LOOKUP_FAILED");
         }
     }
 
@@ -426,6 +461,12 @@ public class RagService {
 
     public List<com.company.mcp.model.VectorStoreEntity> getAllSops() {
         return vectorStoreEntityRepository.findAllSops();
+    }
+
+    public List<com.company.mcp.model.VectorStoreEntity> getAllSops(String tenantId) {
+        if (tenantId == null || tenantId.isBlank()) return List.of();
+        try { return vectorStoreEntityRepository.findAllSopsByTenant(tenantId); }
+        catch (Exception e) { log.warn("[RAG] Tenant SOP listing failed: {}", e.getMessage()); return List.of(); }
     }
 
     public boolean updateSop(UUID id, String title, String description) {

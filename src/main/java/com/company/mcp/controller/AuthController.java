@@ -3,11 +3,13 @@ package com.company.mcp.controller;
 import com.company.mcp.model.AppUser;
 import com.company.mcp.repository.UserRepository;
 import com.company.mcp.service.JwtService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -17,14 +19,18 @@ public class AuthController {
     private static final long SESSION_REFRESH_TTL = 24 * 60 * 60 * 1000L;   // 1d
     private static final long REMEMBER_REFRESH_TTL = 7 * 24 * 60 * 60 * 1000L; // 7d
 
+    private static final Set<String> POC_ROLES = Set.of("VIEWER", "ANALYST", "ADMIN");
     private final UserRepository users;
     private final JwtService jwtService;
     private final PasswordEncoder encoder;
+    private final boolean pocRoleSelectionEnabled;
 
-    public AuthController(UserRepository users, JwtService jwtService, PasswordEncoder encoder) {
+    public AuthController(UserRepository users, JwtService jwtService, PasswordEncoder encoder,
+                          @Value("${mcp.poc.role-selection-enabled:false}") boolean pocRoleSelectionEnabled) {
         this.users      = users;
         this.jwtService = jwtService;
         this.encoder    = encoder;
+        this.pocRoleSelectionEnabled = pocRoleSelectionEnabled;
     }
 
     /** POST /api/auth/login  { username, password, rememberMe? } */
@@ -46,18 +52,20 @@ public class AuthController {
                 return ResponseEntity.status(401).body(Map.of("error", "Invalid username or password"));
         }
 
+        // The requested role is honored only when the explicit local POC feature flag is enabled.
+        String role = effectiveRole(body, user.getRole());
         long refreshTtl = remember ? REMEMBER_REFRESH_TTL : SESSION_REFRESH_TTL;
         String token = jwtService.generate(user.getUsername(),
-                Map.of("role", user.getRole(), "tenantId", user.getTenantId(), "tokenType", "access"), ACCESS_TTL);
+                Map.of("role", role, "tenantId", user.getTenantId(), "tokenType", "access"), ACCESS_TTL);
         String refreshToken = jwtService.generate(user.getUsername(),
-                Map.of("role", user.getRole(), "tenantId", user.getTenantId(), "tokenType", "refresh", "rememberMe", remember), refreshTtl);
+                Map.of("role", role, "tenantId", user.getTenantId(), "tokenType", "refresh", "rememberMe", remember), refreshTtl);
 
         return ResponseEntity.ok(Map.of(
                 "token",           token,
                 "accessToken",     token,
                 "refreshToken",    refreshToken,
                 "username",        user.getUsername(),
-                "role",            user.getRole(),
+                "role",            role,
                 "tenantId",        user.getTenantId(),
                 "tenantName",      user.getTenantName() != null ? user.getTenantName() : "Primary Workspace",
                 "expiresIn",       ACCESS_TTL,
@@ -118,6 +126,14 @@ public class AuthController {
                 "expiresIn",       ACCESS_TTL,
                 "refreshExpiresIn", SESSION_REFRESH_TTL
         ));
+    }
+
+    private String effectiveRole(Map<String, Object> body, String storedRole) {
+        if (!pocRoleSelectionEnabled) return storedRole;
+        Object requested = body.get("role");
+        if (!(requested instanceof String value)) return storedRole;
+        String normalized = value.trim().toUpperCase();
+        return POC_ROLES.contains(normalized) ? normalized : storedRole;
     }
 
     /** POST /api/auth/refresh  { token } */
