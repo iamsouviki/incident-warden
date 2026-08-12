@@ -55,6 +55,11 @@ mcp:
       allowed-origins: http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080
   llm:
     provider: custom
+    custom:
+      api-url: http://localhost:9090/v1
+      api-key: mock-key
+      chat-model: manus-1.6
+      embed-model: mock-embed
   autonomy:
     enabled: true
     execution-mode: SIMULATED
