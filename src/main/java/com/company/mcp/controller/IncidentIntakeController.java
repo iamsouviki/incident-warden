@@ -19,8 +19,9 @@ public class IncidentIntakeController {
     }
 
     @PostMapping(value = "/import", consumes = "multipart/form-data")
-    public ResponseEntity<?> importFile(@RequestPart("file") MultipartFile file) {
-        try { return ResponseEntity.ok(intake.importFile(file)); }
+    public ResponseEntity<?> importFile(@RequestPart("file") MultipartFile file,
+                                        @RequestParam(value = "sourceSystem", defaultValue = "Custom Import") String sourceSystem) {
+        try { return ResponseEntity.ok(intake.importFile(file, sourceSystem)); }
         catch (IllegalArgumentException e) { return ResponseEntity.badRequest().body(java.util.Map.of("error", e.getMessage())); }
     }
 }

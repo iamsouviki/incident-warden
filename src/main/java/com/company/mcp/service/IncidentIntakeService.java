@@ -40,10 +40,11 @@ public class IncidentIntakeService {
         return Map.of("status", "CREATED", "incident", created);
     }
 
-    public Map<String, Object> importFile(MultipartFile file) {
+    public Map<String, Object> importFile(MultipartFile file, String sourceSystem) {
         if (file == null || file.isEmpty()) throw new IllegalArgumentException("A non-empty CSV or XLSX file is required");
+        String source = blank(sourceSystem) ? "Custom Import" : sourceSystem.trim();
         String name = Optional.ofNullable(file.getOriginalFilename()).orElse("").toLowerCase(Locale.ROOT);
-        List<NormalizedIncidentRequest> rows = name.endsWith(".csv") ? csv(file) : name.endsWith(".xlsx") ? xlsx(file) : List.of();
+        List<NormalizedIncidentRequest> rows = name.endsWith(".csv") ? csv(file, source) : name.endsWith(".xlsx") ? xlsx(file, source) : List.of();
         if (rows.isEmpty() && !(name.endsWith(".csv") || name.endsWith(".xlsx"))) throw new IllegalArgumentException("Only .csv and .xlsx import files are supported");
         int created = 0, deduplicated = 0, rejected = 0;
         List<String> errors = new ArrayList<>();
@@ -54,25 +55,36 @@ public class IncidentIntakeService {
         return Map.of("received", Math.min(MAX_ROWS, rows.size()), "created", created, "deduplicated", deduplicated, "rejected", rejected, "errors", errors);
     }
 
-    private List<NormalizedIncidentRequest> csv(MultipartFile file) {
+    private List<NormalizedIncidentRequest> csv(MultipartFile file, String sourceSystem) {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(file.getInputStream(), StandardCharsets.UTF_8))) {
             String header = reader.readLine(); if (header == null) return List.of(); String[] keys = header.split(",", -1);
             List<NormalizedIncidentRequest> result = new ArrayList<>(); String line;
-            while ((line = reader.readLine()) != null && result.size() < MAX_ROWS) result.add(fromValues(keys, line.split(",", -1)));
+            while ((line = reader.readLine()) != null && result.size() < MAX_ROWS) result.add(fromValues(keys, line.split(",", -1), sourceSystem));
             return result;
         } catch (Exception e) { throw new IllegalArgumentException("CSV could not be parsed"); }
     }
 
-    private List<NormalizedIncidentRequest> xlsx(MultipartFile file) {
+    private List<NormalizedIncidentRequest> xlsx(MultipartFile file, String sourceSystem) {
         try (Workbook book = WorkbookFactory.create(file.getInputStream())) {
             Sheet sheet = book.getSheetAt(0); Iterator<Row> iterator = sheet.iterator(); if (!iterator.hasNext()) return List.of();
             Row header = iterator.next(); String[] keys = new String[header.getLastCellNum()]; for (int i = 0; i < keys.length; i++) keys[i] = cell(header.getCell(i));
-            List<NormalizedIncidentRequest> result = new ArrayList<>(); while (iterator.hasNext() && result.size() < MAX_ROWS) { Row row = iterator.next(); String[] values = new String[keys.length]; for(int i=0;i<keys.length;i++) values[i]=cell(row.getCell(i)); result.add(fromValues(keys, values)); }
+            List<NormalizedIncidentRequest> result = new ArrayList<>(); while (iterator.hasNext() && result.size() < MAX_ROWS) { Row row = iterator.next(); String[] values = new String[keys.length]; for(int i=0;i<keys.length;i++) values[i]=cell(row.getCell(i)); result.add(fromValues(keys, values, sourceSystem)); }
             return result;
         } catch (Exception e) { throw new IllegalArgumentException("XLSX could not be parsed"); }
     }
 
-    private NormalizedIncidentRequest fromValues(String[] keys, String[] values) { Map<String,String> map = new HashMap<>(); for(int i=0;i<keys.length;i++) map.put(keys[i].trim().toLowerCase(Locale.ROOT), i < values.length ? values[i].trim() : ""); return new NormalizedIncidentRequest(map.get("sourcesystem"), map.get("sourcereference"), map.get("subject"), map.get("description"), map.get("priority"), map.get("category"), map.get("target"), map.get("severity")); }
+    private NormalizedIncidentRequest fromValues(String[] keys, String[] values, String sourceSystem) {
+        Map<String,String> map = new HashMap<>();
+        for(int i=0;i<keys.length;i++) map.put(keys[i].trim().toLowerCase(Locale.ROOT), i < values.length ? values[i].trim() : "");
+        String source = first(map, "sourcesystem", "source system", "source", "provider");
+        return new NormalizedIncidentRequest(blank(source) ? sourceSystem : source,
+                first(map, "sourcereference", "source reference", "number", "incident number", "ticket id", "id", "sys_id"),
+                first(map, "subject", "short description", "title", "summary"),
+                first(map, "description", "issue", "details", "work notes"),
+                first(map, "priority"), first(map, "category", "type", "assignment group"),
+                first(map, "target", "configuration item", "asset", "device"), first(map, "severity", "impact"));
+    }
+    private String first(Map<String,String> map, String... names) { for (String name : names) { String value = map.get(name); if (!blank(value)) return value; } return ""; }
     private String cell(Cell cell) { return cell == null ? "" : new DataFormatter().formatCellValue(cell); }
     private void validate(NormalizedIncidentRequest r) { if (r == null || blank(r.sourceSystem()) || blank(r.subject())) throw new IllegalArgumentException("sourceSystem and subject are required"); if (r.sourceSystem().length() > 100 || r.subject().length() > 500) throw new IllegalArgumentException("sourceSystem or subject exceeds supported length"); }
     private boolean blank(String value) { return value == null || value.isBlank(); }

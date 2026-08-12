@@ -64,6 +64,10 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
   const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [importSource, setImportSource] = useState('Freshservice');
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importMessage, setImportMessage] = useState('');
   
   // Search & Filter state
   const [subject, setSubject] = useState('');
@@ -308,6 +312,20 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
     }
   };
 
+  const handleImport = async () => {
+    if (!importFile) { setImportMessage('Choose a Freshservice or ServiceNow .csv or .xlsx export first.'); return; }
+    setImporting(true); setImportMessage('');
+    try {
+      const body = new FormData(); body.append('file', importFile);
+      const res = await authFetch(`/api/v1/intake/incidents/import?sourceSystem=${encodeURIComponent(importSource)}`, { method: 'POST', body });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Import failed');
+      setImportMessage(`Import finished: ${data.created} created, ${data.deduplicated} already known, ${data.rejected} rejected.`);
+      setImportFile(null); await fetchIncidents();
+    } catch (error) { setImportMessage(error instanceof Error ? error.message : 'Import failed'); }
+    finally { setImporting(false); }
+  };
+
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newSubject.trim()) {
@@ -449,6 +467,21 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
           <div className="kpi-title">P3 - MEDIUM (72H Due)</div>
           <div className="kpi-value">{p3Count}</div>
         </div>
+      </div>
+
+      <div className="card" style={{ padding: '12px 16px', marginBottom: '16px', background: 'var(--surface2)', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+        <strong style={{ fontSize: '13px' }}>Import exported incidents</strong>
+        <select value={importSource} onChange={e => setImportSource(e.target.value)} style={{ height: '34px', fontSize: '12px' }}>
+          <option value="Freshservice">Freshservice export</option>
+          <option value="ServiceNow">ServiceNow export</option>
+          <option value="Custom Import">Custom normalized export</option>
+        </select>
+        <input type="file" accept=".csv,.xlsx" onChange={e => setImportFile(e.target.files?.[0] || null)} style={{ fontSize: '12px' }} />
+        <button className="btn-primary" onClick={handleImport} disabled={importing || !importFile} style={{ height: '34px', padding: '0 12px', fontSize: '12px' }}>
+          {importing ? 'Importing…' : 'Import export'}
+        </button>
+        {importMessage && <span style={{ fontSize: '12px', color: importMessage.startsWith('Import finished') ? 'var(--green)' : 'var(--red)' }}>{importMessage}</span>}
+        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Accepted: CSV/XLSX, maximum 500 rows.</span>
       </div>
 
       {/* Advanced Filters topbar row */}
