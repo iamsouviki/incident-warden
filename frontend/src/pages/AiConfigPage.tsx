@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ShieldAlert, Cpu, Share2, ToggleLeft, ToggleRight } from 'lucide-react';
+import { authFetch } from '../services/api';
 
 const PROVIDERS = [
   { id: 'ollama', name: 'Ollama (Local)', defaultUrl: 'http://localhost:11434' },
@@ -17,6 +18,7 @@ const AiConfigPage: React.FC = () => {
   const [chatModel, setChatModel] = useState('');
   const [embeddingModel, setEmbeddingModel] = useState('');
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [modelLoadError, setModelLoadError] = useState('');
   
   // Rules and Thresholds Settings
   const [autoResolveThreshold, setAutoResolveThreshold] = useState('1.00');
@@ -31,7 +33,7 @@ const AiConfigPage: React.FC = () => {
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
   useEffect(() => {
-    fetch('/api/v1/ai/config')
+    authFetch('/api/v1/ai/config')
       .then(res => res.json())
       .then(data => {
         if (data.provider) setProvider(data.provider);
@@ -50,14 +52,21 @@ const AiConfigPage: React.FC = () => {
 
   useEffect(() => {
     if (provider === 'ollama' && baseUrl) {
-      fetch(`/api/v1/ai/config/ollama-models?url=${encodeURIComponent(baseUrl)}`)
-        .then(res => res.json())
-        .then(data => {
-          if (Array.isArray(data)) {
-            setOllamaModels(data);
-          }
+      setModelLoadError('');
+      authFetch(`/api/v1/ai/config/ollama-models?url=${encodeURIComponent(baseUrl)}`)
+        .then(res => {
+          if (!res.ok) throw new Error(`Model discovery failed (${res.status})`);
+          return res.json();
         })
-        .catch(console.error);
+        .then(data => {
+          if (!Array.isArray(data)) throw new Error('Model discovery returned an invalid response');
+          setOllamaModels(data);
+        })
+        .catch(error => {
+          console.error(error);
+          setOllamaModels([]);
+          setModelLoadError('Could not load local Ollama models. Confirm the backend can reach the Base API URL.');
+        });
     }
   }, [provider, baseUrl]);
 
@@ -73,7 +82,7 @@ const AiConfigPage: React.FC = () => {
     setLoading(true);
     setMessage(null);
     try {
-      const res = await fetch('/api/v1/ai/config', {
+      const res = await authFetch('/api/v1/ai/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -171,6 +180,7 @@ const AiConfigPage: React.FC = () => {
             </div>
           )}
 
+          {modelLoadError && <p style={{ margin: '0 0 12px', color: 'var(--red)', fontSize: '12px' }}>{modelLoadError}</p>}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
             {/* Chat Model Name */}
             <div>
