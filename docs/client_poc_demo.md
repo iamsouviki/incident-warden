@@ -36,7 +36,7 @@ npm run dev --prefix frontend
 
 Then:
 
-1. Open <http://localhost:5173>, log in as `admin` / `admin123`.
+1. Open <http://localhost:5173>, log in as `admin` / `michaels@1`.
 2. **AI configuration → Unattended Remediation** → toggle **ON** (amber).
 3. **AI configuration → Notifications** → host `localhost`, port `1025`, from
    `incident-automation@demo.local`, enable, **Send test message**. Confirm the SMTP window
@@ -247,8 +247,15 @@ Click through and say nothing more than this:
 * **AI configuration → Notifications** — SMTP host, port, from-address, recipients. **No
   properties file was edited to make this demo work.**
 * **AI configuration → Unattended Remediation** — the kill switch.
-* **Teams** — who owns which store, who may approve, who gets the email.
-* **Tools & scripts** — the saved tools and their run history.
+* **SOP library → Procedures → New procedure** — the approved procedure *and* its action key.
+  Approving it here is what teaches the classifier its words and gives the planner its
+  authority. This is the screen that used to be a database insert.
+* **Teams → Add Team**, then **Create User Account** — who owns which store, who may approve,
+  who gets the email. The new account's starting password is shown on the confirmation, and
+  the role you pick is the role they get (an unknown role is refused, not downgraded to
+  read-only). An email address is required, because an account nothing can email is an
+  account the platform would otherwise report as "notified".
+* **Tools & scripts** — the saved tools and their run history, including HITL runs.
 
 > Nothing in this demo required a config file, a restart, or a developer. And no
 > integration token or password for a target system is stored in this database at all — the
@@ -257,7 +264,35 @@ Click through and say nothing more than this:
 
 ---
 
-## Honest answers to the four questions they will ask
+## Act 8 — When the agent needs something, it asks on the screen (1 min)
+
+The strongest single beat, because every ops team has lived the opposite. File a ticket with
+**no server named** — "Tomcat not responding at the store", P3 — and press **Create guarded
+remediation plan**.
+
+It refuses, and the refusal is a question, not a stack trace:
+
+> **Plan blocked and escalated.** The agent escalated this incident: `TARGET_HOST_UNKNOWN`
+> No server is named on this incident or in its description. Enter the server this affects,
+> then create the plan again.
+
+Underneath it, the fields to answer it appear: **Server / host** and **Connect via**. Type
+`store-0042-app-01`, leave the connection on *Executor default (try first)* — that is the "try
+without a token first" path — and press **Save answer and plan again**. One click writes the
+answer to the ticket and re-plans:
+
+> **Plan ready for HITL review.** A tenant-scoped SOP-backed plan passed the deterministic
+> guardrails and was sent to the HITL queue.
+
+Say: *"It did not guess a machine, and it did not make me file a second ticket. Every refusal
+an operator can fix is shaped like a question with the answer box next to it."*
+
+The same panel is in the HITL review console, so the reviewer can answer it without going
+back to the incident page.
+
+---
+
+## Honest answers to the questions they will ask
 
 Have these ready, verbatim. Being straight about the edges is what makes the rest credible.
 
@@ -269,9 +304,10 @@ that came from your approved procedure template.
 
 **"What if the same incident is worded differently next time?"**
 Then it does not clear the 60% / 3-term precedent bar and it goes to a human. We would
-rather lose an automation than fire the wrong one. (Worth naming: the classifier's
-vocabulary list is hand-maintained today. Adding a procedure does not yet teach it new
-words — that's on the roadmap, and it's why we test the wording your stores actually use.)
+rather lose an automation than fire the wrong one. (Worth naming: the classifier reads the
+match keywords off your **approved procedures**, so adding a procedure in the SOP library
+teaches it those words — no code change. The built-in list is only a fallback for a
+workspace with no procedures loaded yet.)
 
 **"Did it actually restart Tomcat just now?"**
 No — and here is exactly why. That process on the right is a stand-in executor. It logged
@@ -281,9 +317,20 @@ shell command itself, by design.
 
 **"What are you not showing me?"**
 Three things. Separation of duties is switched off in this local build so I can approve my
-own plan — in a real deployment the requester cannot be the approver. Authoring a *new*
-approved procedure is still a database task, not a screen. And the prose SOP search index is
-empty here; the six approved procedures are what drive the decisions you just watched.
+own plan — in a real deployment the requester cannot be the approver. The prose SOP search
+index is empty here; the six approved procedures are what drive the decisions you just
+watched. And there is no change-password screen yet — every account starts on one default
+password and an admin resets it.
+
+**"What happens to a P1?"**
+It always goes to a person, and that is arithmetic, not a policy toggle. The risk penalty on
+a P1 (0.60) and its system-health term (0.30) cap the score at 24.5 %, against a band of
+70 % here and 80 % in production; a P2 caps at 58.25 %. So no P1 or P2 can ever be routed for
+unattended approval, however good the evidence. The screen says exactly that —
+`CONFIDENCE_BELOW_HITL_BAND:24`, with the required band and the sentence "P1 carries a risk
+penalty that holds it below the band deliberately" — and the evidence, script and score are
+all still on the page for the engineer who picks it up. If you want a reviewable P1, that is
+a deliberate re-weighting we do together, in the open.
 
 ---
 
@@ -311,3 +358,6 @@ enough to stop the automation, without touching a switch.
 | Second ticket is *not* auto-resolved | kill switch off, or the first run never reached `SUCCEEDED` | AI configuration → toggle ON; confirm the precedent incident is RESOLVED |
 | No email in the SMTP window | notifications disabled or `notify_smtp_host` unset | AI configuration → Notifications → **Send test message** first |
 | Approve button disabled | separation of duties — you filed it | approve as a second user, or note it as the real-deployment behaviour |
+| Login rejected on `:5174` | Vite took a second port because 5173 was busy | nothing to fix — CORS accepts any loopback port. If it really is a bad password, it is `admin` / `michaels@1` |
+| HITL assignee list looks short | only accounts in `auth.users` can be handed a review; roster-only people show as `· current, no login` | **Teams → Create User Account**, then reassign |
+| "Save answer and plan again" leaves the box blank | stale build — this was fixed by keying the detail panel on the incident id | hard-reload the page |

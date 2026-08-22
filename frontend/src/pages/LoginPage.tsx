@@ -8,7 +8,6 @@ interface Props { onLogin: (user: AuthUser) => void; }
 export default function LoginPage({ onLogin }: Props) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState<'VIEWER' | 'ANALYST' | 'ADMIN'>('ADMIN');
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -18,7 +17,7 @@ export default function LoginPage({ onLogin }: Props) {
     setError('');
     setLoading(true);
     try {
-      onLogin(await login(username.trim(), password, rememberMe, role));
+      onLogin(await login(username.trim(), password, rememberMe));
     } catch (err: any) {
       setError(err.message || 'Login failed');
     } finally {
@@ -44,21 +43,18 @@ export default function LoginPage({ onLogin }: Props) {
 
         <div className="login-card">
           <div className="login-card-head"><div className="login-card-icon"><KeyRound size={17} /></div><div><div className="login-card-kicker">Secure workspace access</div><h2>Sign in</h2></div></div>
-          <p className="login-card-copy">Use your demo operator account to open the incident command center.</p>
+          <p className="login-card-copy">Enter your verified operator account credentials to sign in.</p>
           {error && <div className="login-error" role="alert">{error}</div>}
           <form onSubmit={handleSubmit} className="login-form" noValidate>
             <label>Username<input id="login-username" type="text" autoComplete="username" placeholder="admin" value={username} onChange={event => setUsername(event.target.value)} required autoFocus /></label>
             <label>Password<input id="login-password" type="password" autoComplete="current-password" placeholder="Enter password" value={password} onChange={event => setPassword(event.target.value)} required /></label>
-            <label>POC role<select id="login-role" value={role} onChange={event => setRole(event.target.value as 'VIEWER' | 'ANALYST' | 'ADMIN')}><option value="VIEWER">Viewer — read-only</option><option value="ANALYST">Analyst — propose plans</option><option value="ADMIN">Admin — approve and simulate</option></select></label>
             <label className="login-remember"><input type="checkbox" checked={rememberMe} onChange={event => setRememberMe(event.target.checked)} /><span>Keep me signed in for 7 days</span></label>
             <button className="login-submit" type="submit" disabled={loading}>{loading ? <><span className="login-spinner" /> Signing in…</> : <>Open workspace <ArrowRight size={15} /></>}</button>
           </form>
-          <div className="login-demo-note"><span>Demo credentials</span><code>admin / admin123</code></div>
-          <div className="login-token-note"><ShieldCheck size={13} /><span>POC role selection is enabled only in the local demo profile.</span></div>
-          <div className="login-token-note"><LockKeyhole size={13} /><span>Session uses a short-lived access token with silent refresh.</span></div>
+          <div className="login-token-note"><LockKeyhole size={13} /><span>Session uses a short-lived access token with verified signature.</span></div>
         </div>
       </section>
-      <footer className="login-footer">incident.ai · Operations control plane · Demo environment</footer>
+      <footer className="login-footer">incident.ai · Operations control plane · Enterprise environment</footer>
     </main>
   );
 }

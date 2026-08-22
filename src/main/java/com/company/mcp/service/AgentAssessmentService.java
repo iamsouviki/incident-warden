@@ -40,6 +40,15 @@ public class AgentAssessmentService {
     public double defaultPrior() { return defaultPriorSuccessRate; }
 
     /**
+     * The score a plan must reach to be offered to a reviewer, as a percentage.
+     *
+     * Exposed so an escalation can tell the operator the actual number instead of a bare
+     * "blocked": a P1 or P2 carries a risk penalty that keeps it below this band by design,
+     * and an operator is owed that sentence rather than left guessing which gate closed.
+     */
+    public double hitlBandPercent() { return hitlThresholdConfig * 100.0; }
+
+    /**
      * @param historicalSuccess observed success rate for this remediation, in [0,1].
      */
     public Assessment assess(Incident incident, SopEvidence evidence, double historicalSuccess) {

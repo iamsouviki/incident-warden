@@ -153,7 +153,7 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
 
   // Guarded remediation-plan creation. The backend owns all execution decisions.
   const [planCreating, setPlanCreating] = useState(false);
-  const [planOutcome, setPlanOutcome] = useState<{ route: string; message: string; planId?: string } | null>(null);
+  const [planOutcome, setPlanOutcome] = useState<{ route: string; message: string; planId?: string; reason?: string } | null>(null);
 
   useEffect(() => {
     const fetchTeams = async () => {
@@ -214,6 +214,9 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
       setPlanOutcome({
         route,
         planId: plan.id,
+        // Kept as its own token, not only inside the prose: the panel below decides whether
+        // this is a question the operator can answer inline by matching on TARGET_*.
+        reason: data.reason,
         message: route === 'HITL_REQUIRED'
           ? 'A tenant-scoped SOP-backed plan passed the deterministic guardrails and was sent to the HITL queue.'
           : `No approval was created. The agent escalated this incident: ${data.reason || plan.sopEvidence || 'required evidence or safety criteria were not met.'}`
@@ -308,7 +311,12 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
       // Auto-trigger AI suggestion
       getAiSuggestion(selectedIncident.subject, selectedIncident.description);
     }
-  }, [selectedIncident]);
+    // Keyed on the id, not the object: this resets the panel because a *different* ticket
+    // was opened. Keyed on identity it also fired whenever the same ticket was re-fetched
+    // (saving the target, or the HITL_REQUIRED status update below), and the setPlanOutcome(null)
+    // above then wiped the plan result the operator had just asked for — the plan was created,
+    // the confirmation box vanished, and the answer-and-replan panel looked like it did nothing.
+  }, [selectedIncident?.id]);
 
   const fetchComments = async (id: string) => {
     try {
@@ -505,7 +513,7 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
    * and says so, and having two hostname rules is how they end up disagreeing.
    */
   const saveTarget = async () => {
-    if (!selectedIncident) return;
+    if (!selectedIncident) return false;
     setTargetSaving(true);
     try {
       const res = await authFetch(`/api/v1/incidents/${selectedIncident.id}?username=${currentUsername}`, {
@@ -520,9 +528,12 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
       if (res.ok) {
         setSelectedIncident(await res.json());
         fetchIncidents();
+        return true;
       }
+      return false;
     } catch (err) {
       console.error('Failed to save remediation target', err);
+      return false;
     } finally {
       setTargetSaving(false);
     }
@@ -1080,6 +1091,38 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
                               <div style={{ padding: '9px 10px', borderRadius: '6px', fontSize: '11.5px', lineHeight: 1.45, whiteSpace: 'pre-wrap', background: planOutcome.route === 'HITL_REQUIRED' ? 'var(--green-dim)' : 'var(--red-dim)', border: `1px solid ${planOutcome.route === 'HITL_REQUIRED' ? 'var(--green)' : 'var(--red)'}` }}>
                                 <strong>{planOutcome.route === 'HITL_REQUIRED' ? 'Plan ready for HITL review.' : planOutcome.route === 'ESCALATE' ? 'Plan blocked and escalated.' : 'Plan creation failed.'}</strong><br />
                                 {planOutcome.message}
+                              </div>
+                            )}
+                            {/* The agent asked a question it cannot answer itself. Answer it here
+                                and re-plan in one click, rather than hunting for the target card
+                                further up the page and remembering to press the button twice. */}
+                            {planOutcome?.reason?.startsWith('TARGET_') && (
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'flex-end', padding: '9px 10px', borderRadius: '6px', border: '1px dashed var(--border)' }}>
+                                <div style={{ flex: '1 1 190px' }}>
+                                  <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Server / host</label>
+                                  <input value={editTargetHost} onChange={e => setEditTargetHost(e.target.value)}
+                                    placeholder="store-0042-app-01"
+                                    style={{ width: '100%', height: '32px', padding: '4px 8px', fontSize: '12px' }} />
+                                </div>
+                                <div style={{ flex: '0 1 150px' }}>
+                                  <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Connect via</label>
+                                  <select value={editConnectionMethod} onChange={e => setEditConnectionMethod(e.target.value)}
+                                    style={{ width: '100%', height: '32px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}>
+                                    <option value="">Executor default (try first)</option>
+                                    <option value="SSH">SSH</option>
+                                    <option value="WINRM">WinRM</option>
+                                    <option value="AGENT">Local agent</option>
+                                  </select>
+                                </div>
+                                <button
+                                  type="button"
+                                  className="btn-primary"
+                                  style={{ height: '32px', padding: '0 12px', fontSize: '11px' }}
+                                  disabled={targetSaving || planCreating || !editTargetHost.trim()}
+                                  onClick={async () => { if (await saveTarget()) await createGuardedPlan(); }}
+                                >
+                                  {targetSaving || planCreating ? 'Saving…' : 'Save answer and plan again'}
+                                </button>
                               </div>
                             )}
                           </div>

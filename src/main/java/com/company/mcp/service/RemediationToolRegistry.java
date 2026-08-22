@@ -90,6 +90,18 @@ public class RemediationToolRegistry {
     }
 
     /**
+     * LIVE or SIMULATED — what a mutating action would actually do right now.
+     *
+     * Reported from here rather than from a separate {@code mcp.autonomy.execution-mode}
+     * property, because a second property describing the same thing drifts: the Autonomy
+     * page said SIMULATED while this class was dispatching real scripts. These are the same
+     * two conditions {@link #reachable} and the execute path check, read once.
+     */
+    public String dispatchMode() {
+        return executionEnabled && executorUrl != null && !executorUrl.isBlank() ? "LIVE" : "SIMULATED";
+    }
+
+    /**
      * Parses and validates an action key without running anything. Used at plan time so
      * a procedure with an unusable action key is caught before a human is asked to
      * approve it.

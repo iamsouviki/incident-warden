@@ -75,7 +75,7 @@ node scripts/dev-executor.mjs store-0042-pos-01,store-0042-app-01,store-0099-pos
 node scripts/dev-smtp.mjs
 ```
 
-Open <http://localhost:5173>, sign in as **`admin` / `admin123`**.
+Open <http://localhost:5173>, sign in as **`admin` / `michaels@1`**.
 All four are also entries in [.claude/launch.json](.claude/launch.json) (`backend`, `frontend`,
 `executor`, `smtp`).
 
@@ -212,13 +212,32 @@ thousand restarts.
 
    Precedent raises confidence; it never grants the route. Authority comes from an approved
    procedure, not from resembling an old ticket.
-4. **Classification → action key.** `classify()` maps ticket wording to one of the action keys the
-   approved procedures declare (`PRINTING` → `clear-printer-queue`, `NETWORK` →
-   `refresh-network-session`, `APPLICATION` → `restart-approved-service`). An unclassified
-   assessment carries **no action**, and a blank action is blocked downstream as
+
+   **Read the arithmetic before you demo a P1.** With the shipped weights, the score a ticket can
+   reach is capped by its priority, and the cap is below the band on purpose:
+
+   | Priority | best achievable score | vs `local` 70 % | vs prod 80 % |
+   |---|---|:---:|:---:|
+   | P3 | **82 %** (all inputs perfect); ≈ 73.75 % for a typical grounded ticket | reachable | only a near-perfect ticket |
+   | P2 | **58.25 %** | never | never |
+   | P1 | **24.5 %** | never | never |
+
+   So a P1 or P2 is *always* escalated to a person, no matter how good the evidence — the risk
+   penalty is doing exactly what it was put there to do. The escalation says so in words
+   (`CONFIDENCE_BELOW_HITL_BAND:<score>`) instead of blaming a guardrail. If a demo needs a
+   reviewable P1, the honest change is to re-weight `riskPenalty`/`systemHealth` in
+   `AgentAssessmentService`, not to lower the threshold — and
+   `AgentAssessmentServiceTest.aP1OrP2CannotReachTheApprovalBandNoMatterHowGoodTheEvidence` fails
+   the moment someone does, so this table cannot quietly go stale.
+4. **Classification → action key.** `classify()` first walks the tenant's **approved** rows in
+   `sop.sop_procedure` and matches their `match_keywords` (and title) against the ticket wording,
+   deriving the category and action key from the procedure's own `action_key`. Only if nothing
+   matches does it fall back to the built-in vocabulary (`PRINTING` → `clear-printer-queue`,
+   `NETWORK` → `refresh-network-session`, `APPLICATION` → `restart-approved-service`). An
+   unclassified assessment carries **no action**, and a blank action is blocked downstream as
    `ACTION_NOT_ALLOWLISTED` — so the classifier's vocabulary is part of the safety path, not a
-   nicety. *(Known gap: the vocabulary list is hand-maintained and coupled by hand to the action
-   keys. Adding a procedure does not teach the classifier its words yet.)*
+   nicety. Approving a procedure in **SOP library → Procedures** therefore teaches the classifier
+   its words; no code change, no redeploy.
 5. **Guardrails.** Action allow-list, target shape, destructive signatures, secret material,
    prompt injection, loop detection, length cap. `BLOCK` never reaches a reviewer — the incident is
    escalated with the reason attached.
@@ -293,6 +312,24 @@ between lanes:
   over the default path, and only if that fails is a human asked to confirm the server and how to
   reach it. The credential for a named method is always the executor's.
 
+### When the agent needs an answer, it asks on the screen
+
+Every Lane A refusal an operator can actually fix is prefixed `TARGET_`, and both consoles match on
+that prefix to render the question inline — with the fields to answer it, and one button that saves
+the answer *and* re-plans:
+
+| Reason | What the operator sees | Where |
+|---|---|---|
+| `TARGET_HOST_UNKNOWN` | "A script has to run somewhere, and nothing here confirms which machine." | incident page + HITL review console |
+| `TARGET_HOST_INVALID:<value>` | the rejected value, so a typo is obvious | both |
+| `TARGET_UNREACHABLE:<host>` | "Confirm the server name and the connection method on this incident, then plan again." | both |
+| `TARGET_REACHABILITY_UNKNOWN` | advisory — "a dry run may be the first thing to find out" | both, non-blocking |
+| `CONFIDENCE_BELOW_HITL_BAND:<score>` | the score, the required band, and why a P1/P2 sits below it by design | incident page |
+
+The incident page's **"Save answer and plan again"** issues the partial `PUT /api/v1/incidents/{id}`
+and re-runs the planner in one click; a P3 with an approved procedure goes straight from
+`TARGET_HOST_UNKNOWN` to `PENDING_APPROVAL` without leaving the panel.
+
 ---
 
 ## Where the script comes from
@@ -363,7 +400,7 @@ ordinary, and flagging them trains reviewers to click through warnings.
 
 ### Access control
 
-Stateless JWT (HS256, jjwt), BCrypt(12) hashes, no sessions.
+Stateless JWT (HS256, jjwt), BCrypt hashes (`BCryptPasswordEncoder(10)`), no sessions.
 
 | | VIEWER | ANALYST | ADMIN |
 |---|:---:|:---:|:---:|
@@ -381,10 +418,33 @@ distinguished so the UI can tell "sign in again" from "your role is insufficient
 
 Also enforced: **separation of duties** (`mcp.hitl.separation-of-duties`, default `true`) — the
 analyst who requested a plan cannot approve it. Off only in `local`, which seeds one account.
-**Tenant scoping** on every query. Login is rate-limited per username *and* per source IP. CORS is
-an explicit origin list, never `*`. Audit entries are hash-chained, so an edit in the middle breaks
-the chain. SSO/OIDC is fail-closed — any of the four `mcp.sso.*` keys missing and `/api/auth/sso`
-returns 503 rather than degrading.
+**Tenant scoping** on every query. Login is rate-limited per username *and* per source IP. Audit
+entries are hash-chained, so an edit in the middle breaks the chain. SSO/OIDC is fail-closed — any
+of the four `mcp.sso.*` keys missing and `/api/auth/sso` returns 503 rather than degrading.
+
+**CORS** is `setAllowedOriginPatterns` — the loopback wildcards (`http://localhost:*`,
+`http://127.0.0.1:*`) when `mcp.cors.allowed-origins` is empty, otherwise exactly that list.
+Patterns accept literal origins too, so nothing is loosened for a real deployment; what they buy is
+that Vite picking 5174 because 5173 was taken is not a login bug. Credentials are not allowed
+(the JWT travels in the `Authorization` header, not a cookie), so bare `*` is never needed.
+
+### Teams, people and who can be handed a review
+
+Two tables, on purpose:
+
+| Table | Answers | Managed at |
+|---|---|---|
+| `teams.teams` + `teams.team_employees` | who owns an incident, who gets emailed | **Teams → Add Team / Add Member to …** |
+| `auth.users` | who can sign in, and with what role | **Teams → Create User Account** (ADMIN only) |
+
+`POST /api/auth/users` is `hasRole('ADMIN')`. It **requires a valid email** — checked with the same
+`NotificationService.isSendableAddress` the sender uses, because an account nothing can email is an
+account the UI would still show as "notified" — and it **rejects an unknown role** rather than
+quietly filing the person as a VIEWER. The response carries `defaultPassword`, and the UI states
+whatever the server returned instead of hardcoding a second copy of it.
+
+A HITL review can only be assigned to an `auth.users` row. The review console lists the incident's
+current assignee anyway, marked `· current, no login`, when it is a roster-only person.
 
 ---
 
@@ -574,15 +634,6 @@ builds offline with `-o`)
 
 ## Known gaps
 
-- **No UI authors an approved SOP procedure.** `/sops` lists them read-only; creating one with a
-  new action key is still a database insert. This is the one place the "configure everything from
-  the UI" rule is not met.
-- **The classifier's vocabulary is hand-maintained** and coupled by hand to the action keys in
-  `sop.sop_procedure`. Adding a procedure does not teach the classifier its words.
-- **`/api/v1/autonomy/status` reports `executionMode: SIMULATED`** from a different property than
-  the live execution flag, so it can disagree with reality.
-- **"Tools & scripts → Run Logs" reads `tools.execution_logs`** while the HITL lane writes
-  `incident.action_executions` — HITL runs do not appear there.
 - **The prose SOP vector index is empty** in the demo database; the six approved procedures carry
   the decisions.
 - **MCP tool access.** The registry and `/api/v1/mcp/*` exist; wiring the agent to call MCP servers
@@ -590,3 +641,21 @@ builds offline with `-o`)
 - **No background poller.** Nothing is `@Scheduled`; incidents arrive by explicit intake, import or
   UI. Lane B runs inline at creation. A poller would need a distributed lock before running on more
   than one instance.
+- **A team member is not a login.** `teams.team_employees` (the roster, who gets notified) and
+  `auth.users` (who can sign in) are separate tables on purpose. Only an `auth.users` row can be
+  handed a HITL review; the review console lists an incident's existing assignee as
+  `· current, no login` when it is roster-only, so nobody "fixes" an assignment that was never wrong.
+- **No self-service password change.** Every account starts on the one default password
+  (`michaels@1`, `AuthController.DEFAULT_PASSWORD`, applied to the seeded admin by changeset `1.20`)
+  and an admin resets it via the API. A change-password screen is the next thing a real deployment
+  needs.
+
+### Closed since the last review
+
+- SOP procedures are now authored from the UI — **SOP library → Procedures** over
+  `POST|PUT|DELETE /api/v1/rag/procedures`.
+- The classifier reads its vocabulary from approved `sop.sop_procedure` rows (`match_keywords` +
+  title), so approving a procedure teaches it. The built-in list is a fallback, not the source.
+- **Tools & scripts → Run Logs** reads `incident.action_executions`, so HITL runs appear there.
+- `/api/v1/autonomy/status` derives `executionMode` from `RemediationToolRegistry.dispatchMode()` —
+  one source of truth. The second `mcp.autonomy.execution-mode` property is gone.

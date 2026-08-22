@@ -12,7 +12,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class AgentAssessmentServiceTest {
     // The production HITL band (0.80) and prior (0.85) are passed explicitly: this
     // test asserts the routing arithmetic at those values, not Spring's wiring.
-    private final AgentAssessmentService agents = new AgentAssessmentService(0.80, 0.85);
+    // null repository = this tenant has no authored procedures, so classification falls back
+    // to the foundational vocabulary. That is exactly the path these cases assert, and it
+    // keeps them a unit test rather than a database test.
+    private final AgentAssessmentService agents = new AgentAssessmentService(0.80, 0.85, null);
 
     @Test
     void escalatesWhenTrustedSopEvidenceDoesNotReachTheHitlConfidenceBand() {
@@ -74,5 +77,42 @@ class AgentAssessmentServiceTest {
 
         assertEquals("ESCALATE", assessment.route());
         assertEquals(0.0, assessment.sopReliability());
+    }
+
+    /**
+     * The ceiling the README publishes, as a test. With every input at its best — perfect
+     * pattern match, perfect history, perfect SOP reliability — a P1 still lands near 24.5%
+     * and a P2 near 58%, against a band of 70–80%. So no P1 or P2 is ever routed for
+     * approval, which is the risk penalty working, not a bug.
+     *
+     * Here so that re-weighting riskPenalty or systemHealth fails loudly instead of silently
+     * making the documented table wrong — or silently letting a P1 script reach an approver.
+     */
+    @Test
+    void aP1OrP2CannotReachTheApprovalBandNoMatterHowGoodTheEvidence() {
+        SopEvidence perfect = new SopEvidence(true, true, List.of(UUID.randomUUID()),
+                "Approved SOP: restart the Tomcat service, then confirm the health endpoint.", 1.0,
+                "APPROVED_TENANT_SOP_MATCH");
+
+        for (String priority : List.of("P1", "P2")) {
+            Incident incident = Incident.builder().id(UUID.randomUUID()).tenantId("tenant-a")
+                    .subject("Tomcat application unresponsive at store 0042")
+                    .description("Tomcat is not responding on the application server.")
+                    .priority(priority).externalId("FS-9001").build();
+
+            AgentAssessmentService.Assessment best = agents.assess(incident, perfect, 1.0, 1.0);
+
+            assertEquals("ESCALATE", best.route(), priority + " reached the approval band");
+            assertTrue(best.confidenceScore() < 70.0,
+                    priority + " best-case score was " + best.confidenceScore() + ", which clears the local 70% band");
+        }
+
+        // The same words at P3 do clear it, so the assertion above is about priority and not
+        // about the evidence being too weak to route anything at all.
+        Incident p3 = Incident.builder().id(UUID.randomUUID()).tenantId("tenant-a")
+                .subject("Tomcat application unresponsive at store 0042")
+                .description("Tomcat is not responding on the application server.")
+                .priority("P3").externalId("FS-9002").build();
+        assertEquals("HITL_REQUIRED", agents.assess(p3, perfect, 1.0, 1.0).route());
     }
 }

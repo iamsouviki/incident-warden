@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   AlertTriangle, Check, ChevronLeft, Clock, Copy, FileCode2, FileSearch,
-  History, Play, Rocket, ShieldAlert, ShieldCheck, Terminal, UserCheck, X, User, Briefcase, Building
+  History, Play, Rocket, ShieldAlert, ShieldCheck, Terminal, UserCheck, X, User
 } from 'lucide-react';
-import { apiGet, apiPost } from '../services/api';
+import { apiGet, apiPost, apiPut, getStoredUser } from '../services/api';
 import { Badge, Button, Spinner } from './ui';
 import './HitlReviewConsole.css';
 
@@ -45,6 +45,10 @@ interface ReviewDetail {
     priority?: string;
     externalId?: string;
     externalSource?: string;
+    assignee?: string;
+    storeNumber?: string;
+    targetHost?: string;
+    connectionMethod?: string;
   };
   assigneeInfo?: UserInfo;
   requestedByInfo?: UserInfo;
@@ -95,6 +99,9 @@ function findingTone(finding: string): 'danger' | 'warning' | 'neutral' {
   return 'neutral';
 }
 
+/** A finding a reviewer can clear themselves, by naming the machine or how to reach it. */
+const isTargetFinding = (finding: string) => finding.trim().startsWith('TARGET_');
+
 const HitlReviewConsole: React.FC<{ requestId: string; onBack: () => void; onChanged: () => void }> = ({ requestId, onBack, onChanged }) => {
   const [detail, setDetail] = useState<ReviewDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -103,10 +110,18 @@ const HitlReviewConsole: React.FC<{ requestId: string; onBack: () => void; onCha
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [acknowledged, setAcknowledged] = useState(false);
+  const [people, setPeople] = useState<Array<{ username: string; fullName?: string; role?: string }>>([]);
+  const [assignTo, setAssignTo] = useState('');
+  const [host, setHost] = useState('');
+  const [connection, setConnection] = useState('');
 
   const load = useCallback(async () => {
     try {
-      setDetail(await apiGet<ReviewDetail>(`/api/v1/hitl/requests/${requestId}`));
+      const fresh = await apiGet<ReviewDetail>(`/api/v1/hitl/requests/${requestId}`);
+      setDetail(fresh);
+      setAssignTo(fresh.incident?.assignee || '');
+      setHost(fresh.incident?.targetHost || '');
+      setConnection(fresh.incident?.connectionMethod || '');
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not load this review.');
@@ -116,6 +131,14 @@ const HitlReviewConsole: React.FC<{ requestId: string; onBack: () => void; onCha
   }, [requestId]);
 
   useEffect(() => { setLoading(true); setAcknowledged(false); setReason(''); void load(); }, [load]);
+
+  // Who can be handed this review. auth.users, not the team roster: a reviewer has to be
+  // able to sign in and act, and a roster row is not an account.
+  useEffect(() => {
+    apiGet<Array<{ username: string; fullName?: string; role?: string }>>('/api/auth/users')
+      .then(setPeople)
+      .catch(() => setPeople([]));
+  }, []);
 
   const act = async (label: string, url: string, body: unknown, success: string) => {
     setBusy(label);
@@ -127,6 +150,30 @@ const HitlReviewConsole: React.FC<{ requestId: string; onBack: () => void; onCha
       onChanged();
     } catch (cause) {
       setNotice(cause instanceof Error ? cause.message : 'The action failed. Nothing was changed.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /**
+   * Writes one or two fields to the incident behind this review.
+   *
+   * Only the named fields are sent. The incident PUT treats an absent field as "not
+   * supplied", so answering "which server?" here cannot revert a status the remediation
+   * lane set a moment ago.
+   */
+  const patchIncident = async (label: string, patch: Record<string, string>, success: string) => {
+    if (!detail) return;
+    setBusy(label);
+    setNotice(null);
+    try {
+      const actor = getStoredUser()?.username || 'User';
+      await apiPut(`/api/v1/incidents/${detail.incident.id}?username=${encodeURIComponent(actor)}`, patch);
+      setNotice(success);
+      await load();
+      onChanged();
+    } catch (cause) {
+      setNotice(cause instanceof Error ? cause.message : 'The change was not saved.');
     } finally {
       setBusy(null);
     }
@@ -152,6 +199,7 @@ const HitlReviewConsole: React.FC<{ requestId: string; onBack: () => void; onCha
   const sameAction = hasPrecedent && precedent.actionKey === action.actionKey;
 
   const approveBlocked = !detail.canApprove || (ungrounded && !acknowledged);
+  const targetFindings = guardrailFindings.filter(isTargetFinding);
 
   return (
     <section className="review-console">
@@ -299,7 +347,77 @@ const HitlReviewConsole: React.FC<{ requestId: string; onBack: () => void; onCha
               <div><dt>Role</dt><dd>{assigneeInfo?.role || 'Operations Specialist'}</dd></div>
               <div><dt>Department</dt><dd>{assigneeInfo?.department || 'IT Operations'}</dd></div>
             </dl>
+            {/* Hand the review to a named person. Writes the incident's assignee, which is
+                what the queue, the notification recipients and this card all read. */}
+            <div className="review-assign">
+              <select value={assignTo} onChange={event => setAssignTo(event.target.value)}
+                      aria-label="Assign this review to a user">
+                <option value="">Unassigned</option>
+                {/* The person the incident already names may be a roster member with no login.
+                    Listed anyway, or the control reads "Unassigned" beside a card that names
+                    them — and the first thing a reviewer does is "fix" an assignment that was
+                    never wrong. Only accounts below can be handed the review. */}
+                {incident.assignee && !people.some(person => person.username === incident.assignee) && (
+                  <option value={incident.assignee}>{incident.assignee} · current, no login</option>
+                )}
+                {people.map(person => (
+                  <option key={person.username} value={person.username}>
+                    {person.fullName || person.username}{person.role ? ` · ${person.role}` : ''}
+                  </option>
+                ))}
+              </select>
+              <Button variant="secondary" size="sm"
+                      disabled={!!busy || assignTo === (incident.assignee || '')}
+                      onClick={() => void patchIncident('assign', { assignee: assignTo },
+                        assignTo ? `Assigned to ${assignTo}.` : 'Assignee cleared.')}>
+                {busy === 'assign' ? <Spinner size="sm" /> : <UserCheck size={14} />} Assign
+              </Button>
+            </div>
+            {!people.length && (
+              <p className="review-note">No accounts could be listed. Add users under Teams first.</p>
+            )}
           </article>
+
+          {/* The one blocker a reviewer can clear without a new ticket: which machine, and
+              how to reach it. Shown only when a finding says the target is the problem. */}
+          {targetFindings.length > 0 && (
+            <article className="review-card">
+              <div className="review-card-head">
+                <span className="review-card-title"><AlertTriangle size={15} /> We need one answer from you</span>
+              </div>
+              <ul className="review-findings">
+                {targetFindings.map((finding, index) => <li key={`${finding}-${index}`}><Badge tone="warning">{finding.trim()}</Badge></li>)}
+              </ul>
+              <p className="review-body">
+                {targetFindings.some(finding => finding.trim().startsWith('TARGET_REACHABILITY'))
+                  ? `Nobody has confirmed that ${incident.targetHost || 'this host'} is reachable, so a dry run may
+                     be the first thing to find out. Correct the server name if it is wrong, or name the
+                     connection method if the default path does not reach it.`
+                  : `A script has to run somewhere, and nothing here confirms which machine. Name the
+                     server this incident affects.`}
+                {' '}Leave the connection method on the default unless a dry run has already failed — the
+                default means the executor reaches the host over its own trusted path, with no credential
+                stored here.
+              </p>
+              <div className="review-assign">
+                <input value={host} onChange={event => setHost(event.target.value)}
+                       placeholder="server hostname, e.g. store-0042-app-01" aria-label="Server or host" />
+                <select value={connection} onChange={event => setConnection(event.target.value)}
+                        aria-label="Connection method">
+                  <option value="">Executor default</option>
+                  <option value="SSH">SSH</option>
+                  <option value="WINRM">WinRM</option>
+                  <option value="AGENT">Local agent</option>
+                </select>
+                <Button variant="primary" size="sm" disabled={!!busy || !host.trim()}
+                        onClick={() => void patchIncident('target',
+                          { targetHost: host.trim(), connectionMethod: connection },
+                          'Saved. Create the plan again on the incident to re-evaluate with this target.')}>
+                  {busy === 'target' ? <Spinner size="sm" /> : <Check size={14} />} Save answer
+                </Button>
+              </div>
+            </article>
+          )}
 
           <article className="review-card">
             <div className="review-card-head"><span className="review-card-title"><ShieldAlert size={15} /> Guardrail findings</span></div>

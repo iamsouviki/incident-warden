@@ -110,6 +110,20 @@
 .review-buttons { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
 .review-step { color: var(--text-3); font-size: 11px; line-height: 1.5; }
 
+/* Inline "answer this and move on" controls in the side cards: assign a reviewer, name
+   the target host. Wraps rather than scrolls — the side column is narrow. */
+.review-assign { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.review-assign select,
+.review-assign input {
+  flex: 1 1 140px; min-width: 0; padding: 7px 9px;
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--surface-1); color: var(--text-1); font-size: 12px; outline: 0;
+}
+.review-assign select { cursor: pointer; }
+.review-assign input::placeholder { color: var(--text-3); }
+.review-assign select:focus,
+.review-assign input:focus { border-color: var(--accent); }
+
 .review-toast {
   position: fixed; right: 20px; bottom: 20px; z-index: 40; max-width: 380px;
   padding: 11px 14px; border: 1px solid var(--border); border-radius: var(--radius-md);

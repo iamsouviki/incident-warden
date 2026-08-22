@@ -200,7 +200,14 @@ public class HitlWorkflowService {
             // apply themselves — name the server, or name how to reach it, and re-plan.
             String reason = !targetReason.isBlank() ? targetReason
                     : !script.reason().isBlank() ? script.reason()
-                    : !grounded ? evidence.reason() : "GUARDRAIL_BLOCKED";
+                    : !grounded ? evidence.reason()
+                    // Named separately from GUARDRAIL_BLOCKED, which it used to be reported
+                    // as. The guardrails had passed; the score had not reached the band. An
+                    // operator reading "GUARDRAIL_BLOCKED" next to two advisory findings goes
+                    // looking for a dangerous script that isn't there.
+                    : !"HITL_REQUIRED".equals(assessment.route())
+                            ? "CONFIDENCE_BELOW_HITL_BAND:" + Math.round(assessment.confidenceScore())
+                            : "GUARDRAIL_BLOCKED";
             incident.setStatus("ESCALATED");
             incident.setConfidenceScore(assessment.confidenceScore());
             incidents.save(incident);
@@ -214,6 +221,12 @@ public class HitlWorkflowService {
             escalation.put("action", !host.known() ? host.prompt()
                     : reach.unreachable() ? reach.detail()
                             + " Confirm the server name and the connection method on this incident, then plan again."
+                    : reason.startsWith("CONFIDENCE_BELOW_HITL_BAND")
+                            ? "This scored %d%% against the %.0f%% this workspace requires before a plan may be offered for approval. %s A person works this one by hand — the evidence, script and score above are still here to work from."
+                                    .formatted(Math.round(assessment.confidenceScore()), agents.hitlBandPercent(),
+                                            "P1".equalsIgnoreCase(incident.getPriority()) || "P2".equalsIgnoreCase(incident.getPriority())
+                                                    ? incident.getPriority() + " carries a risk penalty that holds it below the band deliberately."
+                                                    : "Raise the score by approving a matching procedure, or by resolving a similar incident so this one has a precedent.")
                     : "");
             return escalation;
         }

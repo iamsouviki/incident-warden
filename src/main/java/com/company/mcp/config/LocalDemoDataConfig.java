@@ -1,5 +1,6 @@
 package com.company.mcp.config;
 
+import com.company.mcp.controller.AuthController;
 import com.company.mcp.model.AppUser;
 import com.company.mcp.model.SopProcedure;
 import com.company.mcp.repository.SopProcedureRepository;
@@ -37,7 +38,7 @@ public class LocalDemoDataConfig {
             AppUser admin = new AppUser();
             admin.setUsername("admin");
             admin.setEmail("admin@localhost");
-            admin.setPasswordHash(encoder.encode("admin123"));
+            admin.setPasswordHash(encoder.encode(AuthController.DEFAULT_PASSWORD));
             admin.setRole("ADMIN");
             admin.setTenantId(DEMO_TENANT);
             admin.setTenantName("Local Demo Workspace");

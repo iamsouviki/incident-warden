@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Trash2, Plus, Upload, Save, FileText, ShieldCheck, Check, Edit2, X, AlertCircle } from 'lucide-react';
+import { Search, Trash2, Plus, Upload, Save, FileText, Edit2, X } from 'lucide-react';
 import { authFetch } from '../services/api';
 
 interface SopItem {

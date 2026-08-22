@@ -2,15 +2,16 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 export default defineConfig({
-  appType: 'spa',          // serve index.html for all 404 paths (History API routing)
+  appType: 'spa',
   plugins: [react()],
   server: {
+    port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:8080',
+        target: 'http://127.0.0.1:8080',
         changeOrigin: true,
-        timeout: 0,          // no timeout — allow very slow LLM responses
-        proxyTimeout: 0,     // no timeout — keep waiting for backend/model
+        timeout: 0,
+        proxyTimeout: 0,
       },
     },
   },

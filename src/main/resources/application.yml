@@ -162,8 +162,11 @@ mcp:
 
   autonomy:
     enabled: ${MCP_AUTONOMY_ENABLED:false}
-    execution-mode: ${MCP_AUTONOMY_EXECUTION_MODE:SIMULATED}
     poll-interval-ms: ${MCP_AUTONOMY_POLL_INTERVAL_MS:60000}
+    # The only switch that decides whether a script really leaves this process. There used
+    # to be a second one, execution-mode, that the Autonomy page displayed and nothing
+    # honoured — it read SIMULATED while this flag dispatched for real. Removed; the page
+    # now derives LIVE/SIMULATED from this flag and executor-url.
     execution-enabled: ${MCP_AUTONOMY_EXECUTION_ENABLED:false}
     batch-size: ${MCP_AUTONOMY_BATCH_SIZE:10}
     allow-p1: ${MCP_AUTONOMY_ALLOW_P1:false}

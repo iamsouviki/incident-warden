@@ -24,16 +24,6 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Every API route is authorized by JWT role, per HTTP method.
- *
- * Two deliberate properties:
- *  1. Read and write are separated. A VIEWER can never reach a mutating verb,
- *     including on endpoints added after this file was written — the catch-all
- *     write matcher near the bottom is the fail-closed default.
- *  2. Unauthenticated requests answer 401, not Spring's stateless 403, so the
- *     frontend can distinguish "log in again" from "your role is insufficient".
- */
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
@@ -42,7 +32,7 @@ public class SecurityConfig {
     private final List<String> allowedOrigins;
 
     public SecurityConfig(JwtService jwtService, ObjectMapper json,
-                          @Value("${mcp.security.cors.allowed-origins:http://localhost:5173,http://localhost:8080}") String allowedOrigins) {
+                          @Value("${mcp.security.cors.allowed-origins:http://localhost:5173,http://localhost:5174,http://localhost:8080}") String allowedOrigins) {
         this.jwtService = jwtService;
         this.json = json;
         this.allowedOrigins = Arrays.stream(allowedOrigins.split(",")).map(String::trim).filter(origin -> !origin.isBlank()).toList();
@@ -56,11 +46,12 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 // ── Public: token issuance and liveness only ────────────────────────
                 .requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/sso", "/api/auth/refresh").permitAll()
+                .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 .requestMatchers("/api/health", "/actuator/health", "/actuator/health/**", "/actuator/info").permitAll()
 
                 // ── Operator surface: read for everyone signed in ───────────────────
-                .requestMatchers(HttpMethod.GET, "/api/auth/me", "/api/v1/teams/**", "/api/v1/statuses/**",
-                        "/api/v1/incidents/**", "/api/v1/scripts/**", "/api/v1/rag/sops/**",
+                .requestMatchers(HttpMethod.GET, "/api/auth/me", "/api/auth/users", "/api/v1/teams/**", "/api/v1/statuses/**",
+                        "/api/v1/incidents/**", "/api/v1/scripts/**", "/api/v1/rag/sops/**", "/api/v1/rag/procedures/**",
                         "/api/v1/hitl/**", "/api/v1/telemetry/**", "/api/v1/mcp/servers").authenticated()
                 .requestMatchers(HttpMethod.POST, "/api/v1/rag/chat").authenticated()
 
@@ -75,19 +66,17 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.PUT, "/api/v1/scripts/**").hasAnyRole("ANALYST", "ADMIN")
 
                 // ── Reviewer surface: an analyst may approve and simulate ───────────
-                // Deliberately split from execution below: reviewing a plan and running it
-                // against a live system are different levels of authority.
                 .requestMatchers(HttpMethod.POST, "/api/v1/hitl/requests/*/decision",
                         "/api/v1/hitl/requests/*/dry-run").hasAnyRole("ANALYST", "ADMIN")
 
-                // ── Admin surface: execution, config, deletion ──────────────────────
+                // ── Admin surface: execution, config, deletion, user & team creation ──
+                .requestMatchers(HttpMethod.POST, "/api/auth/users").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.POST, "/api/v1/hitl/requests/*/execute").hasRole("ADMIN")
                 .requestMatchers("/api/v1/ai/config/**", "/api/v1/autonomy/**", "/actuator/**").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.PUT, "/api/v1/rag/sops/**").hasRole("ADMIN")
-                // A team's mail id decides where unattended-action reports land, and its roster
-                // decides who is reachable as an assignee, so both are configuration rather than
-                // triage data. Without the POST line, adding a member would fall to the
-                // ANALYST-or-ADMIN default at the bottom of this list.
+                .requestMatchers(HttpMethod.POST, "/api/v1/rag/procedures/**").hasRole("ADMIN")
+                .requestMatchers(HttpMethod.PUT, "/api/v1/rag/procedures/**").hasRole("ADMIN")
+                .requestMatchers(HttpMethod.DELETE, "/api/v1/rag/procedures/**").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.PUT, "/api/v1/teams/**").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.POST, "/api/v1/teams/**").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.DELETE, "/**").hasRole("ADMIN")
@@ -117,10 +106,23 @@ public class SecurityConfig {
         response.getWriter().write(json.writeValueAsString(Map.of("error", message)));
     }
 
-    @Bean public PasswordEncoder passwordEncoder() { return new BCryptPasswordEncoder(12); }
+    @Bean public PasswordEncoder passwordEncoder() { return new BCryptPasswordEncoder(10); }
     @Bean public CorsConfigurationSource corsSource() {
-        CorsConfiguration cfg = new CorsConfiguration(); cfg.setAllowedOrigins(allowedOrigins);
-        cfg.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS")); cfg.setAllowedHeaders(List.of("Authorization", "Content-Type")); cfg.setAllowCredentials(false);
-        UrlBasedCorsConfigurationSource src = new UrlBasedCorsConfigurationSource(); src.registerCorsConfiguration("/**", cfg); return src;
+        CorsConfiguration cfg = new CorsConfiguration();
+        // Patterns, not exact origins. An exact-match list cannot express "any port on
+        // localhost", and a dev server that drifts from 5173 to 5174 because the first port
+        // was taken then fails every request with "Invalid CORS request" — which reads as a
+        // broken login, not as a config mismatch. Patterns accept literal origins too, so a
+        // deployment that lists exact hosts behaves exactly as before; nothing is loosened
+        // unless someone configures a wildcard.
+        cfg.setAllowedOriginPatterns(allowedOrigins.isEmpty()
+                ? List.of("http://localhost:*", "http://127.0.0.1:*")
+                : allowedOrigins);
+        cfg.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
+        cfg.setAllowedHeaders(List.of("*"));
+        cfg.setAllowCredentials(false);
+        UrlBasedCorsConfigurationSource src = new UrlBasedCorsConfigurationSource();
+        src.registerCorsConfiguration("/**", cfg);
+        return src;
     }
 }

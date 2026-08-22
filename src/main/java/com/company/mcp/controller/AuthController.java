@@ -3,6 +3,7 @@ package com.company.mcp.controller;
 import com.company.mcp.model.AppUser;
 import com.company.mcp.repository.UserRepository;
 import com.company.mcp.service.JwtService;
+import com.company.mcp.service.NotificationService;
 import com.company.mcp.service.OidcTokenValidator;
 import com.company.mcp.service.RateLimiterService;
 import org.springframework.beans.factory.annotation.Value;
@@ -10,8 +11,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -21,19 +21,29 @@ public class AuthController {
     private static final long SESSION_REFRESH_TTL = 24 * 60 * 60 * 1000L;   // 1d
     private static final long REMEMBER_REFRESH_TTL = 7 * 24 * 60 * 60 * 1000L; // 7d
 
-    private static final Set<String> POC_ROLES = Set.of("VIEWER", "ANALYST", "ADMIN");
+    private static final Set<String> ALLOWED_ROLES = Set.of("VIEWER", "ANALYST", "ADMIN");
+
+    /**
+     * The one password a new account starts with — including the seeded admin, whose hash
+     * is set to this same value by changelog 1.20.
+     *
+     * There used to be two defaults: admin123 for the seed and michaels@1 here. An operator
+     * who read the create-user dialog and then tried to sign in as admin got 401 and
+     * reported the login as broken. Returned in the create response too, so the UI states
+     * whatever this constant is rather than repeating the literal.
+     */
+    public static final String DEFAULT_PASSWORD = "michaels@1";
+
     private final UserRepository users;
     private final JwtService jwtService;
     private final PasswordEncoder encoder;
     private final OidcTokenValidator oidc;
     private final RateLimiterService rateLimiter;
-    private final boolean pocRoleSelectionEnabled;
     private final Set<String> ssoAllowedDomains;
     private final String ssoDefaultTenant;
 
     public AuthController(UserRepository users, JwtService jwtService, PasswordEncoder encoder, OidcTokenValidator oidc,
                           RateLimiterService rateLimiter,
-                          @Value("${mcp.poc.role-selection-enabled:false}") boolean pocRoleSelectionEnabled,
                           @Value("${mcp.sso.allowed-email-domains:}") String ssoAllowedDomains,
                           @Value("${mcp.sso.default-tenant-id:tenant-1}") String ssoDefaultTenant) {
         this.users      = users;
@@ -41,7 +51,6 @@ public class AuthController {
         this.encoder    = encoder;
         this.oidc       = oidc;
         this.rateLimiter = rateLimiter;
-        this.pocRoleSelectionEnabled = pocRoleSelectionEnabled;
         this.ssoAllowedDomains = java.util.Arrays.stream(ssoAllowedDomains.split(","))
                 .map(String::trim).map(String::toLowerCase).filter(d -> !d.isBlank())
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
@@ -58,8 +67,6 @@ public class AuthController {
         if (username.isBlank() || password.isBlank())
             return ResponseEntity.status(400).body(Map.of("error", "Username and password required"));
 
-        // Throttle by username and by source address so neither a single account nor a
-        // single host can be used to grind through a password list.
         if (!rateLimiter.allowLogin(username.trim().toLowerCase()) || !rateLimiter.allowLogin(http.getRemoteAddr()))
             return ResponseEntity.status(429).body(Map.of("error", "Too many sign-in attempts. Try again in a minute."));
 
@@ -71,24 +78,17 @@ public class AuthController {
             if (user.getPasswordHash() == null || !encoder.matches(password, user.getPasswordHash()))
                 return ResponseEntity.status(401).body(Map.of("error", "Invalid username or password"));
         } else {
-            // An SSO-provisioned account has no local password to check; it must not fall
-            // through to a successful login on an empty hash.
             return ResponseEntity.status(401).body(Map.of("error", "This account signs in through your identity provider"));
         }
         rateLimiter.reset(username.trim().toLowerCase());
 
-        // The requested role is honored only when the explicit local POC feature flag is enabled.
-        String role = effectiveRole(body, user.getRole());
+        String role = user.getRole();
         long refreshTtl = remember ? REMEMBER_REFRESH_TTL : SESSION_REFRESH_TTL;
         String token = jwtService.generate(user.getUsername(),
                 Map.of("role", role, "tenantId", user.getTenantId(), "tokenType", "access"), ACCESS_TTL);
         String refreshToken = jwtService.generate(user.getUsername(),
                 Map.of("role", role, "tenantId", user.getTenantId(), "tokenType", "refresh", "rememberMe", remember), refreshTtl);
 
-        // One key for the access token, "token", on every response here. There used to be an
-        // "accessToken" alias holding a second copy; both readers in the UI already fall back
-        // through `accessToken || token`, so the duplicate bought nothing — and it pushed this
-        // map to eleven pairs, one past Map.of's ceiling, which is why login was 500ing.
         return ResponseEntity.ok(Map.of(
                 "token",           token,
                 "refreshToken",    refreshToken,
@@ -105,11 +105,6 @@ public class AuthController {
 
     /**
      * POST /api/auth/sso   { idToken }
-     *
-     * Exchanges a provider ID token for a first-party session. The provider token
-     * signature, issuer and audience are verified against the configured JWKS, and
-     * the identity is read from the verified claims — never from the request body.
-     * Auto-provisioning is limited to the configured email domain allow-list.
      */
     @PostMapping("/sso")
     public ResponseEntity<?> sso(@RequestBody Map<String, Object> body) {
@@ -135,10 +130,10 @@ public class AuthController {
             AppUser u = new AppUser();
             u.setUsername(email);
             u.setEmail(email);
-            u.setRole("VIEWER");                     // never provision a privileged role from SSO
+            u.setRole("VIEWER");
             u.setSsoProvider(providerClaims.getIssuer());
             u.setSsoSubject(subject);
-            u.setTenantId(ssoDefaultTenant);          // tenant is deployment policy, not a caller-supplied value
+            u.setTenantId(ssoDefaultTenant);
             u.setTenantName("Primary Workspace");
             u.setEnabled(true);
             return users.save(u);
@@ -170,34 +165,22 @@ public class AuthController {
         ));
     }
 
-    private String effectiveRole(Map<String, Object> body, String storedRole) {
-        if (!pocRoleSelectionEnabled) return storedRole;
-        Object requested = body.get("role");
-        if (!(requested instanceof String value)) return storedRole;
-        String normalized = value.trim().toUpperCase();
-        return POC_ROLES.contains(normalized) ? normalized : storedRole;
-    }
-
     /** POST /api/auth/refresh  { refreshToken } */
     @PostMapping("/refresh")
     public ResponseEntity<?> refresh(@RequestBody Map<String, String> body) {
         String old = body.get("refreshToken");
         if (old == null || old.isBlank()) old = body.get("token");
-        // A refresh token is the only credential accepted here. Presenting an access
-        // token must not mint a new pair, or a leaked access token becomes permanent.
         if (old == null || !jwtService.isRefreshToken(old))
             return ResponseEntity.status(401).body(Map.of("error", "Refresh token invalid or expired"));
 
         var claims = jwtService.parse(old);
-        // The account must still exist and still be enabled; the role is re-read from
-        // the database so a revocation or demotion takes effect on the next refresh.
         AppUser user = users.findByUsername(claims.getSubject()).orElse(null);
         if (user == null || !user.isEnabled())
             return ResponseEntity.status(401).body(Map.of("error", "Account is no longer active"));
 
         boolean remember = Boolean.TRUE.equals(claims.get("rememberMe", Boolean.class));
         long refreshTtl = remember ? REMEMBER_REFRESH_TTL : SESSION_REFRESH_TTL;
-        String role = pocRoleSelectionEnabled ? String.valueOf(claims.getOrDefault("role", user.getRole())) : user.getRole();
+        String role = user.getRole();
         String fresh = jwtService.generate(user.getUsername(),
                 Map.of("role", role, "tenantId", user.getTenantId(), "tokenType", "access"), ACCESS_TTL);
         String rotatedRefresh = jwtService.generate(user.getUsername(),
@@ -235,6 +218,91 @@ public class AuthController {
                 "tenantId",    user.getTenantId(),
                 "tenantName",  user.getTenantName() != null ? user.getTenantName() : "Primary Workspace",
                 "ssoProvider", user.getSsoProvider() != null ? user.getSsoProvider() : ""
+        ));
+    }
+
+    /** GET /api/auth/users — Admin view of workspace users */
+    @GetMapping("/users")
+    public ResponseEntity<?> getUsers(@RequestHeader("Authorization") String authHeader) {
+        String token = authHeader.startsWith("Bearer ") ? authHeader.substring(7) : authHeader;
+        if (!jwtService.isValid(token)) return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+        var claims = jwtService.parse(token);
+        String tenantId = (String) claims.getOrDefault("tenantId", "tenant-1");
+        List<AppUser> list = users.findByTenantId(tenantId);
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (AppUser u : list) {
+            result.add(Map.of(
+                    "id", u.getId() != null ? u.getId().toString() : "",
+                    "username", u.getUsername(),
+                    "fullName", u.getFullName() != null ? u.getFullName() : u.getUsername(),
+                    "email", u.getEmail() != null ? u.getEmail() : "",
+                    "role", u.getRole(),
+                    "department", u.getDepartment() != null ? u.getDepartment() : "",
+                    "enabled", u.isEnabled()
+            ));
+        }
+        return ResponseEntity.ok(result);
+    }
+
+    /** POST /api/auth/users — Admin creation of a new user with {@link #DEFAULT_PASSWORD}. */
+    @PostMapping("/users")
+    public ResponseEntity<?> createUser(@RequestHeader("Authorization") String authHeader, @RequestBody Map<String, String> body) {
+        String token = authHeader.startsWith("Bearer ") ? authHeader.substring(7) : authHeader;
+        if (!jwtService.isValid(token)) return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+        var claims = jwtService.parse(token);
+        String callerRole = (String) claims.getOrDefault("role", "");
+        if (!"ADMIN".equalsIgnoreCase(callerRole)) {
+            return ResponseEntity.status(403).body(Map.of("error", "Only administrators can create users"));
+        }
+
+        String username = body.getOrDefault("username", "").trim();
+        String fullName = body.getOrDefault("fullName", "").trim();
+        String email = body.getOrDefault("email", "").trim();
+        String role = body.getOrDefault("role", "VIEWER").trim().toUpperCase();
+        String department = body.getOrDefault("department", "").trim();
+        String password = body.getOrDefault("password", DEFAULT_PASSWORD).trim();
+        if (password.isBlank()) password = DEFAULT_PASSWORD;
+
+        if (username.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Username is required"));
+        }
+        // An account with no usable address is an account no incident notification can ever
+        // reach — and the UI shows it as a person who was told. Same rule the sender applies.
+        if (!NotificationService.isSendableAddress(email)) {
+            return ResponseEntity.badRequest().body(Map.of("error",
+                    "A valid email address is required, or this user can never be notified about an incident."));
+        }
+        // Refuse an unrecognised role rather than quietly filing the person as a VIEWER:
+        // an admin who asked for ANALYST and silently got read-only finds out when that
+        // person cannot approve anything, which reads as a broken permission system.
+        if (!ALLOWED_ROLES.contains(role)) {
+            return ResponseEntity.badRequest().body(Map.of("error",
+                    "Unknown role '" + role + "'. Choose one of " + ALLOWED_ROLES));
+        }
+        if (users.findByUsername(username).isPresent()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Username already exists"));
+        }
+
+        String tenantId = (String) claims.getOrDefault("tenantId", "tenant-1");
+        AppUser u = new AppUser();
+        u.setId(UUID.randomUUID());
+        u.setUsername(username);
+        u.setFullName(fullName.isBlank() ? username : fullName);
+        u.setEmail(email);
+        u.setRole(role);
+        u.setDepartment(department);
+        u.setPasswordHash(encoder.encode(password));
+        u.setTenantId(tenantId);
+        u.setTenantName("Primary Workspace");
+        u.setEnabled(true);
+        AppUser saved = users.save(u);
+
+        return ResponseEntity.ok(Map.of(
+                "message", "User created successfully with default password",
+                "defaultPassword", DEFAULT_PASSWORD,
+                "username", saved.getUsername(),
+                "role", saved.getRole(),
+                "fullName", saved.getFullName()
         ));
     }
 }

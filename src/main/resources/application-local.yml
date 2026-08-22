@@ -42,10 +42,13 @@ mcp:
     secret: local-development-only-jwt-signing-key-not-for-any-real-deployment
   security:
     cors:
-      allowed-origins: http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080
+      # Any port on the loopback interface. Vite picks 5174 (or 5175…) whenever 5173 is
+      # already taken, and pinning three exact origins turned that into a 403 "Invalid CORS
+      # request" on login. Loopback only — this is the local profile; every other profile
+      # still lists exact origins.
+      allowed-origins: http://localhost:*,http://127.0.0.1:*
   autonomy:
     enabled: true
-    execution-mode: SIMULATED
     poll-interval-ms: 5000
     batch-size: 10
     allow-p1: false

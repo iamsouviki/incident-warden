@@ -129,4 +129,17 @@ class RemediationToolRegistryTest {
         assertTrue("UNSAFE_ACTION_ARGUMENT".equals(outcome.reason()) || "UNSUPPORTED_SCHEME".equals(outcome.reason()),
                 () -> "unexpected reason: " + outcome.reason());
     }
+
+    /**
+     * The Autonomy page's mode must agree with what execution actually does. It used to read
+     * a separate execution-mode property and displayed SIMULATED while real dispatch was on.
+     */
+    @Test
+    void reportedModeMatchesWhatExecutionActuallyDoes() {
+        RemediationToolRegistry.Outcome outcome = registry.execute("RESTART_SERVICE:tomcat:linux",
+                "systemctl restart tomcat", "bash", "FS-1001", false);
+
+        assertEquals(outcome.mode(), registry.dispatchMode());
+        assertEquals("SIMULATED", registry.dispatchMode());
+    }
 }

@@ -37,11 +37,10 @@ public class AutonomousRemediationService {
     private final ExternalIncidentRepository externalIncidents;
     private final ExecutionLogRepository executionLogs;
     private final AutoRemediationService autoRemediation;
+    private final RemediationToolRegistry toolRegistry;
 
     @Value("${mcp.autonomy.enabled:false}")
     private boolean enabled;
-    @Value("${mcp.autonomy.execution-mode:SIMULATED}")
-    private String executionMode;
     @Value("${mcp.autonomy.poll-interval-ms:60000}")
     private long pollIntervalMs;
     @Value("${mcp.autonomy.allow-p1:false}")
@@ -52,11 +51,13 @@ public class AutonomousRemediationService {
     public AutonomousRemediationService(IncidentRepository incidents,
                                         ExternalIncidentRepository externalIncidents,
                                         ExecutionLogRepository executionLogs,
-                                        AutoRemediationService autoRemediation) {
+                                        AutoRemediationService autoRemediation,
+                                        RemediationToolRegistry toolRegistry) {
         this.incidents = incidents;
         this.externalIncidents = externalIncidents;
         this.executionLogs = executionLogs;
         this.autoRemediation = autoRemediation;
+        this.toolRegistry = toolRegistry;
     }
 
     /**
@@ -80,7 +81,7 @@ public class AutonomousRemediationService {
     }
 
     public Map<String, Object> status() {
-        return Map.of("enabled", enabled, "executionMode", executionMode, "pollIntervalMs", pollIntervalMs,
+        return Map.of("enabled", enabled, "executionMode", toolRegistry.dispatchMode(), "pollIntervalMs", pollIntervalMs,
                 "activeCandidates", running(), "cycleRunning", false,
                 "allowP1", allowP1, "maxRetries", maxRetries,
                 "autoRunFromPrecedent", autoRemediation.enabled(),

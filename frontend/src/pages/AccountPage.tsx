@@ -32,7 +32,6 @@ const AccountPage: React.FC<Props> = ({ onLogout }) => {
     ? new Date(expiry).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
     : 'Unknown';
 
-  const refreshWindowLabel = storedUser?.refreshExpiresIn ? `${Math.round(storedUser.refreshExpiresIn / (24 * 60 * 60 * 1000)) || 1} day${Math.round(storedUser.refreshExpiresIn / (24 * 60 * 60 * 1000)) === 1 ? '' : 's'}` : 'Available while session is valid';
 
   const realName = profile?.fullName || storedUser?.fullName || storedUser?.username || 'User';
   const username = profile?.username || storedUser?.username || 'user';

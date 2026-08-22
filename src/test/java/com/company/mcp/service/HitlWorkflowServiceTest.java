@@ -48,7 +48,7 @@ class HitlWorkflowServiceTest {
     private HitlWorkflowService workflow(double hitlThreshold, boolean allowUngrounded) {
         RemediationScriptService scripts = new RemediationScriptService(rag, new GuardrailService(), 100);
         HitlWorkflowService workflow = new HitlWorkflowService(incidents, plans, requests, executions, currentUser,
-                rag, new GuardrailService(), new AgentAssessmentService(hitlThreshold, 0.85), audit, new ObjectMapper(),
+                rag, new GuardrailService(), new AgentAssessmentService(hitlThreshold, 0.85, null), audit, new ObjectMapper(),
                 new RemediationToolRegistry(new ObjectMapper(), new GuardrailService()),
                 mock(SopProcedureService.class), scripts, mock(IncidentPrecedentService.class),
                 // Roster lookups, for naming who may approve. Left unstubbed: these tests assert
@@ -194,6 +194,32 @@ class HitlWorkflowServiceTest {
         assertEquals("TARGET_HOST_UNKNOWN", result.get("reason"));
         assertTrue(String.valueOf(result.get("action")).contains("Enter the server"));
         assertTrue(plan.getGuardrailFindings().contains("TARGET_HOST_UNKNOWN"));
+        verify(requests, never()).save(any());
+    }
+
+    /**
+     * The guardrails passed and the score did not. That must not be reported as
+     * GUARDRAIL_BLOCKED: an operator sent looking for a dangerous script finds two advisory
+     * findings and no explanation. The reason names the band, and the advice names the number.
+     */
+    @Test
+    void aScoreBelowTheBandSaysSoInsteadOfBlamingTheGuardrails() {
+        // Same grounded, runnable, reachable plan as the happy path — only the required band
+        // is raised out of reach, which is what a P1/P2 risk penalty does in production.
+        UUID incidentId = stubIncident("Service unavailable", "The tomcat service is not responding");
+        when(rag.findApprovedSopEvidence(eq("tenant-a"), any())).thenReturn(new SopEvidence(
+                true, true, List.of(UUID.randomUUID()), "SOP: restart the tomcat service", 0.95,
+                "APPROVED_TENANT_SOP_MATCH", "RESTART_SERVICE:tomcat:linux"));
+
+        Map<String, Object> result = workflow(0.99, false).createPlan(incidentId);
+        RemediationPlan plan = (RemediationPlan) result.get("plan");
+
+        assertEquals("ESCALATE", result.get("route"));
+        assertEquals("BLOCKED", plan.getStatus());
+        assertTrue(String.valueOf(result.get("reason")).startsWith("CONFIDENCE_BELOW_HITL_BAND:"),
+                "reason was " + result.get("reason"));
+        assertTrue(String.valueOf(result.get("action")).contains("99%"),
+                "action was " + result.get("action"));
         verify(requests, never()).save(any());
     }
 }

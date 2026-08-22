@@ -257,3 +257,15 @@ export async function apiPost<T>(url: string, body: unknown): Promise<T> {
   if (!res.ok) throw new Error(await extractApiError(res));
   return res.json() as Promise<T>;
 }
+
+/**
+ * Convenience wrapper — PUTs JSON via authFetch.
+ *
+ * The incident PUT treats an absent field as "not supplied", so callers send only the
+ * fields they mean to change rather than a whole stale entity.
+ */
+export async function apiPut<T>(url: string, body: unknown): Promise<T> {
+  const res = await authFetch(url, { method: 'PUT', body: JSON.stringify(body) });
+  if (!res.ok) throw new Error(await extractApiError(res));
+  return res.json() as Promise<T>;
+}

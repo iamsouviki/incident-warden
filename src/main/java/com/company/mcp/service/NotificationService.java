@@ -150,11 +150,24 @@ public class NotificationService {
     private void addIfValid(LinkedHashSet<String> target, String candidate) {
         if (candidate == null) return;
         String trimmed = candidate.trim();
-        if (EMAIL.matcher(trimmed).matches()) {
+        if (isSendableAddress(trimmed)) {
             target.add(trimmed.toLowerCase(Locale.ROOT));
         } else if (!trimmed.isEmpty()) {
             log.warn("[NOTIFY] Skipping malformed recipient address");
         }
+    }
+
+    /**
+     * Whether mail addressed here could actually be delivered.
+     *
+     * Public and static because the write paths that create people — a user account, a team,
+     * a roster row — have to apply the same rule this class applies when it sends. When they
+     * each carried their own copy of the pattern, an address one of them accepted was one
+     * this class silently dropped, and the incident nobody was told about looked like a
+     * notification bug rather than a validation gap.
+     */
+    public static boolean isSendableAddress(String candidate) {
+        return candidate != null && EMAIL.matcher(candidate.trim()).matches();
     }
 
     /**
