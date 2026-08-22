@@ -30,8 +30,12 @@ public class Incident {
     @Column(name = "priority", nullable = false)
     private String priority;
 
+    // No field default. This class is also the request body every PUT deserializes into, so
+    // an initialiser here is indistinguishable from a value the caller sent: `status = "New"`
+    // meant a PUT of {"targetHost": ...} silently reverted a status the remediation lane had
+    // just set. Creation sets it explicitly (routeIncident, convertToIncident, the builder).
     @Column(name = "status", nullable = false)
-    private String status = "New";
+    private String status;
 
     @Column(name = "created_at")
     private OffsetDateTime createdAt;
@@ -53,6 +57,39 @@ public class Incident {
 
     @Column(name = "confidence_score")
     private Double confidenceScore = 0.0;
+
+    /**
+     * Who to tell when this incident is acted on automatically. Nullable: incidents
+     * predating this column, and sources that supply no requester address, have none —
+     * NotificationService skips a recipient it does not have rather than inventing one.
+     * Distinct from {@code assignee}, which is an operator name, not a deliverable address.
+     */
+    @Column(name = "reporter_email")
+    private String reporterEmail;
+
+    /**
+     * The store this incident belongs to, e.g. {@code 0042}.
+     *
+     * A permission boundary, not a label: autonomy is inherited per store. A tool proven
+     * at store 0042 does not authorise itself at store 0099, however similar the wording
+     * of the two tickets is. Nullable — a non-store incident keeps the old behaviour.
+     */
+    @Column(name = "store_number")
+    private String storeNumber;
+
+    /**
+     * The machine an approved script will run on.
+     *
+     * Blank is a hard stop, not a default: {@link com.company.mcp.service.IncidentTarget}
+     * will try to read a host out of the ticket text, and if there is none the operator is
+     * asked. Nothing guesses which box to restart.
+     */
+    @Column(name = "target_host")
+    private String targetHost;
+
+    /** SSH | WINRM | AGENT. Blank means "executor, use your own default path to the host". */
+    @Column(name = "connection_method")
+    private String connectionMethod;
 
     public Incident() {}
 
@@ -139,6 +176,18 @@ public class Incident {
     public Double getConfidenceScore() { return confidenceScore; }
     public void setConfidenceScore(Double confidenceScore) { this.confidenceScore = confidenceScore; }
 
+    public String getReporterEmail() { return reporterEmail; }
+    public void setReporterEmail(String reporterEmail) { this.reporterEmail = reporterEmail; }
+
+    public String getStoreNumber() { return storeNumber; }
+    public void setStoreNumber(String storeNumber) { this.storeNumber = storeNumber; }
+
+    public String getTargetHost() { return targetHost; }
+    public void setTargetHost(String targetHost) { this.targetHost = targetHost; }
+
+    public String getConnectionMethod() { return connectionMethod; }
+    public void setConnectionMethod(String connectionMethod) { this.connectionMethod = connectionMethod; }
+
     // Builder Pattern
     public static Builder builder() {
         return new Builder();
@@ -160,6 +209,9 @@ public class Incident {
         private String externalId;
         private String category = "General";
         private Double confidenceScore = 0.0;
+        private String reporterEmail;
+        private String storeNumber;
+        private String targetHost;
 
         public Builder id(UUID id) { this.id = id; return this; }
         public Builder tenantId(String tenantId) { this.tenantId = tenantId; return this; }
@@ -176,10 +228,16 @@ public class Incident {
         public Builder externalId(String externalId) { this.externalId = externalId; return this; }
         public Builder category(String category) { this.category = category; return this; }
         public Builder confidenceScore(Double confidenceScore) { this.confidenceScore = confidenceScore; return this; }
+        public Builder reporterEmail(String reporterEmail) { this.reporterEmail = reporterEmail; return this; }
+        public Builder storeNumber(String storeNumber) { this.storeNumber = storeNumber; return this; }
+        public Builder targetHost(String targetHost) { this.targetHost = targetHost; return this; }
 
         public Incident build() {
             Incident incident = new Incident(id, subject, description, assignee, assignedGteam, priority, status, createdAt, updatedAt, dueDate, externalSource, externalId, category, confidenceScore);
             incident.setTenantId(tenantId);
+            incident.setReporterEmail(reporterEmail);
+            incident.setStoreNumber(storeNumber);
+            incident.setTargetHost(targetHost);
             return incident;
         }
     }

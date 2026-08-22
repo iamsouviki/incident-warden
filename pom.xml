@@ -60,11 +60,24 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- H2 for the zero-infrastructure local profile -->
+        <!-- Mail: outbound notification only. No credential is configured anywhere; the
+             relay is reached unauthenticated on the internal network, and the host/port/
+             from-address are edited in the UI and stored in config.system_config. This
+             starter's auto-configuration reads spring.mail.* and is therefore inert here —
+             NotificationService builds its JavaMailSenderImpl from the database instead. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-mail</artifactId>
+        </dependency>
+
+        <!-- H2 is test-only. The application itself runs on PostgreSQL + pgvector in every
+             profile including 'local'. It survives here solely so ApplicationContextSmokeTest
+             can boot the wiring without a live database; making `mvn test` require Postgres
+             would cost more than it proves. -->
         <dependency>
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
-            <scope>runtime</scope>
+            <scope>test</scope>
         </dependency>
 
         <!-- Lombok -->
@@ -156,6 +169,16 @@
             <artifactId>jjwt-jackson</artifactId>
             <version>0.12.6</version>
             <scope>runtime</scope>
+        </dependency>
+
+        <!-- Health, readiness and metrics endpoints (secured to ADMIN in SecurityConfig) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
         </dependency>
 
     </dependencies>

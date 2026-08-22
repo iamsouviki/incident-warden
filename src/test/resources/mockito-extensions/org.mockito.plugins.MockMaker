@@ -1,0 +1,8 @@
+# Mockito's default (inline) mock maker self-attaches a Java agent to the running
+# JVM, which fails in sandboxed/CI environments that forbid spawning the external
+# attach process ("Could not self-attach to current VM").
+#
+# The subclass maker needs no agent. Ceiling: it cannot mock final classes, final
+# methods, or statics. If a future test needs those, delete this file and add
+# -javaagent:<byte-buddy-agent.jar> to the surefire argLine instead.
+mock-maker-subclass

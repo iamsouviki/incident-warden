@@ -37,7 +37,12 @@ public class IncidentIntakeService {
         this.incidents = incidents; this.incidentService = incidentService; this.currentUser = currentUser; this.audit = audit;
     }
 
+    /** One ticket pushed by a third-party system. Eligible for precedent auto-run, like any single ticket. */
     public Map<String, Object> ingest(NormalizedIncidentRequest request) {
+        return ingest(request, true);
+    }
+
+    private Map<String, Object> ingest(NormalizedIncidentRequest request, boolean considerUnattended) {
         validate(request);
         String tenant = currentUser.tenantId();
         String source = canonicalSource(request.sourceSystem());
@@ -47,7 +52,8 @@ public class IncidentIntakeService {
         Incident created = incidentService.createIncident(Incident.builder()
                 .tenantId(tenant).subject(request.subject().trim()).description(limit(request.description(), 8_000))
                 .priority(priority(source, request.priority(), request.severity())).category(blankDefault(request.category(), "Universal"))
-                .externalSource(source).externalId(reference).assignedGteam("IT Ops").assignee("Unassigned").build());
+                .externalSource(source).externalId(reference).assignedGteam("IT Ops").assignee("Unassigned")
+                .reporterEmail(request.reporterEmail()).build(), considerUnattended);
         audit.record(tenant, "INCIDENT", created.getId(), "INTAKE_ACCEPTED", currentUser.username(), Map.of("source", source, "reference", reference));
         return Map.of("status", "CREATED", "incident", created);
     }
@@ -63,7 +69,9 @@ public class IncidentIntakeService {
         List<Map<String, Object>> items = new ArrayList<>();
         for (int index = 0; index < Math.min(MAX_ROWS, rows.size()); index++) {
             try {
-                Map<String, Object> outcome = ingest(rows.get(index));
+                // considerUnattended=false: an imported row goes to the HITL queue like any
+                // other unproven incident. One upload must not be able to act on 500 hosts.
+                Map<String, Object> outcome = ingest(rows.get(index), false);
                 boolean isCreated = "CREATED".equals(outcome.get("status"));
                 if (isCreated) created++; else deduplicated++;
                 if (items.size() < RESPONSE_ITEM_LIMIT) {
@@ -139,7 +147,10 @@ public class IncidentIntakeService {
                 first(map, "subject", "short description", "title", "summary"),
                 first(map, "description", "issue", "details", "work notes"),
                 first(map, "priority"), first(map, "category", "type"),
-                first(map, "target", "configuration item", "asset", "device"), first(map, "severity", "impact"));
+                first(map, "target", "configuration item", "asset", "device"), first(map, "severity", "impact"),
+                // Header spellings seen across ServiceNow, Freshservice and Jira exports.
+                first(map, "reporteremail", "requester email", "requester_email", "caller email",
+                        "contact email", "reporter email", "email", "from"));
     }
 
     private String first(Map<String, String> map, String... names) { for (String name : names) { String value = map.get(cleanHeader(name)); if (!blank(value)) return value; } return ""; }

@@ -137,7 +137,6 @@ flowchart TB
     end
 
     subgraph STORE[Persistence]
-        MONGO[(MongoDB)]
         POSTGRES[(PostgreSQL)]
         REDIS[(Redis)]
     end
@@ -172,9 +171,9 @@ flowchart TB
     ASES --> EEI
     GEN --> EVS
 
-    CSS --> MONGO
-    RTS --> MONGO
-    SPS --> MONGO
+    CSS --> POSTGRES
+    RTS --> POSTGRES
+    SPS --> POSTGRES
     EVS --> POSTGRES
     PBS --> REDIS
 ```

@@ -54,6 +54,14 @@ public class ExternalIncident {
     @Column(name = "confidence_score")
     private Double confidenceScore = 0.0;
 
+    /**
+     * Requester address as supplied by the originating system (ServiceNow caller,
+     * FreshService requester). Nullable — an export column that is absent stays absent
+     * rather than being guessed at.
+     */
+    @Column(name = "reporter_email")
+    private String reporterEmail;
+
     public ExternalIncident() {}
 
     public ExternalIncident(UUID id, String subject, String description, String assignee, String assignedGteam, 
@@ -139,6 +147,9 @@ public class ExternalIncident {
     public Double getConfidenceScore() { return confidenceScore; }
     public void setConfidenceScore(Double confidenceScore) { this.confidenceScore = confidenceScore; }
 
+    public String getReporterEmail() { return reporterEmail; }
+    public void setReporterEmail(String reporterEmail) { this.reporterEmail = reporterEmail; }
+
     // Builder
     public static Builder builder() {
         return new Builder();
@@ -160,6 +171,7 @@ public class ExternalIncident {
         private String externalId;
         private String category = "General";
         private Double confidenceScore = 0.0;
+        private String reporterEmail;
 
         public Builder id(UUID id) { this.id = id; return this; }
         public Builder tenantId(String tenantId) { this.tenantId = tenantId; return this; }
@@ -176,10 +188,12 @@ public class ExternalIncident {
         public Builder externalId(String externalId) { this.externalId = externalId; return this; }
         public Builder category(String category) { this.category = category; return this; }
         public Builder confidenceScore(Double confidenceScore) { this.confidenceScore = confidenceScore; return this; }
+        public Builder reporterEmail(String reporterEmail) { this.reporterEmail = reporterEmail; return this; }
 
         public ExternalIncident build() {
             ExternalIncident incident = new ExternalIncident(id, subject, description, assignee, assignedGteam, priority, status, createdAt, updatedAt, dueDate, externalSource, externalId, category, confidenceScore);
             incident.setTenantId(tenantId);
+            incident.setReporterEmail(reporterEmail);
             return incident;
         }
     }

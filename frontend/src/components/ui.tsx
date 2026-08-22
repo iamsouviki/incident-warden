@@ -1,4 +1,4 @@
-import React, { ButtonHTMLAttributes, ReactNode, useEffect } from 'react';
+import { ButtonHTMLAttributes, ReactNode, useEffect } from 'react';
 import { X } from 'lucide-react';
 import './ui.css';
 

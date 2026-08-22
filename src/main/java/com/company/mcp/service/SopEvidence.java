@@ -14,13 +14,28 @@ public record SopEvidence(
         List<UUID> procedureIds,
         String excerpt,
         double reliability,
-        String reason
+        String reason,
+        /**
+         * The concrete tool invocation the approved procedure authorises, e.g.
+         * {@code RESTART_SERVICE:spooler:windows}. Blank when no procedure matched.
+         *
+         * The executor runs this and nothing else. Authority to act comes from the
+         * approved row, not from the keyword classifier, which only names a category.
+         */
+        String approvedActionKey
 ) {
     public SopEvidence {
         procedureIds = procedureIds == null ? List.of() : List.copyOf(procedureIds);
         excerpt = excerpt == null ? "" : excerpt;
         reason = reason == null ? "" : reason;
+        approvedActionKey = approvedActionKey == null ? "" : approvedActionKey;
         reliability = Math.max(0.0, Math.min(1.0, reliability));
+    }
+
+    /** Evidence with no executable action attached — the planner can still assess it. */
+    public SopEvidence(boolean serviceAvailable, boolean tenantScoped, List<UUID> procedureIds,
+                       String excerpt, double reliability, String reason) {
+        this(serviceAvailable, tenantScoped, procedureIds, excerpt, reliability, reason, "");
     }
 
     public boolean approvedEvidencePresent() {

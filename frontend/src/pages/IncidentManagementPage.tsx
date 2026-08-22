@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import './IncidentManagementPage.css';
-import { Plus, RefreshCw, Search, Calendar, User, ShieldAlert, Clock, MessageSquare, History, Edit, Save, Loader } from 'lucide-react';
+import { Plus, RefreshCw, Search, Calendar, ShieldAlert, Clock, Edit, Save, Loader } from 'lucide-react';
 import { authFetch, getStoredUser } from '../services/api';
 import SearchableSelect from '../components/SearchableSelect';
 
@@ -17,6 +17,12 @@ export interface Incident {
   dueDate: string;
   externalSource: string;
   externalId: string;
+  /** Store this ticket belongs to. Autonomy is inherited per store, not per tenant. */
+  storeNumber?: string;
+  /** The machine a remediation script would run on. Blank stops a mutating plan. */
+  targetHost?: string;
+  /** SSH | WINRM | AGENT, or blank for the executor's own default path to the host. */
+  connectionMethod?: string;
 }
 
 export interface Comment {
@@ -40,7 +46,10 @@ export interface HistoryRecord {
 export interface Employee {
   id: string;
   username: string;
+  fullName?: string;
   email: string;
+  role?: string;
+  department?: string;
 }
 
 export interface Team {
@@ -55,6 +64,22 @@ interface Props {
   showCreateModal?: boolean;
   setShowCreateModal?: (show: boolean) => void;
 }
+
+/**
+ * Guarantees a <select> can display the value the record actually holds.
+ *
+ * A select whose value matches none of its options renders as the FIRST option, so an
+ * incident the platform resolved by itself (status RESOLVED, which is not in the analyst's
+ * picker) was drawn as "New" — and one change to any other field then saved "New" back over
+ * it. Same class of bug for an assignee or a team that arrived from a third-party import and
+ * is not on the local roster.
+ *
+ * The current value goes first and is never invented: if the record says RESOLVED, the
+ * operator sees RESOLVED.
+ */
+const withCurrent = (options: string[], current?: string | null): string[] =>
+  current && !options.includes(current) ? [current, ...options] : options;
+
 
 const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setShowCreateModal }) => {
   const currentUser = getStoredUser();
@@ -93,6 +118,12 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
   const [editPriority, setEditPriority] = useState('');
   const [editAssignee, setEditAssignee] = useState('');
   const [editGteam, setEditGteam] = useState('');
+  // The remediation target. Saved on its own button rather than with "Edit Fields", because
+  // an operator answering "which server?" after a blocked plan is not editing the ticket.
+  const [editStoreNumber, setEditStoreNumber] = useState('');
+  const [editTargetHost, setEditTargetHost] = useState('');
+  const [editConnectionMethod, setEditConnectionMethod] = useState('');
+  const [targetSaving, setTargetSaving] = useState(false);
   const [updateLoading, setUpdateLoading] = useState(false);
 
   // Create Incident Form state
@@ -101,6 +132,14 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
   const [newPriority, setNewPriority] = useState('P3');
   const [newAssignee, setNewAssignee] = useState('Unassigned');
   const [newGteam, setNewGteam] = useState('IT Ops');
+  // Only for a ticket logged on someone else's behalf. Left empty, the server uses the
+  // signed-in user's address — it already knows who created the ticket.
+  const [newReporterEmail, setNewReporterEmail] = useState('');
+  // Which store, and which machine. Asked here because the answer is cheapest to get from
+  // the person filing the ticket; the backend re-derives and re-validates both.
+  const [newStoreNumber, setNewStoreNumber] = useState('');
+  const [newTargetHost, setNewTargetHost] = useState('');
+  const [serverNudged, setServerNudged] = useState(false);
   const [createLoading, setCreateLoading] = useState(false);
   const [initialComment, setInitialComment] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
@@ -108,8 +147,6 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
   // Teams & AI Suggestion states
   const [teams, setTeams] = useState<Team[]>([]);
   const [statuses, setStatuses] = useState<string[]>(['New', 'In Progress', 'Resolved', 'Closed']);
-  const [showAddStatusInput, setShowAddStatusInput] = useState(false);
-  const [newStatusName, setNewStatusName] = useState('');
   const [aiSuggestion, setAiSuggestion] = useState<{ suggestedTeam?: string; suggestedResolution?: string } | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [modalAiLoading, setModalAiLoading] = useState(false);
@@ -179,7 +216,10 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
         planId: plan.id,
         message: route === 'HITL_REQUIRED'
           ? 'A tenant-scoped SOP-backed plan passed the deterministic guardrails and was sent to the HITL queue.'
-          : `No approval was created. The agent escalated this incident: ${data.reason || plan.sopEvidence || 'required evidence or safety criteria were not met.'}`,
+          : `No approval was created. The agent escalated this incident: ${data.reason || plan.sopEvidence || 'required evidence or safety criteria were not met.'}`
+            // What to do about it, when the backend knows: naming the server, or the way to
+            // reach it, is a fix the operator can apply in the card above without a ticket.
+            + (data.action ? `\n\n${data.action}` : ''),
       });
       if (route === 'HITL_REQUIRED') {
         setSelectedIncident(current => current ? { ...current, status: 'PENDING_APPROVAL' } : current);
@@ -258,6 +298,9 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
       setEditPriority(selectedIncident.priority);
       setEditAssignee(selectedIncident.assignee);
       setEditGteam(selectedIncident.assignedGteam);
+      setEditStoreNumber(selectedIncident.storeNumber || '');
+      setEditTargetHost(selectedIncident.targetHost || '');
+      setEditConnectionMethod(selectedIncident.connectionMethod || '');
       setEditMode(false);
       setAiSuggestion(null);
       setPlanOutcome(null);
@@ -319,10 +362,30 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
     finally { setImporting(false); }
   };
 
+  /**
+   * Whether the ticket text already names a machine.
+   *
+   * Deliberately looser than the backend's rule and used only to decide whether to nudge
+   * once. The real gate is IncidentTarget on the server, which is what the plan and the
+   * executor actually obey — this only spares the filer a round trip.
+   */
+  const mentionsServer = (text: string) =>
+    /(?:hostname|servername|server|host|node|machine|device)\s*(?:name)?\s*[:=]?\s*[A-Za-z0-9][A-Za-z0-9._-]{2,}/i.test(text)
+    || /\b[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9][A-Za-z0-9_-]*)+\.[A-Za-z]{2,24}\b/.test(text);
+
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newSubject.trim()) {
       setErrorMsg('Subject is required');
+      return;
+    }
+    // One nudge, never a block. Plenty of real tickets have no server at all ("laptop
+    // won't charge"), so refusing to file them would be worse than asking late — and the
+    // server is still asked for, unmissably, if a remediation plan needs it.
+    if (!newTargetHost.trim() && !mentionsServer(`${newSubject} ${newDescription}`) && !serverNudged) {
+      setServerNudged(true);
+      setErrorMsg('No server is named in this ticket. Add the server name if this is a machine '
+        + 'problem — a remediation script cannot run without one. Submit again to file it anyway.');
       return;
     }
     setCreateLoading(true);
@@ -337,6 +400,9 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
           priority: newPriority,
           assignee: newAssignee,
           assignedGteam: newGteam,
+          reporterEmail: newReporterEmail.trim(),
+          storeNumber: newStoreNumber.trim(),
+          targetHost: newTargetHost.trim(),
           status: 'New'
         })
       });
@@ -358,6 +424,10 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
         setNewPriority('P3');
         setNewAssignee('Unassigned');
         setNewGteam('IT Ops');
+        setNewReporterEmail('');
+        setNewStoreNumber('');
+        setNewTargetHost('');
+        setServerNudged(false);
         if (setShowCreateModal) setShowCreateModal(false);
         fetchIncidents();
       } else {
@@ -424,8 +494,41 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
     }
   };
 
-  const clearFilters = () => {
-    setSubject('');
+  /**
+   * Saves store / server / connection method.
+   *
+   * Sends only these three fields. Spreading the whole incident sent this pane's copy of
+   * every other field back too, and that copy goes stale the moment the remediation lane
+   * writes to the ticket — answering "which server?" used to revert the ESCALATED status
+   * that had just asked the question. The server treats an absent field as "not supplied".
+   * Nothing is validated locally beyond trimming: the server rejects a malformed hostname
+   * and says so, and having two hostname rules is how they end up disagreeing.
+   */
+  const saveTarget = async () => {
+    if (!selectedIncident) return;
+    setTargetSaving(true);
+    try {
+      const res = await authFetch(`/api/v1/incidents/${selectedIncident.id}?username=${currentUsername}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          storeNumber: editStoreNumber.trim(),
+          targetHost: editTargetHost.trim(),
+          connectionMethod: editConnectionMethod
+        })
+      });
+      if (res.ok) {
+        setSelectedIncident(await res.json());
+        fetchIncidents();
+      }
+    } catch (err) {
+      console.error('Failed to save remediation target', err);
+    } finally {
+      setTargetSaving(false);
+    }
+  };
+
+  const clearFilters = () => {    setSubject('');
     setDescription('');
     setAssignee('');
     setAssignedGteam('');
@@ -441,44 +544,47 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
   const p3Count = incidents.filter(i => i.priority === 'P3').length;
 
   return (
-    <div className="incident-page" style={{ height: 'calc(100vh - 120px)', display: 'flex', flexDirection: 'column' }}>
-      {/* ServiceNow / Freshservice Inspired Dashboard KPI Header */}
-      <div className="kpi-grid" style={{ marginBottom: '16px' }}>
+    <div className="incident-page" style={{ minHeight: 'calc(100vh - 120px)', display: 'flex', flexDirection: 'column' }}>
+      {/* Enterprise Incident KPI Header */}
+      <div className="kpi-grid" style={{ marginBottom: '12px' }}>
         <div className="kpi-card">
-          <div className="kpi-title">TOTAL INCIDENTS</div>
+          <div className="kpi-title">TOTAL ACTIVE</div>
           <div className="kpi-value">{total}</div>
         </div>
         <div className="kpi-card kpi-p1">
-          <div className="kpi-title">P1 - CRITICAL (8H Due)</div>
+          <div className="kpi-title">P1 - CRITICAL</div>
           <div className="kpi-value">{p1Count}</div>
         </div>
         <div className="kpi-card kpi-p2">
-          <div className="kpi-title">P2 - HIGH (24H Due)</div>
+          <div className="kpi-title">P2 - HIGH</div>
           <div className="kpi-value">{p2Count}</div>
         </div>
         <div className="kpi-card kpi-p3">
-          <div className="kpi-title">P3 - MEDIUM (72H Due)</div>
+          <div className="kpi-title">P3 - MEDIUM</div>
           <div className="kpi-value">{p3Count}</div>
         </div>
       </div>
 
-      <div className="card" style={{ padding: '12px 16px', marginBottom: '16px', background: 'var(--surface2)', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-        <strong style={{ fontSize: '13px' }}>Import exported incidents</strong>
-        <select value={importSource} onChange={e => setImportSource(e.target.value)} style={{ height: '34px', fontSize: '12px' }}>
-          <option value="Freshservice">Freshservice export</option>
-          <option value="ServiceNow">ServiceNow export</option>
-          <option value="Custom Import">Custom normalized export</option>
-        </select>
-        <input type="file" accept=".csv,.xlsx" onChange={e => setImportFile(e.target.files?.[0] || null)} style={{ fontSize: '12px' }} />
-        <button className="btn-primary" onClick={handleImport} disabled={importing || !importFile} style={{ height: '34px', padding: '0 12px', fontSize: '12px' }}>
-          {importing ? 'Importing…' : 'Import export'}
-        </button>
-        {importMessage && <span style={{ fontSize: '12px', color: importMessage.startsWith('Import finished') ? 'var(--green)' : 'var(--red)' }}>{importMessage}</span>}
-        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Accepted: CSV/XLSX, maximum 500 rows.</span>
+      {/* Incident Import Panel */}
+      <div className="card" style={{ padding: '14px 18px', marginBottom: '12px', background: 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <strong style={{ fontSize: '13px', color: 'var(--text-1)' }}>Import Incidents</strong>
+          <select value={importSource} onChange={e => setImportSource(e.target.value)} style={{ height: '34px', fontSize: '12.5px', minWidth: '160px' }}>
+            <option value="Freshservice">Freshservice export</option>
+            <option value="ServiceNow">ServiceNow export</option>
+            <option value="Custom Import">Custom normalized export</option>
+          </select>
+          <input type="file" accept=".csv,.xlsx" onChange={e => setImportFile(e.target.files?.[0] || null)} style={{ fontSize: '12px', maxWidth: '240px' }} />
+          <button className="btn-primary" onClick={handleImport} disabled={importing || !importFile} style={{ height: '34px', padding: '0 16px', fontSize: '12.5px' }}>
+            {importing ? 'Importing…' : 'Import Export'}
+          </button>
+        </div>
+        {importMessage && <span style={{ fontSize: '12px', fontWeight: 600, color: importMessage.startsWith('Import finished') ? 'var(--ok)' : 'var(--crit)' }}>{importMessage}</span>}
+        <span style={{ fontSize: '11px', color: 'var(--text-3)' }}>Supports CSV & XLSX (Max 500 records)</span>
       </div>
 
       {/* Advanced Filters topbar row */}
-      <div className="card" style={{ padding: '12px 16px', marginBottom: '16px', background: 'var(--surface2)', display: 'grid', gridTemplateColumns: 'repeat(7, 1fr) auto', gap: '10px', alignItems: 'end', flexShrink: 0, overflow: 'visible' }}>
+      <div className="card" style={{ padding: '14px 16px', marginBottom: '12px', background: 'var(--surface-2)', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr)) auto', gap: '10px', alignItems: 'end', flexShrink: 0, overflow: 'visible' }}>
         <div>
           <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Subject Search</label>
           <div style={{ position: 'relative' }}>
@@ -711,7 +817,7 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
                                   const res = await authFetch(`/api/v1/incidents/${selectedIncident.id}?username=${currentUsername}`, {
                                     method: 'PUT',
                                     headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ ...selectedIncident, status: newStatus })
+                                    body: JSON.stringify({ status: newStatus })
                                   });
                                   if (res.ok) {
                                     const updated = await res.json();
@@ -723,7 +829,8 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
                             }}
                             style={{ cursor: 'pointer', height: '36px', padding: '6px 12px', fontSize: '13px' }}
                           >
-                            {statuses.map(s => <option key={s} value={s}>{s}</option>)}
+                            {withCurrent(statuses, editMode ? editStatus : selectedIncident.status)
+                              .map(s => <option key={s} value={s}>{s}</option>)}
                           </select>
                         </div>
                       </div>
@@ -742,7 +849,7 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
                                   const res = await authFetch(`/api/v1/incidents/${selectedIncident.id}?username=${currentUsername}`, {
                                     method: 'PUT',
                                     headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ ...selectedIncident, assignee: newAssignee })
+                                    body: JSON.stringify({ assignee: newAssignee })
                                   });
                                   if (res.ok) {
                                     const updated = await res.json();
@@ -754,10 +861,18 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
                             }}
                             style={{ cursor: 'pointer', height: '36px', padding: '6px 12px', fontSize: '13px' }}
                           >
-                            <option value="Unassigned">Unassigned</option>
-                            {(teams.find(t => t.name === (editMode ? editGteam : selectedIncident.assignedGteam))?.employees || []).map(emp => (
-                              <option key={emp.id} value={emp.username}>{emp.username}</option>
-                            ))}
+                            {(() => {
+                              const teamEmps = teams.find(t => t.name === (editMode ? editGteam : selectedIncident.assignedGteam))?.employees || [];
+                              const list = withCurrent(
+                                ['Unassigned', ...teamEmps.map(emp => emp.username)],
+                                editMode ? editAssignee : selectedIncident.assignee,
+                              );
+                              return list.map(uname => {
+                                const matched = teamEmps.find(emp => emp.username === uname);
+                                const label = matched?.fullName ? `${matched.fullName} (@${uname})` : uname;
+                                return <option key={uname} value={uname}>{label}</option>;
+                              });
+                            })()}
                           </select>
                         </div>
 
@@ -778,7 +893,6 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
                                     method: 'PUT',
                                     headers: { 'Content-Type': 'application/json' },
                                     body: JSON.stringify({
-                                      ...selectedIncident,
                                       assignedGteam: teamName,
                                       assignee: employees[0]?.username || 'Unassigned'
                                     })
@@ -793,7 +907,8 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
                             }}
                             style={{ cursor: 'pointer', height: '36px', padding: '6px 12px', fontSize: '13px' }}
                           >
-                            {teams.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+                            {withCurrent(teams.map(t => t.name), editMode ? editGteam : selectedIncident.assignedGteam)
+                              .map(name => <option key={name} value={name}>{name}</option>)}
                           </select>
                         </div>
                       </div>
@@ -807,6 +922,62 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
                           <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Due Date / SLA</label>
                           <div style={{ padding: '8px 12px', background: 'var(--surface2)', borderRadius: '6px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}><Clock size={12} /> {selectedIncident.dueDate ? new Date(selectedIncident.dueDate).toLocaleString() : 'N/A'}</div>
                         </div>
+                      </div>
+
+                      {/* Where a remediation script would run. Asked here because this is the
+                          pane an operator is looking at when a plan comes back BLOCKED for a
+                          missing or unreachable server. */}
+                      <div style={{
+                          background: 'var(--surface2)',
+                          border: `1px solid ${selectedIncident.targetHost ? 'var(--border)' : 'var(--amber)'}`,
+                          borderRadius: '12px',
+                          padding: '16px',
+                          marginTop: '10px',
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                          <h4 style={{ margin: 0, fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            🖥 Remediation target
+                          </h4>
+                          <button
+                            type="button"
+                            className="btn-primary"
+                            style={{ padding: '4px 8px', fontSize: '11px', height: '28px' }}
+                            onClick={saveTarget}
+                            disabled={targetSaving}
+                          >
+                            {targetSaving ? 'Saving...' : 'Save target'}
+                          </button>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Store</label>
+                            <input type="text" placeholder="0042" value={editStoreNumber}
+                              onChange={e => setEditStoreNumber(e.target.value)}
+                              style={{ height: '32px', padding: '4px 10px', fontSize: '12px' }} />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Server / Host</label>
+                            <input type="text" placeholder="store-0042-pos-01" value={editTargetHost}
+                              onChange={e => setEditTargetHost(e.target.value)}
+                              style={{ height: '32px', padding: '4px 10px', fontSize: '12px' }} />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Connect via</label>
+                            <select value={editConnectionMethod} onChange={e => setEditConnectionMethod(e.target.value)}
+                              style={{ height: '32px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}>
+                              <option value="">Executor default (try first)</option>
+                              <option value="SSH">SSH</option>
+                              <option value="WINRM">WinRM</option>
+                              <option value="AGENT">Local agent</option>
+                            </select>
+                          </div>
+                        </div>
+                        <small style={{ display: 'block', marginTop: '8px', color: 'var(--text-muted)', fontSize: '11px', lineHeight: 1.45 }}>
+                          {selectedIncident.targetHost
+                            ? 'A mutating plan is refused unless the executor can reach this host. Leave "Connect via" on the default until a plan reports it unreachable — the executor tries the path it already has first.'
+                            : 'No server is set. If the description does not name one, a plan that restarts anything will be blocked rather than guess a machine.'}
+                          {' '}No password or key is stored here or anywhere in this database — only the method. The credential stays with the executor agent.
+                        </small>
                       </div>
 
                       {/* AI Suggestions Card */}
@@ -906,7 +1077,7 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
                               {planCreating ? <><Loader size={12} className="spin" /> Evaluating SOP evidence and guardrails…</> : <><ShieldAlert size={12} /> Create guarded remediation plan</>}
                             </button>
                             {planOutcome && (
-                              <div style={{ padding: '9px 10px', borderRadius: '6px', fontSize: '11.5px', lineHeight: 1.45, background: planOutcome.route === 'HITL_REQUIRED' ? 'var(--green-dim)' : 'var(--red-dim)', border: `1px solid ${planOutcome.route === 'HITL_REQUIRED' ? 'var(--green)' : 'var(--red)'}` }}>
+                              <div style={{ padding: '9px 10px', borderRadius: '6px', fontSize: '11.5px', lineHeight: 1.45, whiteSpace: 'pre-wrap', background: planOutcome.route === 'HITL_REQUIRED' ? 'var(--green-dim)' : 'var(--red-dim)', border: `1px solid ${planOutcome.route === 'HITL_REQUIRED' ? 'var(--green)' : 'var(--red)'}` }}>
                                 <strong>{planOutcome.route === 'HITL_REQUIRED' ? 'Plan ready for HITL review.' : planOutcome.route === 'ESCALATE' ? 'Plan blocked and escalated.' : 'Plan creation failed.'}</strong><br />
                                 {planOutcome.message}
                               </div>
@@ -1072,6 +1243,50 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
                     <option key={emp.id} value={emp.username}>{emp.username}</option>
                   ))}
                 </select>
+              </div>
+
+              <div className="form-field">
+                <label>Store Number (Optional)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. 0042"
+                  value={newStoreNumber}
+                  onChange={e => setNewStoreNumber(e.target.value)}
+                />
+                <small style={{ color: 'var(--text-muted)', fontSize: '11px' }}>
+                  Automation is proven per store. Once a fix has been approved and has worked at
+                  this store, the same fix can run automatically for the same problem here —
+                  and only here.
+                </small>
+              </div>
+
+              <div className="form-field">
+                <label>Server / Host {newTargetHost.trim() ? '' : '(Optional)'}</label>
+                <input
+                  type="text"
+                  placeholder="e.g. store-0042-pos-01"
+                  value={newTargetHost}
+                  onChange={e => setNewTargetHost(e.target.value)}
+                />
+                <small style={{ color: 'var(--text-muted)', fontSize: '11px' }}>
+                  The machine with the problem. Leave it empty if the description already names
+                  one, or if this is not a server issue — nothing can be restarted until a
+                  server is named, and nothing will be guessed.
+                </small>
+              </div>
+
+              <div className="form-field">
+                <label>Reporter Email (Optional)</label>
+                <input
+                  type="email"
+                  placeholder="Only if you are logging this on someone else's behalf"
+                  value={newReporterEmail}
+                  onChange={e => setNewReporterEmail(e.target.value)}
+                />
+                <small style={{ color: 'var(--text-muted)', fontSize: '11px' }}>
+                  Left empty, updates are emailed to your own address. This person is notified
+                  of every update and of any action the platform takes automatically.
+                </small>
               </div>
 
               <div className="modal-footer">

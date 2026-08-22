@@ -19,5 +19,20 @@ public class ActionExecution {
     @Column(name="started_at", nullable=false) private OffsetDateTime startedAt;
     @Column(name="completed_at") private OffsetDateTime completedAt;
     @PrePersist void created(){if(id==null)id=UUID.randomUUID();if(startedAt==null)startedAt=OffsetDateTime.now();}
-    public UUID getId(){return id;} public void setTenantId(String v){tenantId=v;} public void setIncidentId(UUID v){incidentId=v;} public void setPlanId(UUID v){planId=v;} public void setHitlRequestId(UUID v){hitlRequestId=v;} public void setMode(String v){mode=v;} public void setStatus(String v){status=v;} public void setOutput(String v){output=v;} public void setValidationResult(String v){validationResult=v;} public void setCompletedAt(OffsetDateTime v){completedAt=v;}
+
+    // Getters exist so the execution timeline serialises for the review UI. Without them
+    // Jackson emitted only the id, and an approver saw an empty history.
+    public UUID getId(){return id;}
+    public String getTenantId(){return tenantId;}
+    public UUID getIncidentId(){return incidentId;}
+    public UUID getPlanId(){return planId;}
+    public UUID getHitlRequestId(){return hitlRequestId;}
+    public String getMode(){return mode;}
+    public String getStatus(){return status;}
+    public String getOutput(){return output;}
+    public String getValidationResult(){return validationResult;}
+    public OffsetDateTime getStartedAt(){return startedAt;}
+    public OffsetDateTime getCompletedAt(){return completedAt;}
+
+    public void setTenantId(String v){tenantId=v;} public void setIncidentId(UUID v){incidentId=v;} public void setPlanId(UUID v){planId=v;} public void setHitlRequestId(UUID v){hitlRequestId=v;} public void setMode(String v){mode=v;} public void setStatus(String v){status=v;} public void setOutput(String v){output=v;} public void setValidationResult(String v){validationResult=v;} public void setCompletedAt(OffsetDateTime v){completedAt=v;}
 }

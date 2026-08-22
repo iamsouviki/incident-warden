@@ -10,7 +10,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AgentAssessmentServiceTest {
-    private final AgentAssessmentService agents = new AgentAssessmentService();
+    // The production HITL band (0.80) and prior (0.85) are passed explicitly: this
+    // test asserts the routing arithmetic at those values, not Spring's wiring.
+    private final AgentAssessmentService agents = new AgentAssessmentService(0.80, 0.85);
 
     @Test
     void escalatesWhenTrustedSopEvidenceDoesNotReachTheHitlConfidenceBand() {
@@ -30,6 +32,31 @@ class AgentAssessmentServiceTest {
         assertTrue(assessment.confidenceScore() < 80.0);
         assertEquals("ESCALATE", assessment.route());
         assertEquals("clear-printer-queue", assessment.action());
+    }
+
+    /**
+     * The wording a store manager actually uses. This ticket names no "service" and no
+     * "daemon", so it used to classify UNCLASSIFIED — which carries no action, which the
+     * guardrail then blocks as ACTION_NOT_ALLOWLISTED. The approved Tomcat procedure was
+     * matched and unusable at the same time.
+     */
+    @Test
+    void aTicketWordedTheWayStoresWordItStillFindsTheApplicationAction() {
+        Incident incident = Incident.builder()
+                .id(UUID.randomUUID())
+                .tenantId("tenant-a")
+                .subject("Tomcat application unresponsive at store 0042")
+                .description("Back-office app is not responding. Tomcat appears down on the application server.")
+                .priority("P3")
+                .externalId("FS-1003")
+                .build();
+        SopEvidence evidence = new SopEvidence(true, true, List.of(UUID.randomUUID()),
+                "Approved SOP: restart the Tomcat service, then confirm the health endpoint.", 0.90, "APPROVED_TENANT_SOP_MATCH");
+
+        AgentAssessmentService.Assessment assessment = agents.assess(incident, evidence);
+
+        assertEquals("APPLICATION", assessment.category());
+        assertEquals("restart-approved-service", assessment.action());
     }
 
     @Test

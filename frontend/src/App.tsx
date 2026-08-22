@@ -8,13 +8,14 @@ import {
   ChevronDown,
   Command,
   FileCode2,
-  LayoutDashboard,
   LogOut,
+  Moon,
   Plus,
   Search,
   Settings,
   ShieldAlert,
   SlidersHorizontal,
+  Sun,
   User,
   Users,
   X,
@@ -70,12 +71,23 @@ function AppContent({ user, onLogout }: { user: AuthUser; onLogout: () => void }
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState('');
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('mcp_theme') as 'dark' | 'light') || 'dark');
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('mcp_theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme(prev => (prev === 'dark' ? 'light' : 'dark'));
+  };
 
   const activePath = location.pathname.startsWith('/incidents/') ? '/incidents' : location.pathname;
   const meta = PAGE_META[activePath] || PAGE_META['/incidents'];
   const tenantId = user.tenantId || DEFAULT_TENANT_ID;
   const workspace = user.tenantName?.trim() || 'Primary workspace';
-  const initials = user.username.slice(0, 2).toUpperCase();
+  const displayName = user.fullName?.trim() || user.username;
+  const avatarLetter = (displayName || 'U').slice(0, 1).toUpperCase();
 
   const filteredCommands = useMemo(() => {
     const q = commandQuery.trim().toLowerCase();
@@ -156,6 +168,11 @@ function AppContent({ user, onLogout }: { user: AuthUser; onLogout: () => void }
             <Search size={14} /><span>Search or jump to…</span><kbd>⌘K</kbd>
           </button>
           <div className="topbar-spacer" />
+          
+          <button className="topbar-action" onClick={toggleTheme} title={`Switch to ${theme === 'dark' ? 'Light' : 'Dark'} mode`} aria-label="Toggle theme">
+            {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+          </button>
+
           <div className="live-indicator">LIVE</div>
           <button className="topbar-action" onClick={() => go('/hitl')} aria-label="Open notifications">
             <Bell size={14} /><span>Alerts</span>
@@ -164,12 +181,15 @@ function AppContent({ user, onLogout }: { user: AuthUser; onLogout: () => void }
             <Plus size={14} /><span>New incident</span>
           </button>
           <div style={{ position: 'relative' }}>
-            <button className="user-button" onClick={() => setUserMenuOpen(value => !value)} aria-expanded={userMenuOpen}>
-              <span className="user-avatar">{initials}</span><span>{user.username}</span><ChevronDown size={13} />
+            <button className="user-button" onClick={() => setUserMenuOpen(value => !value)} aria-expanded={userMenuOpen} title={displayName}>
+              <span className="user-avatar">{avatarLetter}</span><ChevronDown size={13} />
             </button>
             {userMenuOpen && (
               <div className="user-menu">
-                <div className="user-menu-head"><div className="user-menu-name">{user.username}</div><div className="user-menu-meta">{user.role} · {workspace}</div></div>
+                <div className="user-menu-head">
+                  <div className="user-menu-name">{displayName}</div>
+                  <div className="user-menu-meta">{user.role} · @{user.username}</div>
+                </div>
                 <button className="user-menu-item" onClick={() => go('/account')}><User size={14} /> My account</button>
                 <button className="user-menu-item" onClick={() => go('/settings/ai')}><Settings size={14} /> Settings</button>
                 <button className="user-menu-item danger" onClick={onLogout}><LogOut size={14} /> Sign out</button>

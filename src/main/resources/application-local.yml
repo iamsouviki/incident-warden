@@ -1,28 +1,23 @@
+# Local development profile: real PostgreSQL + pgvector, dev-only secrets.
+#
+# This profile used to run on an in-memory H2 database with a fake VectorStore. Both are
+# gone: the fake store's similaritySearch returned every document unranked, so RAG
+# "worked" locally while proving nothing about retrieval. Local now runs the same
+# datastore as production — one database engine, one set of migrations, one set of bugs.
+#
+# Requires PostgreSQL on localhost:5432 with the vector extension. See README.
 spring:
   datasource:
-    url: jdbc:h2:file:./.data/mcp-local;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH
-    driver-class-name: org.h2.Driver
-    username: sa
-    password:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:mcp_db}
+    driver-class-name: org.postgresql.Driver
+    username: ${DB_USER:mcp_user}
+    password: ${DB_PASSWORD:changeme}
     hikari:
       maximum-pool-size: 5
       minimum-idle: 1
       connection-timeout: 10000
   jpa:
-    database-platform: org.hibernate.dialect.H2Dialect
-    hibernate:
-      ddl-auto: update
-    properties:
-      hibernate:
-        hbm2ddl:
-          create_namespaces: true
     show-sql: false
-  liquibase:
-    enabled: false
-  sql:
-    init:
-      mode: always
-      schema-locations: classpath:schema-h2.sql
   data:
     redis:
       repositories:
@@ -36,30 +31,18 @@ spring:
     exclude:
       - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
       - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
-      - org.springframework.ai.vectorstore.pgvector.autoconfigure.PgVectorStoreAutoConfiguration
-  ai:
-    ollama:
-      chat:
-        enabled: false
-      embedding:
-        enabled: false
-    vectorstore:
-      pgvector:
-        initialize-schema: false
 
 mcp:
   poc:
     role-selection-enabled: true
+  # Dev-only signing key. It is committed deliberately so `--spring.profiles.active=local`
+  # starts with no setup. Every other profile inherits ${MCP_JWT_SECRET} from
+  # application.yml and refuses to start without it. Never reuse this value anywhere real.
+  jwt:
+    secret: local-development-only-jwt-signing-key-not-for-any-real-deployment
   security:
     cors:
       allowed-origins: http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080
-  llm:
-    provider: custom
-    custom:
-      api-url: http://localhost:9090/v1
-      api-key: mock-key
-      chat-model: manus-1.6
-      embed-model: mock-embed
   autonomy:
     enabled: true
     execution-mode: SIMULATED
@@ -71,6 +54,10 @@ mcp:
   confidence:
     auto-resolve-threshold: 0.85
     hitl-threshold: 0.70
+  hitl:
+    # The local demo seeds a single 'admin' account, which must be able to both
+    # request and approve a plan. Never disable this in a shared environment.
+    separation-of-duties: false
 
 server:
   port: ${PORT:8080}
@@ -80,3 +67,4 @@ logging:
     org.springframework: WARN
     com.company.mcp: INFO
     org.hibernate.SQL: WARN
+    liquibase: INFO

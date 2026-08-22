@@ -51,29 +51,11 @@ public class IncidentService {
     @Autowired
     private CurrentUser currentUser;
 
-    @jakarta.annotation.PostConstruct
-    public void populateMissingExternalIds() {
-        try {
-            List<Incident> manuals = incidentRepository.findAll();
-            long count = 1;
-            for (Incident inc : manuals) {
-                boolean updated = false;
-                if (inc.getExternalSource() == null || "None".equals(inc.getExternalSource())) {
-                    inc.setExternalSource("Internal");
-                    updated = true;
-                }
-                if (inc.getExternalId() == null || inc.getExternalId().isBlank()) {
-                    inc.setExternalId(String.format("INC%09d", count++));
-                    updated = true;
-                }
-                if (updated) {
-                    incidentRepository.save(inc);
-                }
-            }
-        } catch (Exception e) {
-            log.error("Failed to populate missing external IDs: {}", e.getMessage());
-        }
-    }
+    @Autowired
+    private NotificationService notificationService;
+
+    @Autowired
+    private AutoRemediationService autoRemediationService;
 
     // ServiceNow Settings
     @Value("${mcp.servicenow.enabled:false}")
@@ -104,39 +86,34 @@ public class IncidentService {
     private String jiraToken;
 
     private synchronized String generateNextTicketNumber() {
-        long maxNum = 0;
-        
-        List<Incident> manuals = incidentRepository.findAll();
-        for (Incident inc : manuals) {
-            String extId = inc.getExternalId();
-            if (extId != null && extId.startsWith("INC")) {
-                try {
-                    long num = Long.parseLong(extId.substring(3));
-                    if (num > maxNum) maxNum = num;
-                } catch (NumberFormatException ignored) {}
-            }
-        }
-        
-        List<ExternalIncident> externals = externalIncidentRepository.findAll();
-        for (ExternalIncident ext : externals) {
-            String extId = ext.getExternalId();
-            if (extId != null && extId.startsWith("INC")) {
-                try {
-                    long num = Long.parseLong(extId.substring(3));
-                    if (num > maxNum) maxNum = num;
-                } catch (NumberFormatException ignored) {}
-            }
-        }
-        
-        long nextNum = maxNum + 1;
-        return String.format("INC%09d", nextNum);
+        // ponytail: synchronized guards one JVM, not a cluster. The unique constraint on
+        // external_id is the real defence — two instances can pick the same number and the
+        // loser's insert fails. Move to a Postgres sequence if this ever runs multi-instance.
+        long maxNum = Math.max(
+                orZero(incidentRepository.findMaxInternalTicketNumber()),
+                orZero(externalIncidentRepository.findMaxInternalTicketNumber()));
+        return String.format("INC%09d", maxNum + 1);
     }
+
+    private long orZero(Long value) { return value == null ? 0L : value; }
 
     public Optional<Incident> findTelemetryIncident(String correlationKey) {
         return incidentRepository.findFirstByExternalSourceAndExternalId("Telemetry", correlationKey);
     }
 
     public Incident createIncident(Incident incident) {
+        return createIncident(incident, true);
+    }
+
+    /**
+     * @param considerUnattended whether this ticket is allowed to be auto-remediated from a
+     *        precedent. True for every single ticket — the UI form, a third-party push, a
+     *        telemetry event — and false for bulk import only. AutoRemediationService is
+     *        written on the assumption that a person just logged one incident; a 500-row
+     *        upload arriving through the same method would otherwise be 500 chances to
+     *        restart something, all triggered by one click on Import.
+     */
+    public Incident createIncident(Incident incident, boolean considerUnattended) {
         incident.setTenantId(currentUser.tenantId());
         if (incident.getCreatedAt() == null) {
             incident.setCreatedAt(OffsetDateTime.now());
@@ -151,6 +128,16 @@ public class IncidentService {
             incident.setExternalId(generateNextTicketNumber());
         }
 
+        // "The user who created this incident" — for a ticket logged in this UI that is the
+        // signed-in user, resolved here so the form need not ask for an address the platform
+        // already knows. Only for internal tickets: an imported one was created by whoever
+        // raised it in the source system, and if the export carried no address it has none.
+        // Attributing 500 imported rows to the analyst who ran the import would be a lie.
+        if ((incident.getReporterEmail() == null || incident.getReporterEmail().isBlank())
+                && "Internal".equals(incident.getExternalSource())) {
+            incident.setReporterEmail(notificationService.addressOfUser(currentUser.username()));
+        }
+
         // Apply Confidence Scoring and Routing
         double score = calculateConfidenceScore(incident);
         incident.setConfidenceScore(score);
@@ -160,6 +147,26 @@ public class IncidentService {
 
         // Record initial history
         saveHistoryRecord(saved.getId(), "Incident Created", null, incident.getStatus(), "System");
+
+        // "Have we already been given permission to do this?" Only for a single ticket —
+        // never for a bulk import, where one file could otherwise become hundreds of
+        // unattended restarts. Refusal is the default and the common case; see
+        // AutoRemediationService for the gates.
+        if (considerUnattended) {
+            try {
+                AutoRemediationService.Result auto = autoRemediationService.considerNewIncident(saved);
+                if (auto.ran()) {
+                    log.info("[AUTORUN] {} handled without approval via {} (precedent {})",
+                            saved.getExternalId(), auto.actionKey(), auto.precedentReference());
+                } else if (auto.informative()) {
+                    log.info("[AUTORUN] {} left for human approval: {}", saved.getExternalId(), auto.reason());
+                }
+            } catch (Exception e) {
+                // The ticket is already saved and the HITL queue still works. An auto-run that
+                // throws must not turn a successful ticket creation into a 500 for the user.
+                log.error("[AUTORUN] Skipped for {}: {}", saved.getExternalId(), e.getMessage(), e);
+            }
+        }
         return saved;
     }
 
@@ -243,11 +250,22 @@ public class IncidentService {
         }
     }
 
-    private Specification<Incident> buildIncidentSpecification(
-            String subject, String description, String assignee, String assignedGteam,
+    /**
+     * Builds the incident search predicate for either entity type. Both {@code Incident}
+     * and {@code ExternalIncident} expose the same searchable attribute names, so one
+     * generic builder serves both.
+     *
+     * The tenant predicate is applied here and not left to callers: this is the only
+     * place a broad incident query is assembled, so scoping it here means a new caller
+     * cannot forget it and read another tenant's incidents.
+     */
+    private <T> Specification<T> buildIncidentSearchSpecification(
+            String tenantId, String subject, String description, String assignee, String assignedGteam,
             String priority, String createdDate, String updatedDate, String dueDate) {
         return (root, query, cb) -> {
             List<Predicate> predicates = new ArrayList<>();
+
+            predicates.add(cb.equal(root.get("tenantId"), tenantId));
 
             if (subject != null && !subject.isBlank()) {
                 predicates.add(cb.like(cb.lower(root.get("subject")), "%" + subject.toLowerCase() + "%"));
@@ -265,102 +283,41 @@ public class IncidentService {
                 predicates.add(cb.equal(root.get("priority"), priority));
             }
 
-            if (createdDate != null && !createdDate.isBlank()) {
-                try {
-                    OffsetDateTime start = OffsetDateTime.parse(createdDate + "T00:00:00Z");
-                    OffsetDateTime end = OffsetDateTime.parse(createdDate + "T23:59:59Z");
-                    predicates.add(cb.between(root.get("createdAt"), start, end));
-                } catch (Exception e) {
-                    log.warn("Invalid createdDate format: {}", createdDate);
-                }
-            }
-            if (updatedDate != null && !updatedDate.isBlank()) {
-                try {
-                    OffsetDateTime start = OffsetDateTime.parse(updatedDate + "T00:00:00Z");
-                    OffsetDateTime end = OffsetDateTime.parse(updatedDate + "T23:59:59Z");
-                    predicates.add(cb.between(root.get("updatedAt"), start, end));
-                } catch (Exception e) {
-                    log.warn("Invalid updatedDate format: {}", updatedDate);
-                }
-            }
-            if (dueDate != null && !dueDate.isBlank()) {
-                try {
-                    OffsetDateTime start = OffsetDateTime.parse(dueDate + "T00:00:00Z");
-                    OffsetDateTime end = OffsetDateTime.parse(dueDate + "T23:59:59Z");
-                    predicates.add(cb.between(root.get("dueDate"), start, end));
-                } catch (Exception e) {
-                    log.warn("Invalid dueDate format: {}", dueDate);
-                }
-            }
+            addDayRange(predicates, cb, root, "createdAt", createdDate);
+            addDayRange(predicates, cb, root, "updatedAt", updatedDate);
+            addDayRange(predicates, cb, root, "dueDate", dueDate);
 
             return cb.and(predicates.toArray(new Predicate[0]));
         };
     }
 
-    private Specification<ExternalIncident> buildExternalIncidentSpecification(
-            String subject, String description, String assignee, String assignedGteam,
-            String priority, String createdDate, String updatedDate, String dueDate) {
-        return (root, query, cb) -> {
-            List<Predicate> predicates = new ArrayList<>();
-
-            if (subject != null && !subject.isBlank()) {
-                predicates.add(cb.like(cb.lower(root.get("subject")), "%" + subject.toLowerCase() + "%"));
-            }
-            if (description != null && !description.isBlank()) {
-                predicates.add(cb.like(cb.lower(root.get("description")), "%" + description.toLowerCase() + "%"));
-            }
-            if (assignee != null && !assignee.isBlank()) {
-                predicates.add(cb.like(cb.lower(root.get("assignee")), "%" + assignee.toLowerCase() + "%"));
-            }
-            if (assignedGteam != null && !assignedGteam.isBlank()) {
-                predicates.add(cb.like(cb.lower(root.get("assignedGteam")), "%" + assignedGteam.toLowerCase() + "%"));
-            }
-            if (priority != null && !priority.isBlank()) {
-                predicates.add(cb.equal(root.get("priority"), priority));
-            }
-
-            if (createdDate != null && !createdDate.isBlank()) {
-                try {
-                    OffsetDateTime start = OffsetDateTime.parse(createdDate + "T00:00:00Z");
-                    OffsetDateTime end = OffsetDateTime.parse(createdDate + "T23:59:59Z");
-                    predicates.add(cb.between(root.get("createdAt"), start, end));
-                } catch (Exception e) {
-                    log.warn("Invalid createdDate format: {}", createdDate);
-                }
-            }
-            if (updatedDate != null && !updatedDate.isBlank()) {
-                try {
-                    OffsetDateTime start = OffsetDateTime.parse(updatedDate + "T00:00:00Z");
-                    OffsetDateTime end = OffsetDateTime.parse(updatedDate + "T23:59:59Z");
-                    predicates.add(cb.between(root.get("updatedAt"), start, end));
-                } catch (Exception e) {
-                    log.warn("Invalid updatedDate format: {}", updatedDate);
-                }
-            }
-            if (dueDate != null && !dueDate.isBlank()) {
-                try {
-                    OffsetDateTime start = OffsetDateTime.parse(dueDate + "T00:00:00Z");
-                    OffsetDateTime end = OffsetDateTime.parse(dueDate + "T23:59:59Z");
-                    predicates.add(cb.between(root.get("dueDate"), start, end));
-                } catch (Exception e) {
-                    log.warn("Invalid dueDate format: {}", dueDate);
-                }
-            }
-
-            return cb.and(predicates.toArray(new Predicate[0]));
-        };
+    /** Adds a whole-day UTC range predicate for {@code field}, ignoring an unparseable date. */
+    private void addDayRange(List<Predicate> predicates, jakarta.persistence.criteria.CriteriaBuilder cb,
+                             jakarta.persistence.criteria.Root<?> root, String field, String day) {
+        if (day == null || day.isBlank()) return;
+        try {
+            predicates.add(cb.between(root.get(field),
+                    OffsetDateTime.parse(day + "T00:00:00Z"),
+                    OffsetDateTime.parse(day + "T23:59:59Z")));
+        } catch (Exception e) {
+            log.warn("Invalid {} format: {}", field, day);
+        }
     }
 
     public List<Incident> searchIncidents(
             String subject, String description, String assignee, String assignedGteam,
             String priority, String createdDate, String updatedDate, String dueDate) {
 
+        String tenantId = currentUser.tenantId();
+
         List<Incident> manual = incidentRepository.findAll(
-                buildIncidentSpecification(subject, description, assignee, assignedGteam, priority, createdDate, updatedDate, dueDate)
+                this.<Incident>buildIncidentSearchSpecification(tenantId, subject, description, assignee,
+                        assignedGteam, priority, createdDate, updatedDate, dueDate)
         );
 
         List<ExternalIncident> external = externalIncidentRepository.findAll(
-                buildExternalIncidentSpecification(subject, description, assignee, assignedGteam, priority, createdDate, updatedDate, dueDate)
+                this.<ExternalIncident>buildIncidentSearchSpecification(tenantId, subject, description, assignee,
+                        assignedGteam, priority, createdDate, updatedDate, dueDate)
         );
 
         List<Incident> combined = new ArrayList<>();
@@ -374,14 +331,29 @@ public class IncidentService {
         return combined;
     }
 
+    /**
+     * Rejects a cross-tenant record access.
+     *
+     * A UUID is guessable enough to matter and was previously the only thing standing
+     * between tenant A and tenant B's incidents on every by-id path. "Not found" is
+     * returned rather than "forbidden" so the response does not confirm the id exists.
+     */
+    private void assertOwnedByCurrentTenant(String recordTenantId, UUID id) {
+        if (recordTenantId == null || !recordTenantId.equals(currentUser.tenantId())) {
+            throw new NoSuchElementException("Incident not found with ID: " + id);
+        }
+    }
+
     public Incident getIncidentById(UUID id) {
         Optional<Incident> manual = incidentRepository.findById(id);
         if (manual.isPresent()) {
+            assertOwnedByCurrentTenant(manual.get().getTenantId(), id);
             return manual.get();
         }
 
         Optional<ExternalIncident> external = externalIncidentRepository.findById(id);
         if (external.isPresent()) {
+            assertOwnedByCurrentTenant(external.get().getTenantId(), id);
             return convertToIncident(external.get());
         }
 
@@ -389,15 +361,18 @@ public class IncidentService {
     }
 
     public List<IncidentComment> getComments(UUID incidentId) {
+        getIncidentById(incidentId);   // tenant check; throws if the incident is not this tenant's
         return incidentCommentRepository.findByIncidentIdOrderByCreatedAtDesc(incidentId);
     }
 
     public IncidentComment addComment(UUID incidentId, String author, String commentText) {
+        getIncidentById(incidentId);   // tenant check
         IncidentComment comment = new IncidentComment(UUID.randomUUID(), incidentId, author, commentText, OffsetDateTime.now());
         return incidentCommentRepository.save(comment);
     }
 
     public List<IncidentHistory> getHistory(UUID incidentId) {
+        getIncidentById(incidentId);   // tenant check
         return incidentHistoryRepository.findByIncidentIdOrderByUpdatedAtDesc(incidentId);
     }
 
@@ -405,16 +380,22 @@ public class IncidentService {
         Optional<Incident> manualOpt = incidentRepository.findById(id);
         if (manualOpt.isPresent()) {
             Incident existing = manualOpt.get();
-            updateIncidentFields(existing, details, updatedBy);
-            return incidentRepository.save(existing);
+            assertOwnedByCurrentTenant(existing.getTenantId(), id);
+            List<String> changes = updateIncidentFields(existing, details, updatedBy);
+            Incident saved = incidentRepository.save(existing);
+            // After the save, never before: an email about a change that failed to persist
+            // is worse than no email. NotificationService swallows its own failures.
+            notificationService.notifyIncidentUpdated(saved, changes, updatedBy);
+            return saved;
         }
 
         Optional<ExternalIncident> extOpt = externalIncidentRepository.findById(id);
         if (extOpt.isPresent()) {
             ExternalIncident existingExt = extOpt.get();
+            assertOwnedByCurrentTenant(existingExt.getTenantId(), id);
             Incident dummy = convertToIncident(existingExt);
-            updateIncidentFields(dummy, details, updatedBy);
-            
+            List<String> changes = updateIncidentFields(dummy, details, updatedBy);
+
             // Map back to external
             existingExt.setSubject(dummy.getSubject());
             existingExt.setDescription(dummy.getDescription());
@@ -426,44 +407,97 @@ public class IncidentService {
             existingExt.setUpdatedAt(OffsetDateTime.now());
 
             externalIncidentRepository.save(existingExt);
+            notificationService.notifyIncidentUpdated(dummy, changes, updatedBy);
             return dummy;
         }
 
         throw new NoSuchElementException("Incident not found with ID: " + id);
     }
 
-    private void updateIncidentFields(Incident existing, Incident details, String updatedBy) {
+    /**
+     * Applies the diff and records it. The returned list is the human-readable form of the
+     * same field changes written to incident_history, so the notification email and the
+     * audit trail are produced from one comparison rather than two. Empty when nothing
+     * changed — a PUT that alters no field must not generate mail.
+     *
+     * One rule for every field: {@code null} means "not supplied", {@code ""} means "clear
+     * it". Without that, a partial PUT erased whatever it did not mention, so every caller
+     * had to send the entire incident back — and a caller sending the entire incident sends
+     * its own possibly-stale copy of it. That is how saving a server name silently reverted
+     * a status the remediation lane had just set to ESCALATED. Fixed here, in the one place
+     * every update routes through, rather than in each form that posts to it.
+     */
+    private List<String> updateIncidentFields(Incident existing, Incident details, String updatedBy) {
         if (updatedBy == null || updatedBy.isBlank()) {
             updatedBy = "User";
         }
 
+        List<String> changes = new ArrayList<>();
         UUID id = existing.getId();
-        if (!Objects.equals(existing.getSubject(), details.getSubject())) {
+        if (supplied(existing.getSubject(), details.getSubject())) {
             saveHistoryRecord(id, "subject", existing.getSubject(), details.getSubject(), updatedBy);
+            changes.add(describe("Subject", existing.getSubject(), details.getSubject()));
             existing.setSubject(details.getSubject());
         }
-        if (!Objects.equals(existing.getDescription(), details.getDescription())) {
+        if (supplied(existing.getDescription(), details.getDescription())) {
             saveHistoryRecord(id, "description", existing.getDescription(), details.getDescription(), updatedBy);
+            // The description can be pages long; the mail says it changed, not what it now says.
+            changes.add("Description edited");
             existing.setDescription(details.getDescription());
         }
-        if (!Objects.equals(existing.getAssignee(), details.getAssignee())) {
+        if (supplied(existing.getAssignee(), details.getAssignee())) {
             saveHistoryRecord(id, "assignee", existing.getAssignee(), details.getAssignee(), updatedBy);
+            changes.add(describe("Assignee", existing.getAssignee(), details.getAssignee()));
             existing.setAssignee(details.getAssignee());
         }
-        if (!Objects.equals(existing.getAssignedGteam(), details.getAssignedGteam())) {
+        if (supplied(existing.getAssignedGteam(), details.getAssignedGteam())) {
             saveHistoryRecord(id, "assigned_gteam", existing.getAssignedGteam(), details.getAssignedGteam(), updatedBy);
+            changes.add(describe("Assigned group", existing.getAssignedGteam(), details.getAssignedGteam()));
             existing.setAssignedGteam(details.getAssignedGteam());
         }
-        if (!Objects.equals(existing.getPriority(), details.getPriority())) {
+        if (supplied(existing.getPriority(), details.getPriority())) {
             saveHistoryRecord(id, "priority", existing.getPriority(), details.getPriority(), updatedBy);
+            changes.add(describe("Priority", existing.getPriority(), details.getPriority()));
             existing.setPriority(details.getPriority());
             existing.setDueDate(calculateDueDate(existing.getCreatedAt(), details.getPriority()));
         }
-        if (!Objects.equals(existing.getStatus(), details.getStatus())) {
+        if (supplied(existing.getStatus(), details.getStatus())) {
             saveHistoryRecord(id, "status", existing.getStatus(), details.getStatus(), updatedBy);
+            changes.add(describe("Status", existing.getStatus(), details.getStatus()));
             existing.setStatus(details.getStatus());
         }
+        // Historied like any other field, and for a stronger reason: "who pointed this ticket
+        // at that server, and when" is the audit question after an unattended restart hits
+        // the wrong machine. The store number is a permission boundary — a change to it moves
+        // which past approvals this incident can inherit — so it is never a silent edit.
+        if (supplied(existing.getStoreNumber(), details.getStoreNumber())) {
+            saveHistoryRecord(id, "store_number", existing.getStoreNumber(), details.getStoreNumber(), updatedBy);
+            changes.add(describe("Store", existing.getStoreNumber(), details.getStoreNumber()));
+            existing.setStoreNumber(details.getStoreNumber());
+        }
+        if (supplied(existing.getTargetHost(), details.getTargetHost())) {
+            saveHistoryRecord(id, "target_host", existing.getTargetHost(), details.getTargetHost(), updatedBy);
+            changes.add(describe("Server", existing.getTargetHost(), details.getTargetHost()));
+            existing.setTargetHost(details.getTargetHost());
+        }
+        if (supplied(existing.getConnectionMethod(), details.getConnectionMethod())) {
+            saveHistoryRecord(id, "connection_method", existing.getConnectionMethod(), details.getConnectionMethod(), updatedBy);
+            changes.add(describe("Connection", existing.getConnectionMethod(), details.getConnectionMethod()));
+            existing.setConnectionMethod(details.getConnectionMethod());
+        }
         existing.setUpdatedAt(OffsetDateTime.now());
+        return changes;
+    }
+
+    /** Whether this PUT named the field at all, and named something different. */
+    private static boolean supplied(String current, String incoming) {
+        return incoming != null && !Objects.equals(current, incoming);
+    }
+
+    private static String describe(String field, String from, String to) {
+        return "%s: %s → %s".formatted(field,
+                from == null || from.isBlank() ? "(unset)" : from,
+                to == null || to.isBlank() ? "(unset)" : to);
     }
 
     private void saveHistoryRecord(UUID incidentId, String fieldName, String oldValue, String newValue, String updatedBy) {
@@ -489,6 +523,9 @@ public class IncidentService {
         inc.setExternalId(ext.getExternalId());
         inc.setCategory(ext.getCategory());
         inc.setConfidenceScore(ext.getConfidenceScore());
+        // Carried over so a ticket that arrived from a third-party ITSM still notifies the
+        // person who raised it there.
+        inc.setReporterEmail(ext.getReporterEmail());
         return inc;
     }
 

@@ -18,7 +18,9 @@ export const SIMPLE_ERROR_MESSAGE = 'Something went wrong. Please try again.';
 // ─── Types ───────────────────────────────────────────────────────────────────
 export interface AuthUser {
   username: string;
+  fullName?: string;
   role: string;
+  department?: string;
   tenantId: string;
   tenantName?: string;
   token: string;
@@ -32,7 +34,9 @@ export interface LoginResponse {
   accessToken?: string;
   refreshToken?: string;
   username: string;
+  fullName?: string;
   role: string;
+  department?: string;
   tenantId: string;
   tenantName?: string;
   expiresIn: number;
@@ -61,7 +65,12 @@ export function getStoredUser(): AuthUser | null {
   const raw = localStorage.getItem(USER_KEY);
   if (!raw) return null;
   try {
-    return JSON.parse(raw) as AuthUser;
+    const parsed = JSON.parse(raw) as AuthUser;
+    // A record with no username is not a session. Six components read this shape and render
+    // from it — initials, "requested by", the assignee filter — so a half-written or stale
+    // record has to present as signed-out here, at the one reader, rather than white-screening
+    // the app inside whichever component touches it first. Every caller already handles null.
+    return parsed && parsed.username ? parsed : null;
   } catch {
     return null;
   }
@@ -247,40 +256,4 @@ export async function apiPost<T>(url: string, body: unknown): Promise<T> {
   const res = await authFetch(url, { method: 'POST', body: JSON.stringify(body) });
   if (!res.ok) throw new Error(await extractApiError(res));
   return res.json() as Promise<T>;
-}
-
-// ─── Knowledge Base API helpers ──────────────────────────────────────────────────
-
-export interface KbStats {
-  totalEntries: number;
-  pendingEmbedding: number;
-  byCategory: Record<string, number>;
-  vectorStoreActive: boolean;
-  fullRagAvailable: boolean;
-}
-
-export async function fetchKbStats(tenantId: string): Promise<KbStats> {
-  return apiGet<KbStats>(`/api/v1/kb/stats?tenantId=${tenantId}`);
-}
-
-/**
- * Search the KB using combined text + semantic similarity.
- * Returns ranked resolved-incident entries and optional RAG hints.
- */
-export async function searchKb(
-  tenantId: string,
-  query: string,
-  topK = 10,
-): Promise<{ results: object[]; ragHints: object[]; vectorStoreActive: boolean }> {
-  return apiPost('/api/v1/kb/search', { tenantId, query, topK });
-}
-
-/**
- * Get an LLM resolution suggestion derived from both SOPs and resolved-KB entries.
- * Falls back gracefully when ChatClient / VectorStore is not configured.
- */
-export async function getKbSuggestion(
-  incidentDescription: string,
-): Promise<{ suggestion: string; sources: object[]; fullRagAvailable: boolean; sourcesFound: number }> {
-  return apiPost('/api/v1/kb/suggest', { incidentDescription });
 }

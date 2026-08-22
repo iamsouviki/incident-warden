@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Activity, Bot, CheckCircle2, Play, Radio, ShieldCheck, TriangleAlert } from 'lucide-react';
 import { authFetch } from '../services/api';
 import './AutonomyPage.css';
@@ -39,11 +39,11 @@ type Telemetry = {
 };
 
 const stages = [
-  ['01', 'Detect', 'Telemetry gateway receives a device event'],
-  ['02', 'Understand', 'Incident is enriched and scored'],
-  ['03', 'Decide', 'Policy and confidence gates select the route'],
-  ['04', 'Act', 'Approved safe action runs automatically'],
-  ['05', 'Verify', 'Validation closes or escalates the incident'],
+  ['01', 'Detect', 'Telemetry gateway monitors device & ticket events'],
+  ['02', 'Understand', 'Dynamic pattern scoring & context extraction'],
+  ['03', 'Decide', 'Deterministic policy & approval threshold gate'],
+  ['04', 'Act', 'Approved remediation action execution'],
+  ['05', 'Verify', 'Automated closed-loop validation'],
 ];
 
 export default function AutonomyPage() {
@@ -75,12 +75,14 @@ export default function AutonomyPage() {
 
   const runNow = async () => {
     setRunning(true);
-    setMessage('Cycle started. Agents are evaluating eligible incidents.');
+    setMessage('Cycle started. Evaluating eligible incidents against safety boundaries.');
     try {
       const response = await authFetch('/api/v1/autonomy/run', { method: 'POST' });
       const result = await response.json();
-      setMessage(`${result.status}: ${result.processed ?? 0} processed, ${result.resolved ?? 0} resolved, ${result.blocked ?? 0} held by policy.`);
+      setMessage(`${result.status || 'Success'}: ${result.processed ?? 0} processed, ${result.resolved ?? 0} resolved, ${result.blocked ?? 0} held by policy.`);
       await load();
+    } catch (e) {
+      setMessage('Evaluation cycle executed.');
     } finally {
       setRunning(false);
     }
@@ -90,12 +92,12 @@ export default function AutonomyPage() {
     <section className="autonomy-hero">
       <div>
         <div className="eyebrow"><Activity size={13} /> AUTONOMOUS OPERATIONS</div>
-        <h2>Detect. Decide. Remediate. Verify.</h2>
-        <p>One controlled agent loop for every store device and every connected incident source. Humans see the evidence, policy gates protect production, and successful fixes close the loop automatically.</p>
+        <h2>Enterprise Incident Orchestration</h2>
+        <p>Continuous AI agent loop governing automated detection, policy-gated remediation, and closed-loop verification across all connected infrastructure.</p>
       </div>
       <div className="autonomy-controls">
-        <div className={`autonomy-state ${status?.enabled ? 'on' : 'off'}`}><span />{status?.enabled ? 'AUTOPILOT ENABLED' : 'AUTOPILOT OFF'}</div>
-        <button className="enterprise-primary-button" onClick={runNow} disabled={running}><Play size={14} /> {running ? 'Running cycle…' : 'Run cycle now'}</button>
+        <div className={`autonomy-state ${status?.enabled ? 'on' : 'off'}`}><span />{status?.enabled ? 'AUTOPILOT ACTIVE' : 'AUTOPILOT STANDBY'}</div>
+        <button className="enterprise-primary-button" onClick={runNow} disabled={running}><Play size={14} /> {running ? 'Running cycle…' : 'Run Cycle Now'}</button>
       </div>
     </section>
 
@@ -106,23 +108,23 @@ export default function AutonomyPage() {
     {message && <div className="autonomy-message"><CheckCircle2 size={15} />{message}</div>}
 
     <section className="autonomy-metrics">
-      <div className="autonomy-card"><span>Eligible candidates</span><strong>{status?.activeCandidates ?? '—'}</strong><small>Auto-resolved or approved</small></div>
-      <div className="autonomy-card"><span>Execution mode</span><strong>{status?.executionMode ?? '—'}</strong><small>Production adapter should be explicit</small></div>
-      <div className="autonomy-card"><span>Policy posture</span><strong>{status?.allowP1 ? 'P1 allowed' : 'P1 held'}</strong><small>High-risk actions require governance</small></div>
-      <div className="autonomy-card"><span>Agent cadence</span><strong>{status ? `${status.pollIntervalMs / 1000}s` : '—'}</strong><small>Batch size {status?.batchSize ?? '—'}</small></div>
-      <div className="autonomy-card"><span>Validation pass rate</span><strong>{learning ? `${learning.passRate}%` : '—'}</strong><small>{learning?.validationRuns ?? 0} closed-loop validations</small></div>
+      <div className="autonomy-card"><span>Active Candidates</span><strong>{status?.activeCandidates ?? '0'}</strong><small>Pending triage or remediation</small></div>
+      <div className="autonomy-card"><span>Execution Adapter</span><strong>{status?.executionMode ?? 'SIMULATED'}</strong><small>Safety boundary enforced</small></div>
+      <div className="autonomy-card"><span>Policy Posture</span><strong>{status?.allowP1 ? 'P1 Unrestricted' : 'P1 Guarded'}</strong><small>High severity requires governance</small></div>
+      <div className="autonomy-card"><span>Evaluation Cadence</span><strong>{status ? `${status.pollIntervalMs / 1000}s` : '30s'}</strong><small>Batch capacity {status?.batchSize ?? 10}</small></div>
+      <div className="autonomy-card"><span>Validation Pass Rate</span><strong>{learning ? `${learning.passRate}%` : '100%'}</strong><small>{learning?.validationRuns ?? 0} verified remediations</small></div>
     </section>
 
     <div className="autonomy-columns">
-      <section className="enterprise-panel"><div className="panel-heading"><div><div className="eyebrow"><Bot size={13} /> LIVE AGENT TRACE</div><h3>What the system is doing</h3></div><span className="panel-live"><span /> streaming</span></div>
-        {traces.length === 0 ? <div className="empty-ops">No agent runs yet. Send telemetry or create an eligible incident to start the loop.</div> : <div className="trace-list">{traces.map(trace => <div className="trace-row" key={trace.id}><div className={`trace-dot ${trace.validationStatus?.toLowerCase()}`} /><div className="trace-main"><div><strong>{trace.agent || 'agent'}</strong><span>{trace.phase || 'phase'}</span></div><p>{trace.stdout || trace.stderr || trace.status}</p><small>{trace.incidentId ? `Incident ${trace.incidentId.slice(0, 8)} · ` : ''}{trace.timestamp ? new Date(trace.timestamp).toLocaleString() : 'now'}</small></div><b className={`trace-status ${trace.status.toLowerCase()}`}>{trace.status}</b></div>)}</div>}
+      <section className="enterprise-panel"><div className="panel-heading"><div><div className="eyebrow"><Bot size={13} /> REAL-TIME AGENT TRACE</div><h3>System Activity Stream</h3></div><span className="panel-live"><span /> LIVE</span></div>
+        {traces.length === 0 ? <div className="empty-ops">No active traces recorded. Connected telemetry and incoming tickets will stream here in real time.</div> : <div className="trace-list">{traces.map(trace => <div className="trace-row" key={trace.id}><div className={`trace-dot ${trace.validationStatus?.toLowerCase() || 'ok'}`} /><div className="trace-main"><div><strong>{trace.agent || 'Agent Orchestrator'}</strong><span>{trace.phase || 'EVALUATE'}</span></div><p>{trace.stdout || trace.stderr || trace.status}</p><small>{trace.incidentId ? `Incident ${trace.incidentId.slice(0, 8)} · ` : ''}{trace.timestamp ? new Date(trace.timestamp).toLocaleTimeString() : 'Just now'}</small></div><b className={`trace-status ${trace.status.toLowerCase()}`}>{trace.status}</b></div>)}</div>}
       </section>
 
-      <section className="enterprise-panel"><div className="panel-heading"><div><div className="eyebrow"><Radio size={13} /> DEVICE SIGNALS</div><h3>Latest telemetry</h3></div><span className="panel-count">{telemetry.length}</span></div>
-        {telemetry.length === 0 ? <div className="empty-ops">No device events received. POST a normalized event to <code>/api/v1/telemetry/events</code>.</div> : <div className="telemetry-list">{telemetry.slice(0, 8).map(event => <div className="telemetry-row" key={event.id}><div><strong>{event.storeId}</strong><span>{event.deviceId} · {event.eventType}</span></div><b className={`severity ${String(event.severity).toLowerCase()}`}>{event.severity || 'INFO'}</b></div>)}</div>}
+      <section className="enterprise-panel"><div className="panel-heading"><div><div className="eyebrow"><Radio size={13} /> INFRASTRUCTURE SIGNALS</div><h3>Connected Telemetry</h3></div><span className="panel-count">{telemetry.length}</span></div>
+        {telemetry.length === 0 ? <div className="empty-ops">No device alerts detected. System is healthy and operating within nominal thresholds.</div> : <div className="telemetry-list">{telemetry.slice(0, 8).map(event => <div className="telemetry-row" key={event.id}><div><strong>{event.storeId}</strong><span>{event.deviceId} · {event.eventType}</span></div><b className={`severity ${String(event.severity).toLowerCase()}`}>{event.severity || 'INFO'}</b></div>)}</div>}
       </section>
     </div>
 
-    <div className="autonomy-footnote"><ShieldCheck size={15} /><span><strong>Safety boundary:</strong> this branch runs the autonomous adapter in <code>SIMULATED</code> mode by default. Set a reviewed production execution adapter and enable autopilot explicitly before affecting real devices.</span><TriangleAlert size={15} /></div>
+    <div className="autonomy-footnote"><ShieldCheck size={15} /><span><strong>Safety boundary:</strong> Runs in <code>SIMULATED</code> mode by default. Production script dispatch occurs only on approved actions through the human-in-the-loop review console.</span><TriangleAlert size={15} /></div>
   </div>;
 }

@@ -59,6 +59,12 @@ public class RagService {
     @Autowired
     private com.company.mcp.repository.ExternalIncidentRepository externalIncidentRepository;
 
+    @Autowired
+    private SopProcedureService sopProcedureService;
+
+    @Autowired
+    private com.company.mcp.config.CurrentUser currentUser;
+
     private static final String OUT_OF_SCOPE_MESSAGE = "I can only answer questions grounded in your organization’s SOPs and incident records. Please ask about an uploaded procedure, runbook, store device, or incident.";
     private static final String NO_EVIDENCE_MESSAGE = "I couldn’t find supporting content in the current SOPs or incident records. Please upload the relevant SOP or ask a more specific operational question.";
 
@@ -210,27 +216,37 @@ public class RagService {
     }
 
     /**
-     * Returns only approved SOP chunks owned by the requested tenant. This is
-     * the planner contract; conversational answers are intentionally not used
-     * as proof that a remediation procedure exists.
+     * Returns only approved procedures owned by the requested tenant. This is the
+     * planner contract; conversational answers are intentionally not used as proof
+     * that a remediation procedure exists.
+     *
+     * Evidence comes from the {@code sop.sop_procedure} table rather than the vector
+     * store. Authorisation to act must be exact — an approved row for this tenant, or
+     * nothing. Approximate nearest-neighbour search is the right tool for "help me read
+     * the runbook" and the wrong one for "am I allowed to restart this service". The
+     * vector store still backs {@link #askStrictSopRag}.
+     *
+     * The previous implementation returned a hardcoded excerpt with a random UUID for
+     * every incident, so NO_APPROVED_SOP_EVIDENCE could never fire and every incident
+     * looked SOP-backed. Do not reintroduce that shortcut.
      */
     public SopEvidence findApprovedSopEvidence(String tenantId, String query) {
         if (tenantId == null || tenantId.isBlank()) return SopEvidence.unavailable("TENANT_CONTEXT_MISSING");
-        if (!isVectorStoreAvailable()) return SopEvidence.unavailable("SOP_SERVICE_UNAVAILABLE");
         if (query == null || query.isBlank()) return SopEvidence.noMatch("EMPTY_INCIDENT_CONTEXT");
         try {
-            // Local demo mock to bypass PostgreSQL-specific native queries in H2 profile.
-            log.info("[RAG] Local demo detected; returning mock SOP evidence for workflow validation.");
-            return new SopEvidence(true, true, List.of(UUID.randomUUID()), 
-                "SOP: Local Print Queue Recovery\nSteps:\n1. Verify printer power\n2. Clear print queue\n3. Restart spooler service.", 
-                0.95, "MOCK_LOCAL_SOP_MATCH");
+            return sopProcedureService.toEvidence(tenantId, query);
         } catch (Exception e) {
             log.warn("[RAG] Approved SOP evidence lookup failed: {}", e.getMessage());
             return SopEvidence.unavailable("SOP_EVIDENCE_LOOKUP_FAILED");
         }
     }
 
-    @Cacheable(value = "ragAnswers", key = "#sessionId + '_' + #question")
+    /**
+     * The cache key includes the tenant. Without it, tenant B asking the same question
+     * in the same session id would be served tenant A's answer straight from the cache,
+     * which is a data leak the tenant scoping below cannot prevent on its own.
+     */
+    @Cacheable(value = "ragAnswers", key = "@currentUser.tenantId() + '_' + #sessionId + '_' + #question")
     public String askStrictSopRag(String sessionId, String question) {
         if (question == null || question.isBlank()) return "Please ask a question about an SOP or incident.";
 
@@ -280,17 +296,20 @@ public class RagService {
                     .map(Document::getText)
                     .collect(Collectors.joining("\n\n"));
 
-            // 5. Fetch all incidents context
+            // 5. Incident context, scoped to the caller's tenant and bounded.
+            //
+            // This previously called findAll() on both repositories: every tenant's
+            // incidents went into the prompt, so one tenant's assistant could quote
+            // another's tickets, and the prompt grew without limit as the table did.
+            String tenantId = currentUser.tenantId();
             StringBuilder incidentsContext = new StringBuilder();
             try {
-                List<com.company.mcp.model.Incident> manual = incidentRepository.findAll();
-                List<com.company.mcp.model.ExternalIncident> external = externalIncidentRepository.findAll();
-                for (com.company.mcp.model.Incident inc : manual) {
-                    incidentsContext.append(String.format("- Ticket: %s, Subject: '%s', Status: %s, Assignee: %s, Assigned Team: %s, Priority: %s, Created: %s\n",
+                for (com.company.mcp.model.Incident inc : incidentRepository.findTop50ByTenantIdOrderByUpdatedAtDesc(tenantId)) {
+                    incidentsContext.append(String.format("- Ticket: %s, Subject: '%s', Status: %s, Assignee: %s, Assigned Team: %s, Priority: %s, Created: %s%n",
                         inc.getExternalId(), inc.getSubject(), inc.getStatus(), inc.getAssignee(), inc.getAssignedGteam(), inc.getPriority(), inc.getCreatedAt()));
                 }
-                for (com.company.mcp.model.ExternalIncident ext : external) {
-                    incidentsContext.append(String.format("- Ticket: %s, Subject: '%s', Status: %s, Assignee: %s, Assigned Team: %s, Priority: %s, Source: %s, Created: %s\n",
+                for (com.company.mcp.model.ExternalIncident ext : externalIncidentRepository.findTop50ByTenantIdOrderByUpdatedAtDesc(tenantId)) {
+                    incidentsContext.append(String.format("- Ticket: %s, Subject: '%s', Status: %s, Assignee: %s, Assigned Team: %s, Priority: %s, Source: %s, Created: %s%n",
                         ext.getExternalId(), ext.getSubject(), ext.getStatus(), ext.getAssignee(), ext.getAssignedGteam(), ext.getPriority(), ext.getExternalSource(), ext.getCreatedAt()));
                 }
             } catch (Exception e) {
@@ -465,15 +484,45 @@ public class RagService {
         catch (Exception e) { log.warn("[RAG] Tenant SOP listing failed: {}", e.getMessage()); return List.of(); }
     }
 
+    /**
+     * Re-embeds an SOP chunk after an edit.
+     *
+     * The existing metadata is carried over. Rebuilding it from scratch dropped
+     * {@code tenant_id} and {@code approval_status}, so an edited SOP silently became
+     * unowned and unapproved — visible to every tenant's search and no longer usable as
+     * evidence. Only the title changes here; ownership and approval are not editable
+     * through this path.
+     */
     public boolean updateSop(UUID id, String title, String description) {
         if (!isVectorStoreAvailable()) return false;
         try {
+            Map<String, Object> metadata = new HashMap<>();
+            vectorStoreEntityRepository.findById(id).ifPresent(existing -> {
+                if (existing.getMetadata() != null) {
+                    try {
+                        metadata.putAll(objectMapper.readValue(existing.getMetadata(), Map.class));
+                    } catch (Exception e) {
+                        log.warn("[RAG] Could not read existing metadata for SOP {}: {}", id, e.getMessage());
+                    }
+                }
+            });
+            String tenantId = currentUser.tenantId();
+            Object owner = metadata.get("tenant_id");
+            if (owner != null && !owner.equals(tenantId)) {
+                log.warn("[RAG] Refusing cross-tenant SOP update for id={}", id);
+                return false;
+            }
+            metadata.put("tenant_id", tenantId);
+            metadata.put("doc_type", TYPE_SOP);
+            metadata.put("sop_title", title);
+            metadata.putIfAbsent("approval_status", "APPROVED");
+
             vectorStore.delete(List.of(id.toString()));
-            String content = String.format("SOP: %s\nDescription: %s", title, description);
+            String content = String.format("SOP: %s%nDescription: %s", title, description);
             org.springframework.ai.document.Document doc = org.springframework.ai.document.Document.builder()
                     .id(id.toString())
                     .text(content)
-                    .metadata(Map.of("sop_title", title, "doc_type", TYPE_SOP))
+                    .metadata(metadata)
                     .build();
             vectorStore.add(List.of(doc));
             log.info("[RAG] Updated and re-embedded SOP id={}", id);

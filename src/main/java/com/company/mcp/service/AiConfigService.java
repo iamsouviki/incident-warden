@@ -20,7 +20,23 @@ public class AiConfigService {
 
     private String provider = "ollama";
     private String baseUrl = "http://localhost:11434";
+
+    /**
+     * Read from the environment, never from the database and never from the UI.
+     *
+     * This used to be a row in config.system_config, written by the AI Configuration
+     * page and handed back in plaintext by GET /api/v1/ai/config. A provider credential
+     * in a table that the application itself can rewrite is a credential in a backup, in
+     * a replica, and in every screenshot of that page. Migration 1.16 deletes the row.
+     *
+     * The cost of this choice: switching provider to one that needs a key now requires a
+     * restart with the variable set, because nothing in the running process can change it.
+     * That is the intended trade — an unset key fails a model call, which is recoverable;
+     * a leaked key is not.
+     */
+    @org.springframework.beans.factory.annotation.Value("${MCP_LLM_API_KEY:}")
     private String apiKey = "";
+
     private String activeChatModel = "qwen2.5-coder:3b";
     private String activeEmbeddingModel = "nomic-embed-text:latest";
     @org.springframework.beans.factory.annotation.Value("${mcp.confidence.auto-resolve-threshold:1.00}")
@@ -47,9 +63,6 @@ public class AiConfigService {
                         break;
                     case "base_url":
                         this.baseUrl = val;
-                        break;
-                    case "api_key":
-                        this.apiKey = val;
                         break;
                     case "active_chat_model":
                         this.activeChatModel = val;
@@ -107,13 +120,9 @@ public class AiConfigService {
         updateConfig("base_url", baseUrl);
     }
 
+    /** Empty when no key is configured; callers treat that as "no key available". */
     public String getApiKey() {
         return apiKey;
-    }
-
-    public void setApiKey(String apiKey) {
-        this.apiKey = apiKey;
-        updateConfig("api_key", apiKey);
     }
 
     public String getActiveChatModel() {

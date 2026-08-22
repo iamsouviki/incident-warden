@@ -19,7 +19,12 @@ public class AppUser {
     @Column(nullable = false, unique = true)
     private String username;
 
+    @Column(name = "full_name")
+    private String fullName;
+
     private String email;
+
+    private String department;
 
     @Column(name = "password_hash")
     private String passwordHash;
@@ -56,8 +61,14 @@ public class AppUser {
     public String getUsername()              { return username; }
     public void setUsername(String username) { this.username = username; }
 
+    public String getFullName()              { return fullName; }
+    public void setFullName(String fullName) { this.fullName = fullName; }
+
     public String getEmail()           { return email; }
     public void setEmail(String email) { this.email = email; }
+
+    public String getDepartment()                { return department; }
+    public void setDepartment(String department) { this.department = department; }
 
     public String getPasswordHash()                    { return passwordHash; }
     public void setPasswordHash(String passwordHash)   { this.passwordHash = passwordHash; }

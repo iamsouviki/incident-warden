@@ -75,7 +75,6 @@ flowchart TB
     end
 
     subgraph DATA[Data Stores]
-        MDB[(MongoDB)]
         RDB[(PostgreSQL)]
         REDIS[(Redis)]
         VDB[(Vector Index / Embeddings)]
@@ -90,7 +89,7 @@ flowchart TB
     UI --> API
     API --> IA
     IA --> RA
-    RA --> MDB
+    RA --> RDB
     RA --> VDB
     RA --> MON
     RA --> RC
@@ -109,7 +108,7 @@ flowchart TB
     XA --> VA
     VA --> UI
     VA --> LA
-    LA --> MDB
+    LA --> RDB
     LA --> TS
     XA --> ESA
     ESA --> UI
@@ -122,7 +121,7 @@ flowchart TB
 
     RC --> REDIS
     EC --> REDIS
-    MDB --> VDB
+    RDB --> VDB
     API --> RDB
 ```
 
@@ -288,27 +287,22 @@ Auto-run requires:
 
 ## 7. Data Architecture
 
-### MongoDB
-
-Use for:
-
-- resolved incidents
-- SOP-derived knowledge metadata
-- script proposals
-- approvals
-- remediation templates
-- execution history
-- validation history
-- incident conversations
-- conversation summaries
-
 ### PostgreSQL
 
+One relational store, not two. An earlier draft of this document split the domain across
+MongoDB and PostgreSQL; the implementation does not, and the split was never justified —
+every collection listed for MongoDB is relational, is read transactionally alongside the
+incident it belongs to, and is queried by tenant. A second engine would have bought a
+second backup story, a second failure mode and cross-store consistency work, for nothing.
+The embedding index is a pgvector table in the same database.
+
 Use for:
 
-- transactional app state
-- user/tenant metadata
-- audit metadata if already present in the current system
+- transactional app state, users, tenants
+- incidents, remediation plans, approvals, execution history
+- approved SOP procedures (the record the HITL gate treats as authority to act)
+- the hash-chained audit log
+- SOP documents and their embeddings (pgvector)
 
 ### Redis
 

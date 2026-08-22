@@ -19,7 +19,24 @@ public class Team {
     @Column(name = "description", columnDefinition = "TEXT")
     private String description;
 
-    @OneToMany(mappedBy = "team", cascade = CascadeType.ALL, fetch = FetchType.EAGER)
+    /**
+     * The group's distribution address, set by an admin on the Teams page. Nullable: a
+     * team nobody has given an address to is skipped when notifications go out, rather
+     * than having one guessed from its name.
+     */
+    @Column(name = "email")
+    private String email;
+
+    /**
+     * The roster, read-only through this side. Deliberately no cascade: this collection is
+     * inverse (team_employees.team_id owns the link) and the FK is already ON DELETE CASCADE,
+     * so JPA cascading adds nothing — while CascadeType.ALL actively broke member removal.
+     * Deleting a TeamEmployee whose parent Team was loaded in the same session left the child
+     * in this EAGER collection at flush time, so the cascaded persist-on-flush un-deleted it:
+     * the API answered 200 and the row was still there. Roster writes go through
+     * TeamEmployeeRepository, which owns the link.
+     */
+    @OneToMany(mappedBy = "team", fetch = FetchType.EAGER)
     @JsonManagedReference
     private List<TeamEmployee> employees;
 
@@ -39,6 +56,9 @@ public class Team {
 
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }
+
+    public String getEmail() { return email; }
+    public void setEmail(String email) { this.email = email; }
 
     public List<TeamEmployee> getEmployees() { return employees; }
     public void setEmployees(List<TeamEmployee> employees) { this.employees = employees; }

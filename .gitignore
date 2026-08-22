@@ -46,7 +46,8 @@ logs/
 
 # ── IDE / editor ────────────────────────────────────────────────────────────────
 .idea/
-.vscode/settings.json
+.vscode/
+.kilo/
 *.iml
 *.iws
 *.ipr

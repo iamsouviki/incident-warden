@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { authFetch, getStoredUser } from '../services/api';
-import { Terminal, Play, CheckCircle, XCircle, Trash2, Clock, Code, Server, Plus, Save, Sparkles, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { Play, CheckCircle, XCircle, Trash2, Plus, Save, Sparkles, AlertTriangle } from 'lucide-react';
 import './ScriptEditorPage.css'; // Reuse or import editor styles
 
 interface SavedScript {
@@ -87,11 +87,14 @@ const ToolsPage: React.FC = () => {
 
   const loadExecutionLogs = async () => {
     try {
-      // In version 1.7, we save execution logs to the database!
-      // Let's load the latest logs. To be backward compatible and show all,
-      // let's fetch log history from DB or fall back to localStorage.
-      const res = await authFetch(`/api/v1/incidents/history`); // audit logs or other history.
-      // Wait, we also created tools.execution_logs. Let's load them or local logs.
+      const res = await authFetch('/api/v1/scripts/logs');
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.logs) && data.logs.length > 0) {
+          setExecutionLogs(data.logs);
+          return;
+        }
+      }
       const localStored = localStorage.getItem('mcp_execution_history');
       if (localStored) {
         const parsed = JSON.parse(localStored) as ExecutionLog[];
@@ -99,7 +102,7 @@ const ToolsPage: React.FC = () => {
         setExecutionLogs(parsed);
       }
     } catch (err) {
-      console.error('Failed to load logs', err);
+      console.error('Failed to load execution logs', err);
     }
   };
 
@@ -343,7 +346,7 @@ const ToolsPage: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '400px 1fr', gap: '20px', height: 'calc(100vh - 160px)', minHeight: '600px', width: '100%' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr)) 1.2fr', gap: '20px', minHeight: 'calc(100vh - 160px)', width: '100%' }}>
       
       {/* ── LEFT PANEL: Saved Tools Directory and execution history ── */}
       <div className="card" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
