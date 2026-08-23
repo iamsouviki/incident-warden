@@ -1,0 +1,25 @@
+-- 1.21 — Let an operator answer the OS question instead of only inferring it.
+--
+-- 1.18 gave the incident a machine and a connection method. The operating system was
+-- still inferred: the executor's probe reply, or the WinRM connection method, or the
+-- platform segment of the approved procedure, or linux. Inference is right most of the
+-- time and has no override — an operator who KNOWS the till is Windows had no way to say
+-- so, and a wrong detection could only be corrected by editing the SOP that other stores
+-- share.
+--
+-- This column is that override. Empty/null means "work it out" and keeps the pre-1.21
+-- behaviour exactly: the ladder in IncidentTarget.platform() falls straight through to
+-- the probe reply. A value means a person answered, and it outranks the inference — the
+-- same rule target_host already follows, where a typed field beats text extraction
+-- because the field is a person's answer to this exact question.
+--
+-- When the operator's answer and the machine's answer disagree, the disagreement is
+-- recorded rather than hidden: targetPlatformSource becomes OPERATOR_OVERRODE_HOST, it
+-- is pinned inside the plan's approval hash, and the HITL reviewer sees it on the badge
+-- next to the script. Approving PowerShell for a host that answered "linux" is a thing a
+-- human may legitimately need to do; doing it without being told is not.
+--
+-- 16 chars: the values are windows | linux | darwin. Unrecognised text is not rejected
+-- here, it simply fails to normalise and the ladder drops to the next rung — a bad value
+-- must never be able to turn a Windows procedure into bash.
+ALTER TABLE incident.incidents ADD COLUMN IF NOT EXISTS target_platform VARCHAR(16);

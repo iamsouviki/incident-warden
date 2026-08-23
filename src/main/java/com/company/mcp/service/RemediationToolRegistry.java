@@ -14,6 +14,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -42,9 +43,23 @@ public class RemediationToolRegistry {
     /**
      * Per-segment shape for parsed action keys: no whitespace, quotes, or shell
      * metacharacters. A leading {@code /} is permitted because job identifiers are
-     * absolute paths ({@code RERUN_JOB:linux:/opt/batch/nightly_report.sh}).
+     * absolute paths ({@code RERUN_JOB:linux:/opt/batch/nightly_report.sh}), and a
+     * backslash because a Windows job path is {@code C:\batch\nightly.ps1}. Both are
+     * only ever interpolated inside single quotes, where they are literal in bash and in
+     * PowerShell alike.
      */
-    private static final Pattern SAFE_SEGMENT = Pattern.compile("^[A-Za-z0-9/][A-Za-z0-9._/:@-]{0,299}$");
+    private static final Pattern SAFE_SEGMENT = Pattern.compile("^[A-Za-z0-9/][A-Za-z0-9._/:@\\\\-]{0,299}$");
+
+    /**
+     * An optional platform token in an executor's probe reply, so a plan can be written for
+     * the OS that is actually on the host instead of the one the SOP author assumed.
+     *
+     * Deliberately shape-tolerant — it matches {@code platform=windows} in a plain-text
+     * reply and {@code "platform":"windows"} in a JSON one — so an existing executor keeps
+     * working unchanged (it simply reports nothing, and the resolution falls back a rung).
+     */
+    private static final Pattern PROBE_PLATFORM = Pattern.compile(
+            "platform\\s*[=:]\\s*\"?([A-Za-z0-9_-]{1,32})", Pattern.CASE_INSENSITIVE);
 
     /**
      * The tool table. A key not listed here cannot execute, whatever an approved
@@ -114,12 +129,16 @@ public class RemediationToolRegistry {
 
         // CHECK_URL's first argument is itself a URL containing colons, so the tail is
         // rejoined rather than split blindly: everything between the tool name and the
-        // final segment is the URL.
+        // final segment is the URL. RERUN_JOB has the same problem from the other end —
+        // C:\batch\nightly.ps1 contains the delimiter — so its tail is rejoined too.
         List<String> args;
         if ("CHECK_URL".equals(tool.name())) {
             if (parts.length < 3) return ParsedAction.invalid("MALFORMED_ACTION_KEY");
             args = List.of(String.join(":", java.util.Arrays.copyOfRange(parts, 1, parts.length - 1)),
                     parts[parts.length - 1]);
+        } else if ("RERUN_JOB".equals(tool.name())) {
+            if (parts.length < 3) return ParsedAction.invalid("MALFORMED_ACTION_KEY");
+            args = List.of(parts[1], String.join(":", java.util.Arrays.copyOfRange(parts, 2, parts.length)));
         } else {
             args = List.of(java.util.Arrays.copyOfRange(parts, 1, parts.length));
         }
@@ -144,12 +163,16 @@ public class RemediationToolRegistry {
      * UNKNOWN, not UNREACHABLE, when there is no executor to ask. A demo with execution
      * disabled must keep planning exactly as it did before; silence from a component that
      * was never started is not evidence a host is down.
+     *
+     * A reachable reply may also name the host's platform ({@code platform=windows}), which
+     * is how a script comes to be written for the operating system that is actually there.
+     * An executor that says nothing is not an error — the platform falls back a rung.
      */
     public Probe reachable(String host, String connection) {
-        if (host == null || host.isBlank()) return new Probe("UNKNOWN", "TARGET_HOST_UNKNOWN", "No host to probe.");
+        if (host == null || host.isBlank()) return new Probe("UNKNOWN", "TARGET_HOST_UNKNOWN", "No host to probe.", "");
         if (!executionEnabled || executorUrl == null || executorUrl.isBlank()) {
             return new Probe("UNKNOWN", "EXECUTOR_NOT_CONFIGURED",
-                    "No executor agent is configured, so '" + host + "' could not be checked.");
+                    "No executor agent is configured, so '" + host + "' could not be checked.", "");
         }
         try {
             String body = json.writeValueAsString(Map.of(
@@ -167,20 +190,23 @@ public class RemediationToolRegistry {
             }
             HttpResponse<String> response = http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
             String detail = response.body() == null ? "" : response.body().trim();
+            // Read before truncation: a chatty agent must not lose the platform to the clip.
+            Matcher platform = PROBE_PLATFORM.matcher(detail);
+            String reported = platform.find() ? platform.group(1) : "";
             if (detail.length() > 500) detail = detail.substring(0, 500) + "…";
             boolean ok = response.statusCode() >= 200 && response.statusCode() < 300;
             return ok
-                    ? new Probe("REACHABLE", "", "Executor reached '" + host + "'. " + detail)
+                    ? new Probe("REACHABLE", "", "Executor reached '" + host + "'. " + detail, reported)
                     : new Probe("UNREACHABLE", "TARGET_UNREACHABLE:" + host,
                             "Executor could not reach '" + host
                                     + (connection == null || connection.isBlank() ? "' over its default connection. " : "' over " + connection + ". ")
-                                    + detail);
+                                    + detail, "");
         } catch (Exception e) {
             // The executor itself is down. Not the host's fault, so not the host's verdict:
             // blocking every plan because the agent is restarting would be its own outage.
             log.warn("[EXEC] Probe of {} failed: {}", host, e.getMessage());
             return new Probe("UNKNOWN", "PROBE_UNAVAILABLE",
-                    "Executor did not answer the reachability check: " + e.getClass().getSimpleName());
+                    "Executor did not answer the reachability check: " + e.getClass().getSimpleName(), "");
         }
     }
 
@@ -355,14 +381,34 @@ public class RemediationToolRegistry {
      * @param status REACHABLE | UNREACHABLE | UNKNOWN — UNKNOWN means nobody could answer,
      *               which must never be treated as a failed host
      */
-    public record Probe(String status, String reason, String detail) {
+    public record Probe(String status, String reason, String detail, String platform) {
         public boolean unreachable() { return "UNREACHABLE".equals(status); }
         public boolean known() { return !"UNKNOWN".equals(status); }
+
+        /** Nothing was asked, or nothing answered. */
+        public static Probe notAsked() { return new Probe("UNKNOWN", "", "", ""); }
     }
 
     public record ParsedAction(boolean valid, Tool tool, List<String> args, String reason) {
         static ParsedAction invalid(String reason) {
             return new ParsedAction(false, null, List.of(), reason);
+        }
+
+        /**
+         * The platform the procedure's author had in mind, or "" when the key names none.
+         *
+         * A hint, not a decision: {@link IncidentTarget#platform} uses it only after the
+         * host itself and the operator's connection method have both said nothing. Two
+         * tools carry an os/type segment and the rest do not, which is why this lives on
+         * the parsed key rather than being re-derived wherever a script gets written.
+         */
+        public String platformHint() {
+            if (!valid || tool == null) return "";
+            return switch (tool.name()) {
+                case "RESTART_SERVICE" -> args.size() > 1 ? args.get(1) : "";
+                case "RERUN_JOB" -> args.isEmpty() ? "" : args.get(0);
+                default -> "";
+            };
         }
     }
 

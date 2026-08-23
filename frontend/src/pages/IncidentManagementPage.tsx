@@ -19,6 +19,7 @@ export interface Incident {
   externalId: string;
   /** Store this ticket belongs to. Autonomy is inherited per store, not per tenant. */
   storeNumber?: string;
+  targetPlatform?: string;
   /** The machine a remediation script would run on. Blank stops a mutating plan. */
   targetHost?: string;
   /** SSH | WINRM | AGENT, or blank for the executor's own default path to the host. */
@@ -123,6 +124,7 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
   const [editStoreNumber, setEditStoreNumber] = useState('');
   const [editTargetHost, setEditTargetHost] = useState('');
   const [editConnectionMethod, setEditConnectionMethod] = useState('');
+  const [editTargetPlatform, setEditTargetPlatform] = useState('');
   const [targetSaving, setTargetSaving] = useState(false);
   const [updateLoading, setUpdateLoading] = useState(false);
 
@@ -139,6 +141,7 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
   // the person filing the ticket; the backend re-derives and re-validates both.
   const [newStoreNumber, setNewStoreNumber] = useState('');
   const [newTargetHost, setNewTargetHost] = useState('');
+  const [newTargetPlatform, setNewTargetPlatform] = useState('');
   const [serverNudged, setServerNudged] = useState(false);
   const [createLoading, setCreateLoading] = useState(false);
   const [initialComment, setInitialComment] = useState('');
@@ -304,6 +307,7 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
       setEditStoreNumber(selectedIncident.storeNumber || '');
       setEditTargetHost(selectedIncident.targetHost || '');
       setEditConnectionMethod(selectedIncident.connectionMethod || '');
+      setEditTargetPlatform(selectedIncident.targetPlatform || '');
       setEditMode(false);
       setAiSuggestion(null);
       setPlanOutcome(null);
@@ -411,6 +415,7 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
           reporterEmail: newReporterEmail.trim(),
           storeNumber: newStoreNumber.trim(),
           targetHost: newTargetHost.trim(),
+          targetPlatform: newTargetPlatform,
           status: 'New'
         })
       });
@@ -435,6 +440,7 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
         setNewReporterEmail('');
         setNewStoreNumber('');
         setNewTargetHost('');
+        setNewTargetPlatform('');
         setServerNudged(false);
         if (setShowCreateModal) setShowCreateModal(false);
         fetchIncidents();
@@ -522,7 +528,8 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
         body: JSON.stringify({
           storeNumber: editStoreNumber.trim(),
           targetHost: editTargetHost.trim(),
-          connectionMethod: editConnectionMethod
+          connectionMethod: editConnectionMethod,
+          targetPlatform: editTargetPlatform
         })
       });
       if (res.ok) {
@@ -594,80 +601,88 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
         <span style={{ fontSize: '11px', color: 'var(--text-3)' }}>Supports CSV & XLSX (Max 500 records)</span>
       </div>
 
-      {/* Advanced Filters topbar row */}
-      <div className="card" style={{ padding: '14px 16px', marginBottom: '12px', background: 'var(--surface-2)', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr)) auto', gap: '10px', alignItems: 'end', flexShrink: 0, overflow: 'visible' }}>
-        <div>
-          <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Subject Search</label>
-          <div style={{ position: 'relative' }}>
-            <Search size={12} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-            <input type="text" placeholder="Search subject..." value={subject} onChange={e => setSubject(e.target.value)} style={{ paddingLeft: '26px', paddingRight: '10px', height: '36px', fontSize: '12px' }} />
+      {/* Advanced Filters structured 2-row bar */}
+      <div className="incident-filters-card">
+        {/* Row 1: Search, Description, Assignee, Team */}
+        <div className="filters-row-1">
+          <div className="filter-item">
+            <label className="filter-label">Subject Search</label>
+            <div style={{ position: 'relative' }}>
+              <Search size={12} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+              <input type="text" placeholder="Search subject..." value={subject} onChange={e => setSubject(e.target.value)} style={{ paddingLeft: '26px', paddingRight: '10px', height: '34px', fontSize: '12px' }} />
+            </div>
+          </div>
+          <div className="filter-item">
+            <label className="filter-label">Description</label>
+            <input type="text" placeholder="Contains..." value={description} onChange={e => setDescription(e.target.value)} style={{ height: '34px', padding: '6px 10px', fontSize: '12px' }} />
+          </div>
+          <div className="filter-item">
+            <label className="filter-label">Assignee</label>
+            <SearchableSelect
+              id="filter-assignee"
+              placeholder="Search assignee..."
+              allLabel="All Assignees"
+              value={assignee}
+              onChange={setAssignee}
+              options={(
+                assignedGteam
+                  ? (teams.find(t => t.name === assignedGteam)?.employees || [])
+                  : Array.from(new Map(teams.flatMap(t => t.employees).map(emp => [emp.username, emp])).values())
+              ).map(emp => ({ value: emp.username, label: emp.username }))}
+            />
+          </div>
+          <div className="filter-item">
+            <label className="filter-label">Team</label>
+            <SearchableSelect
+              id="filter-team"
+              placeholder="Search team..."
+              allLabel="All Teams"
+              value={assignedGteam}
+              onChange={(selectedTeam) => {
+                setAssignedGteam(selectedTeam);
+                if (selectedTeam) {
+                  const teamEmployees = teams.find(t => t.name === selectedTeam)?.employees || [];
+                  if (!teamEmployees.some(emp => emp.username === assignee)) setAssignee('');
+                }
+              }}
+              options={teams.map(t => ({ value: t.name, label: t.name }))}
+            />
           </div>
         </div>
-        <div>
-          <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Description</label>
-          <input type="text" placeholder="Contains..." value={description} onChange={e => setDescription(e.target.value)} style={{ height: '36px', padding: '6px 10px', fontSize: '12px' }} />
-        </div>
-        <div>
-          <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Assignee</label>
-          <SearchableSelect
-            id="filter-assignee"
-            placeholder="Search assignee..."
-            allLabel="All Assignees"
-            value={assignee}
-            onChange={setAssignee}
-            options={(
-              assignedGteam
-                ? (teams.find(t => t.name === assignedGteam)?.employees || [])
-                : Array.from(new Map(teams.flatMap(t => t.employees).map(emp => [emp.username, emp])).values())
-            ).map(emp => ({ value: emp.username, label: emp.username }))}
-          />
-        </div>
-        <div>
-          <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Team</label>
-          <SearchableSelect
-            id="filter-team"
-            placeholder="Search team..."
-            allLabel="All Teams"
-            value={assignedGteam}
-            onChange={(selectedTeam) => {
-              setAssignedGteam(selectedTeam);
-              if (selectedTeam) {
-                const teamEmployees = teams.find(t => t.name === selectedTeam)?.employees || [];
-                if (!teamEmployees.some(emp => emp.username === assignee)) setAssignee('');
-              }
-            }}
-            options={teams.map(t => ({ value: t.name, label: t.name }))}
-          />
-        </div>
-        <div>
-          <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Priority</label>
-          <select value={priority} onChange={e => setPriority(e.target.value)} style={{ height: '36px', padding: '6px 10px', fontSize: '12px', cursor: 'pointer' }}>
-            <option value="">All Priorities</option>
-            <option value="P1">P1 - Critical</option>
-            <option value="P2">P2 - High</option>
-            <option value="P3">P3 - Medium</option>
-          </select>
-        </div>
-        <div>
-          <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Created Date</label>
-          <input type="date" value={createdDate} onChange={e => setCreatedDate(e.target.value)} style={{ height: '36px', padding: '6px 10px', fontSize: '12px' }} />
-        </div>
-        <div>
-          <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Due Date</label>
-          <input type="date" value={dueDateFilter} onChange={e => setDueDateFilter(e.target.value)} style={{ height: '36px', padding: '6px 10px', fontSize: '12px' }} />
-        </div>
-        <div style={{ display: 'flex', gap: '6px', minWidth: '220px' }}>
-          <button className="btn-secondary" onClick={clearFilters} style={{ height: '36px', padding: '0 12px', fontSize: '12px', flex: 1 }}>
-            Clear
-          </button>
-          <button className="btn-sync" onClick={handleSync} disabled={syncing} style={{ height: '36px', padding: '0 12px', fontSize: '12px', flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
-            <RefreshCw size={12} className={syncing ? 'spin' : ''} /> {syncing ? 'Syncing' : 'Sync'}
-          </button>
-          <button className="btn-primary" onClick={() => setShowCreateModal?.(true)} style={{ height: '36px', padding: '0 12px', fontSize: '12px', flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
-            <Plus size={12} /> Create
-          </button>
+
+        {/* Row 2: Priority, Created Date, Due Date, Actions */}
+        <div className="filters-row-2">
+          <div className="filter-item">
+            <label className="filter-label">Priority</label>
+            <select value={priority} onChange={e => setPriority(e.target.value)} style={{ height: '34px', padding: '6px 10px', fontSize: '12px', cursor: 'pointer' }}>
+              <option value="">All Priorities</option>
+              <option value="P1">P1 - Critical</option>
+              <option value="P2">P2 - High</option>
+              <option value="P3">P3 - Medium</option>
+            </select>
+          </div>
+          <div className="filter-item">
+            <label className="filter-label">Created Date</label>
+            <input type="date" value={createdDate} onChange={e => setCreatedDate(e.target.value)} style={{ height: '34px', padding: '6px 10px', fontSize: '12px' }} />
+          </div>
+          <div className="filter-item">
+            <label className="filter-label">Due Date</label>
+            <input type="date" value={dueDateFilter} onChange={e => setDueDateFilter(e.target.value)} style={{ height: '34px', padding: '6px 10px', fontSize: '12px' }} />
+          </div>
+          <div className="filter-actions">
+            <button className="btn-secondary" onClick={clearFilters} style={{ height: '34px', padding: '0 12px', fontSize: '12px' }}>
+              Clear
+            </button>
+            <button className="btn-sync" onClick={handleSync} disabled={syncing} style={{ height: '34px', padding: '0 12px', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+              <RefreshCw size={12} className={syncing ? 'spin' : ''} /> {syncing ? 'Syncing' : 'Sync'}
+            </button>
+            <button className="btn-primary" onClick={() => setShowCreateModal?.(true)} style={{ height: '34px', padding: '0 12px', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+              <Plus size={12} /> Create
+            </button>
+          </div>
         </div>
       </div>
+
 
       {/* Directory Split panel view */}
       <div style={{ display: 'grid', gridTemplateColumns: '360px 1fr', gap: '16px', flex: 1, height: 'calc(100% - 180px)', minHeight: '400px' }}>
@@ -959,7 +974,9 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
                             {targetSaving ? 'Saving...' : 'Save target'}
                           </button>
                         </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
+                        {/* auto-fit, not a fixed 4-up: this panel lives in a drawer whose width
+                            varies, and four fixed columns clipped the last one off the edge. */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px' }}>
                           <div>
                             <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Store</label>
                             <input type="text" placeholder="0042" value={editStoreNumber}
@@ -982,11 +999,25 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
                               <option value="AGENT">Local agent</option>
                             </select>
                           </div>
+                          {/* The OS decides whether the approved script is PowerShell or bash. Left on
+                              auto-detect it comes from the machine's own probe reply; set, it overrules
+                              that, and the reviewer is shown that a person overruled it. */}
+                          <div>
+                            <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Operating system</label>
+                            <select value={editTargetPlatform} onChange={e => setEditTargetPlatform(e.target.value)}
+                              style={{ height: '32px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}>
+                              <option value="">Auto-detect (ask the host)</option>
+                              <option value="windows">Windows — PowerShell</option>
+                              <option value="linux">Linux — bash</option>
+                              <option value="darwin">macOS — bash</option>
+                            </select>
+                          </div>
                         </div>
                         <small style={{ display: 'block', marginTop: '8px', color: 'var(--text-muted)', fontSize: '11px', lineHeight: 1.45 }}>
                           {selectedIncident.targetHost
                             ? 'A mutating plan is refused unless the executor can reach this host. Leave "Connect via" on the default until a plan reports it unreachable — the executor tries the path it already has first.'
                             : 'No server is set. If the description does not name one, a plan that restarts anything will be blocked rather than guess a machine.'}
+                          {' '}Leave the OS on auto-detect unless you know better than the host does — the reachability check is also where the machine says what it is, and that is what decides whether the script is PowerShell or bash.
                           {' '}No password or key is stored here or anywhere in this database — only the method. The credential stays with the executor agent.
                         </small>
                       </div>
@@ -1112,6 +1143,16 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
                                     <option value="SSH">SSH</option>
                                     <option value="WINRM">WinRM</option>
                                     <option value="AGENT">Local agent</option>
+                                  </select>
+                                </div>
+                                <div style={{ flex: '0 1 150px' }}>
+                                  <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Operating system</label>
+                                  <select value={editTargetPlatform} onChange={e => setEditTargetPlatform(e.target.value)}
+                                    style={{ width: '100%', height: '32px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}>
+                                    <option value="">Auto-detect</option>
+                                    <option value="windows">Windows</option>
+                                    <option value="linux">Linux</option>
+                                    <option value="darwin">macOS</option>
                                   </select>
                                 </div>
                                 <button
@@ -1315,6 +1356,22 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
                   The machine with the problem. Leave it empty if the description already names
                   one, or if this is not a server issue — nothing can be restarted until a
                   server is named, and nothing will be guessed.
+                </small>
+              </div>
+
+              <div className="form-field">
+                <label>Operating system (Optional)</label>
+                <select value={newTargetPlatform} onChange={e => setNewTargetPlatform(e.target.value)}>
+                  <option value="">Auto-detect — ask the machine</option>
+                  <option value="windows">Windows — PowerShell</option>
+                  <option value="linux">Linux — bash</option>
+                  <option value="darwin">macOS — bash</option>
+                </select>
+                <small style={{ color: 'var(--text-muted)', fontSize: '11px' }}>
+                  Only answer this if you know it. Left on auto-detect, the machine is asked what
+                  it is when it is checked for reachability, and the script is written in that
+                  language. Answering here overrules that — useful when the check cannot run, or
+                  when you know the detection is wrong.
                 </small>
               </div>
 

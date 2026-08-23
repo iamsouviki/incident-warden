@@ -97,16 +97,12 @@ public class HitlWorkflowService {
         RemediationToolRegistry.ParsedAction parsedAction = tools.parse(evidence.approvedActionKey());
         boolean brokenActionKey = !evidence.approvedActionKey().isBlank() && !parsedAction.valid();
 
-        RemediationScriptService.GeneratedScript script = brokenActionKey
-                ? new RemediationScriptService.GeneratedScript("", "", "NONE", "BLOCK",
-                        java.util.List.of(parsedAction.reason()), parsedAction.reason())
-                : scripts.generate(incident, evidence, parsedAction);
-
         // ── Which machine? ───────────────────────────────────────────────────────────
-        // A read-only probe carries its own URL inside the action key. Everything else ends
-        // as a script dispatched to a host, and "which host" is the one thing this platform
-        // must never guess. The condition is deliberately the same one RemediationToolRegistry
-        // .execute() routes on, so a plan cannot pass a gate the executor would then fail.
+        // Deliberately ahead of script generation. A read-only probe carries its own URL
+        // inside the action key. Everything else ends as a script dispatched to a host, and
+        // "which host" is the one thing this platform must never guess. The condition is
+        // deliberately the same one RemediationToolRegistry.execute() routes on, so a plan
+        // cannot pass a gate the executor would then fail.
         //
         // The connection is tried the cheap way first: IncidentTarget.connection() is empty
         // until a human has had to fill it in, and empty means "executor, use the path you
@@ -115,11 +111,25 @@ public class HitlWorkflowService {
         IncidentTarget.Target host = IncidentTarget.resolve(incident);
         RemediationToolRegistry.Probe reach = needsHost && host.known()
                 ? tools.reachable(host.host(), IncidentTarget.connection(incident))
-                : new RemediationToolRegistry.Probe("UNKNOWN", "", "");
+                : RemediationToolRegistry.Probe.notAsked();
         // UNKNOWN never blocks. No executor configured is not evidence a host is down, and
         // a demo with execution disabled must plan exactly as it did before this gate.
         boolean targetOk = !needsHost || (host.known() && !reach.unreachable());
         String targetReason = !host.known() ? host.reason() : reach.unreachable() ? reach.reason() : "";
+
+        // ── Which operating system? ──────────────────────────────────────────────────
+        // The reason the host is resolved first: the probe above is where the machine gets
+        // to say what it is, and the script has to be written for that. The same approved
+        // Tomcat procedure becomes PowerShell on a Windows till and bash on a Linux
+        // application server — the procedure authorises the action, the host decides the
+        // dialect.
+        IncidentTarget.Platform platform =
+                IncidentTarget.platform(incident, reach.platform(), parsedAction.platformHint());
+
+        RemediationScriptService.GeneratedScript script = brokenActionKey
+                ? new RemediationScriptService.GeneratedScript("", "", "NONE", "BLOCK",
+                        java.util.List.of(parsedAction.reason()), parsedAction.reason())
+                : scripts.generate(incident, evidence, parsedAction, platform);
 
         // ── Eligibility ──────────────────────────────────────────────────────────────
         // Grounded: an APPROVED procedure for this tenant backs the plan. The full
@@ -152,7 +162,7 @@ public class HitlWorkflowService {
         plan.setStatus(eligible ? "PENDING_APPROVAL" : "BLOCKED");
         plan.setActionName(assessment.action().isBlank() ? "none" : assessment.action());
         plan.setTarget(assessment.target());
-        plan.setParametersJson(parameters(assessment, evidence, script, precedent.orElse(null)));
+        plan.setParametersJson(parameters(assessment, evidence, script, precedent.orElse(null), platform));
         plan.setSopEvidence(evidence.approvedEvidencePresent() ? evidence.excerpt() : "SOP evidence unavailable: " + evidence.reason());
         plan.setConfidenceScore(assessment.confidenceScore());
         plan.setRiskScore(assessment.riskPenalty() * 100.0);
@@ -188,6 +198,8 @@ public class HitlWorkflowService {
         // the ticket text. A reviewer approving a restart is entitled to know which.
         assessmentAudit.put("targetHostSource", host.source());
         assessmentAudit.put("targetReachability", needsHost ? reach.status() : "NOT_APPLICABLE");
+        assessmentAudit.put("targetPlatform", platform.name());
+        assessmentAudit.put("targetPlatformSource", platform.source());
         assessmentAudit.put("scriptSource", script.source());
         assessmentAudit.put("scriptScanLevel", script.scanLevel());
         assessmentAudit.put("scriptFindings", script.findings());
@@ -387,6 +399,11 @@ public class HitlWorkflowService {
             case "LLM_KNOWLEDGE" -> "Written by the model from general knowledge. No approved procedure authorises it — you are the only gate.";
             default -> "No script was produced for this plan.";
         });
+        // Read back from the plan, not recomputed: the reviewer must see the platform that was
+        // resolved when the script was written, and its source — approving PowerShell that a
+        // host confirmed is not the same act as approving it because nothing said otherwise.
+        script.put("platform", pinned(plan, "targetPlatform"));
+        script.put("platformSource", pinned(plan, "targetPlatformSource"));
 
         Map<String, Object> detail = new LinkedHashMap<>();
         detail.put("request", request);
@@ -531,6 +548,16 @@ public class HitlWorkflowService {
         }
     }
 
+    /** One hash-pinned scalar out of the plan's parameters, or "" for plans written before it existed. */
+    private String pinned(RemediationPlan plan, String key) {
+        try {
+            Object value = json.readValue(plan.getParametersJson(), Map.class).get(key);
+            return value == null ? "" : String.valueOf(value);
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
     private java.util.List<UUID> procedureIds(RemediationPlan plan) {        try {
             Map<?, ?> parsed = json.readValue(plan.getParametersJson(), Map.class);
             Object ids = parsed.get("procedureIds");
@@ -575,7 +602,8 @@ public class HitlWorkflowService {
 
     private String parameters(AgentAssessmentService.Assessment assessment, SopEvidence evidence,
                               RemediationScriptService.GeneratedScript script,
-                              IncidentPrecedentService.Precedent precedent) {
+                              IncidentPrecedentService.Precedent precedent,
+                              IncidentTarget.Platform platform) {
         try {
             Map<String, Object> params = new LinkedHashMap<>();
             params.put("classification", assessment.category());
@@ -584,6 +612,11 @@ public class HitlWorkflowService {
             params.put("approvedActionKey", evidence.approvedActionKey());
             params.put("scriptSource", script.source());
             params.put("scriptLanguage", script.language());
+            // Also pinned, and the reviewer's answer to "why is this PowerShell?". The source
+            // matters as much as the name: HOST_REPORTED means the machine said so,
+            // SOP_ACTION_KEY means nobody has confirmed it and the procedure's default was used.
+            params.put("targetPlatform", platform.name());
+            params.put("targetPlatformSource", platform.source());
             // Also pinned. The past ticket cited as justification is part of what the
             // reviewer is being shown, so it must not be editable after they say yes.
             if (precedent != null) {

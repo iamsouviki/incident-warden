@@ -8,7 +8,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Answers the one question the executor agent cannot answer for itself: which machine.
+ * Answers the questions the executor agent cannot answer for itself: which machine, how to
+ * reach it, and what operating system is on it.
  *
  * Before this class the "target" sent with every approved script was the incident's own
  * ticket number. Every lane computed it the same wrong way, in three places, each with a
@@ -118,6 +119,91 @@ public final class IncidentTarget {
     /** The store number as a comparison key: trimmed, never null. */
     public static String store(Incident incident) {
         return incident == null ? "" : trim(incident.getStoreNumber());
+    }
+
+    /**
+     * Which operating system the script is going to land on.
+     *
+     * This used to be a segment of the SOP's action key, which meant whoever authored the
+     * procedure decided the OS of every machine it would ever be applied to. A Windows till
+     * matched to SOP-TOMCAT-01 was handed {@code systemctl restart 'tomcat'} — a valid,
+     * correctly guarded, approved script for the wrong operating system.
+     *
+     * Resolved per incident instead, in descending order of authority:
+     *
+     *   OPERATOR_DECLARED an operator picked the OS on the incident. Top of the ladder for the
+     *                     same reason a typed host beats one read out of prose: it is a
+     *                     person's answer to this exact question, not an inference about it.
+     *                     It is also the only override available when detection is wrong —
+     *                     without it, correcting a mis-detected till means editing an SOP
+     *                     that every other store shares.
+     *   OPERATOR_OVERRODE_HOST
+     *                     the operator declared one OS and the probe reported a different
+     *                     one. The operator still wins, but the disagreement is carried in
+     *                     the source so the reviewer sees it on the plan they are approving.
+     *                     Silently discarding the machine's own answer is the one thing this
+     *                     ladder must not do.
+     *   HOST_REPORTED     the executor agent named the platform in its probe reply. It runs
+     *                     on or beside the machine, so this is measurement, not inference,
+     *                     and it outranks anything a person guessed in advance.
+     *   CONNECTION_METHOD the operator chose WINRM. That protocol exists only on Windows, so
+     *                     choosing it is a statement about the host — and it is the lever an
+     *                     operator already has on screen today.
+     *   SOP_ACTION_KEY    the platform segment of the approved procedure. Still honoured,
+     *                     because an operator authored it, but now the default rather than
+     *                     the decision.
+     *   DEFAULT           linux.
+     *
+     * SSH is deliberately not evidence of anything: it serves Linux, macOS and Windows alike.
+     *
+     * @param reportedPlatform what the probe reply said, or "" / null when nothing did
+     * @param authoredHint     the action key's platform segment, from
+     *                         {@link RemediationToolRegistry.ParsedAction#platformHint()}
+     */
+    public static Platform platform(Incident incident, String reportedPlatform, String authoredHint) {
+        String reported = normalisePlatform(reportedPlatform);
+        String declared = normalisePlatform(incident == null ? null : incident.getTargetPlatform());
+        if (!declared.isBlank()) {
+            boolean contradicted = !reported.isBlank() && !reported.equals(declared);
+            return new Platform(declared, contradicted ? "OPERATOR_OVERRODE_HOST" : "OPERATOR_DECLARED");
+        }
+        if (!reported.isBlank()) return new Platform(reported, "HOST_REPORTED");
+        if ("WINRM".equals(connection(incident))) return new Platform("windows", "CONNECTION_METHOD");
+        String authored = normalisePlatform(authoredHint);
+        if (!authored.isBlank()) return new Platform(authored, "SOP_ACTION_KEY");
+        return new Platform("linux", "DEFAULT");
+    }
+
+    /**
+     * A platform name this codebase has templates for, or "" for anything it does not
+     * recognise.
+     *
+     * Blank rather than a best guess on purpose: an unrecognised token falls through to the
+     * next rung of the ladder instead of overriding an authored default with a shrug. An
+     * executor answering {@code platform=solaris} must not silently turn a Windows procedure
+     * into bash.
+     */
+    private static String normalisePlatform(String value) {
+        String v = value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+        if (v.startsWith("win")) return "windows";
+        if (v.startsWith("darwin") || v.startsWith("mac") || v.startsWith("osx")) return "darwin";
+        if (v.startsWith("linux") || v.startsWith("ubuntu") || v.startsWith("debian")
+                || v.startsWith("rhel") || v.startsWith("centos") || v.startsWith("suse")) return "linux";
+        return "";
+    }
+
+    /**
+     * @param name   windows | linux | darwin
+     * @param source OPERATOR_DECLARED | OPERATOR_OVERRODE_HOST | HOST_REPORTED |
+     *               CONNECTION_METHOD | SOP_ACTION_KEY | DEFAULT — shown to the reviewer,
+     *               because "the host told us", "a person told us" and "we assumed" are not
+     *               the same claim about a script they are about to approve
+     */
+    public record Platform(String name, String source) {
+        public boolean windows() { return "windows".equals(name); }
+
+        /** The interpreter the executor is asked to run this script under. */
+        public String language() { return windows() ? "powershell" : "bash"; }
     }
 
     private static String extract(String text) {

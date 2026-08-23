@@ -109,14 +109,19 @@ export function isTokenExpiringSoon(thresholdMs = 5 * 60 * 1000): boolean {
 let _refreshPromise: Promise<boolean> | null = null;
 
 /**
- * Silently exchange the current (still-valid) JWT for a fresh one.
+ * Silently exchange the stored refresh token for a fresh access token.
  * Calls POST /api/auth/refresh — no password required.
- * Returns true on success, false if the token is already expired or the call fails.
+ *
+ * The replacement refresh token the server returns carries the SAME expiry as the one sent,
+ * so rotating does not extend the session: the 7 days (or 1 day without "keep me signed in")
+ * are counted from password entry and end there regardless of how often this runs.
+ *
+ * Returns false when there is nothing to refresh with, or the window has closed — the caller
+ * signs the user out.
  */
 export async function refreshToken(): Promise<boolean> {
   if (_refreshPromise) return _refreshPromise;
-  const token = getToken();
-  const refreshTokenValue = localStorage.getItem(REFRESH_TOKEN_KEY) || token;
+  const refreshTokenValue = localStorage.getItem(REFRESH_TOKEN_KEY);
   if (!refreshTokenValue) return false;
 
   _refreshPromise = (async (): Promise<boolean> => {

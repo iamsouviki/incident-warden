@@ -526,51 +526,51 @@ const ToolsPage: React.FC = () => {
             </div>
           )}
 
-          {/* Config row */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px' }}>
+          {/* Config row — clean 1-2 line parameter grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '10px', background: 'var(--surface-2)', padding: '12px 14px', borderRadius: '8px', border: '1px solid var(--border)' }}>
             <div>
-              <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '6px' }}>Tool Name</label>
+              <label style={{ display: 'block', fontSize: '10.5px', fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.5px' }}>Tool Name</label>
               <input
                 type="text"
                 value={scriptName}
                 onChange={e => setScriptName(e.target.value)}
                 placeholder="e.g. Server Cleanup"
                 disabled={!!selectedLog}
-                style={{ padding: '8px 10px', fontSize: '13px' }}
+                style={{ height: '34px', padding: '0 10px', fontSize: '12.5px' }}
               />
             </div>
             <div>
-              <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '6px' }}>Language</label>
+              <label style={{ display: 'block', fontSize: '10.5px', fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.5px' }}>Language</label>
               <select
                 value={language}
                 onChange={e => setLanguage(e.target.value as 'bash' | 'powershell')}
                 disabled={!!selectedLog}
-                style={{ padding: '8px 10px', fontSize: '13px', appearance: 'auto' }}
+                style={{ height: '34px', padding: '0 10px', fontSize: '12.5px', appearance: 'auto' }}
               >
                 <option value="bash">Bash (Linux)</option>
                 <option value="powershell">PowerShell (Windows)</option>
               </select>
             </div>
             <div>
-              <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '6px' }}>Category</label>
+              <label style={{ display: 'block', fontSize: '10.5px', fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.5px' }}>Category</label>
               <select
                 value={category}
                 onChange={e => setCategory(e.target.value)}
                 disabled={!!selectedLog}
-                style={{ padding: '8px 10px', fontSize: '13px', appearance: 'auto' }}
+                style={{ height: '34px', padding: '0 10px', fontSize: '12.5px', appearance: 'auto' }}
               >
                 {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
             <div>
-              <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '6px' }}>Target Host</label>
+              <label style={{ display: 'block', fontSize: '10.5px', fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.5px' }}>Target Host</label>
               <input
                 type="text"
                 value={targetHost}
                 onChange={e => setTargetHost(e.target.value)}
                 placeholder="localhost"
                 disabled={!!selectedLog}
-                style={{ padding: '8px 10px', fontSize: '13px' }}
+                style={{ height: '34px', padding: '0 10px', fontSize: '12.5px' }}
               />
             </div>
           </div>

@@ -104,6 +104,117 @@ class IncidentTargetTest {
         assertEquals("FS-1001", IncidentTarget.hostOrTicket(incident("Printer stuck", "Nothing prints")));
     }
 
+    /**
+     * The platform ladder, top rung down. Whoever authored the SOP action key was guessing
+     * about machines they never saw; the machine that answered the probe was not.
+     */
+    @Test
+    void whatTheHostReportedOutranksWhatTheSopAuthorAssumed() {
+        IncidentTarget.Platform platform =
+                IncidentTarget.platform(incident("Till down", ""), "Windows_NT", "linux");
+
+        assertEquals("windows", platform.name());
+        assertEquals("HOST_REPORTED", platform.source());
+        assertEquals("powershell", platform.language());
+    }
+
+    /**
+     * A person who picked the OS on the incident outranks the probe — it is the only override
+     * available when detection is wrong — but the disagreement is carried in the source rather
+     * than swallowed, because the reviewer is being asked to approve PowerShell for a host
+     * that said "linux".
+     */
+    @Test
+    void anOperatorsAnswerBeatsTheProbeAndTheDisagreementIsRecorded() {
+        Incident declaredWindows = incident("Till down", "");
+        declaredWindows.setTargetPlatform("windows");
+
+        IncidentTarget.Platform contradicted = IncidentTarget.platform(declaredWindows, "linux", "linux");
+        assertEquals("windows", contradicted.name());
+        assertEquals("OPERATOR_OVERRODE_HOST", contradicted.source());
+        assertEquals("powershell", contradicted.language());
+
+        // Same declaration, and this time the machine agrees — an Ubuntu box answering a
+        // declaration of "linux" is agreement, not a conflict to flag at a reviewer.
+        Incident declaredLinux = incident("Till down", "");
+        declaredLinux.setTargetPlatform("linux");
+        assertEquals("OPERATOR_DECLARED", IncidentTarget.platform(declaredLinux, "Ubuntu 22.04", "windows").source());
+
+        // And with nothing detected at all, the declaration still stands on its own.
+        assertEquals("OPERATOR_DECLARED", IncidentTarget.platform(declaredLinux, "", "windows").source());
+    }
+
+    /**
+     * A declaration this process cannot act on must not be able to hand a Windows till a bash
+     * script: it is discarded and the rungs below it decide. Prefix matching is deliberately
+     * forgiving about near-misses in the other direction — "windwos" is still Windows, because
+     * the alternative is silently ignoring an operator who answered the question correctly and
+     * typed it badly.
+     */
+    @Test
+    void anUnrecognisedDeclarationIsDiscardedButATypoIsStillUnderstood() {
+        Incident unknownOs = incident("Till down", "");
+        unknownOs.setTargetPlatform("solaris");
+
+        IncidentTarget.Platform fellThrough = IncidentTarget.platform(unknownOs, "Windows_NT", "linux");
+        assertEquals("windows", fellThrough.name());
+        assertEquals("HOST_REPORTED", fellThrough.source());
+
+        Incident typo = incident("Till down", "");
+        typo.setTargetPlatform("windwos");
+        assertEquals("windows", IncidentTarget.platform(typo, "linux", "linux").name());
+    }
+
+    /**
+     * WinRM only talks to Windows, so choosing it is an operator saying "Windows" in the one
+     * place the UI already lets them. SSH deliberately implies nothing: it serves Linux,
+     * macOS and Windows alike.
+     */
+    @Test
+    void choosingWinRmIsItselfAnAnswerAndChoosingSshIsNot() {
+        Incident onWinRm = incident("Till down", "");
+        onWinRm.setConnectionMethod("winrm");
+        IncidentTarget.Platform inferred = IncidentTarget.platform(onWinRm, "", "");
+        assertEquals("windows", inferred.name());
+        assertEquals("CONNECTION_METHOD", inferred.source());
+
+        Incident onSsh = incident("Till down", "");
+        onSsh.setConnectionMethod("ssh");
+        assertEquals("SOP_ACTION_KEY", IncidentTarget.platform(onSsh, "", "darwin").source());
+    }
+
+    /**
+     * An executor written before the platform field, or one that answers something this
+     * process has never heard of, must fall through a rung rather than override the only
+     * real signal available with a token nobody can act on.
+     */
+    @Test
+    void anUnrecognisedReportFallsThroughInsteadOfWinning() {
+        IncidentTarget.Platform platform =
+                IncidentTarget.platform(incident("Till down", ""), "plan9", "windows");
+
+        assertEquals("windows", platform.name());
+        assertEquals("SOP_ACTION_KEY", platform.source());
+    }
+
+    /** No signal anywhere: bash, because that is what most targets are, and it is recorded as a guess. */
+    @Test
+    void withNoSignalAtAllTheDefaultIsLabelledAsOne() {
+        IncidentTarget.Platform platform = IncidentTarget.platform(incident("Till down", ""), "", "");
+
+        assertEquals("linux", platform.name());
+        assertEquals("DEFAULT", platform.source());
+        assertEquals("bash", platform.language());
+        assertFalse(platform.windows());
+    }
+
+    /** Distro names are not platforms; they all run bash and systemctl. */
+    @Test
+    void distroNamesNormaliseToLinux() {
+        assertEquals("linux", IncidentTarget.platform(incident("x", ""), "Ubuntu 22.04", "").name());
+        assertEquals("darwin", IncidentTarget.platform(incident("x", ""), "Mac OS X", "").name());
+    }
+
     private Incident incident(String subject, String description) {
         return Incident.builder().id(UUID.randomUUID()).tenantId("tenant-a")
                 .subject(subject).description(description)

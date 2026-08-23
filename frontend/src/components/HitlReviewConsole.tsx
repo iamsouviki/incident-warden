@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   AlertTriangle, Check, ChevronLeft, Clock, Copy, FileCode2, FileSearch,
-  History, Play, Rocket, ShieldAlert, ShieldCheck, Terminal, UserCheck, X, User
+  History, Monitor, Play, Rocket, ShieldAlert, ShieldCheck, Terminal, UserCheck, X, User
 } from 'lucide-react';
 import { apiGet, apiPost, apiPut, getStoredUser } from '../services/api';
 import { Badge, Button, Spinner } from './ui';
@@ -49,6 +49,7 @@ interface ReviewDetail {
     storeNumber?: string;
     targetHost?: string;
     connectionMethod?: string;
+    targetPlatform?: string;
   };
   assigneeInfo?: UserInfo;
   requestedByInfo?: UserInfo;
@@ -57,6 +58,8 @@ interface ReviewDetail {
   script: {
     script: string;
     language?: string;
+    platform?: string;
+    platformSource?: string;
     source?: 'SOP_TEMPLATE' | 'SOP_GROUNDED' | 'LLM_KNOWLEDGE' | 'NONE';
     scanLevel?: 'PASS' | 'WARN' | 'BLOCK';
     grounded: boolean;
@@ -93,6 +96,26 @@ const sourceTone = (source?: string) =>
 
 const scanTone = (level?: string) => (level === 'PASS' ? 'success' : level === 'WARN' ? 'warning' : 'danger');
 
+// Why this script is in this language. DEFAULT means nothing confirmed the OS, which is the
+// one case where the reviewer is also being asked to vouch for the interpreter — and
+// OPERATOR_OVERRODE_HOST means a person disagreed with the machine and won, which the
+// reviewer has to be told before they approve PowerShell for a host that said "linux".
+const PLATFORM_SOURCE_LABEL: Record<string, string> = {
+  OPERATOR_DECLARED: 'an operator set this OS on the incident, and nothing contradicts it',
+  OPERATOR_OVERRODE_HOST: 'an operator set this OS on the incident and the probed host reported a DIFFERENT one. The operator’s answer was used. Confirm they were right before approving.',
+  HOST_REPORTED: 'the target host reported this OS when it was probed',
+  CONNECTION_METHOD: 'inferred from the WinRM connection method chosen for this incident',
+  SOP_ACTION_KEY: "taken from the approved procedure's action key — the host did not confirm it",
+  DEFAULT: 'nothing confirmed the OS; this is the platform default. Check the commands suit the machine.',
+};
+
+/** How much the reviewer should trust the platform on the badge, in one word. */
+const PLATFORM_SUFFIX: Record<string, string> = {
+  HOST_REPORTED: ' (confirmed)',
+  OPERATOR_DECLARED: ' (declared)',
+  OPERATOR_OVERRODE_HOST: ' (operator override)',
+};
+
 function findingTone(finding: string): 'danger' | 'warning' | 'neutral' {
   if (finding.startsWith('BLOCK') || finding.includes('BLOCKED')) return 'danger';
   if (finding.startsWith('WARN') || finding === 'UNGROUNDED_LLM_SCRIPT') return 'warning';
@@ -114,6 +137,7 @@ const HitlReviewConsole: React.FC<{ requestId: string; onBack: () => void; onCha
   const [assignTo, setAssignTo] = useState('');
   const [host, setHost] = useState('');
   const [connection, setConnection] = useState('');
+  const [platform, setPlatform] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -122,6 +146,7 @@ const HitlReviewConsole: React.FC<{ requestId: string; onBack: () => void; onCha
       setAssignTo(fresh.incident?.assignee || '');
       setHost(fresh.incident?.targetHost || '');
       setConnection(fresh.incident?.connectionMethod || '');
+      setPlatform(fresh.incident?.targetPlatform || '');
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not load this review.');
@@ -246,6 +271,14 @@ const HitlReviewConsole: React.FC<{ requestId: string; onBack: () => void; onCha
                 <Badge tone={sourceTone(script.source) as any}>{SOURCE_LABEL[script.source || 'NONE'] || script.source}</Badge>
                 <Badge tone={scanTone(script.scanLevel) as any}>SCAN {script.scanLevel || '—'}</Badge>
                 <Badge tone="neutral">{script.language || '—'} · {script.lineCount} lines</Badge>
+                {script.platform && (
+                  <Badge tone={script.platformSource === 'DEFAULT' ? 'warning'
+                             : script.platformSource === 'OPERATOR_OVERRODE_HOST' ? 'danger' : 'neutral'}
+                         title={PLATFORM_SOURCE_LABEL[script.platformSource || ''] || script.platformSource}>
+                    <Monitor size={11} /> {script.platform}
+                    {PLATFORM_SUFFIX[script.platformSource || ''] || ' (assumed)'}
+                  </Badge>
+                )}
                 <Button variant="ghost" size="sm" title="Copy script"
                         onClick={() => void navigator.clipboard?.writeText(script.script)}>
                   <Copy size={14} />
@@ -409,9 +442,16 @@ const HitlReviewConsole: React.FC<{ requestId: string; onBack: () => void; onCha
                   <option value="WINRM">WinRM</option>
                   <option value="AGENT">Local agent</option>
                 </select>
+                <select value={platform} onChange={event => setPlatform(event.target.value)}
+                        aria-label="Operating system">
+                  <option value="">OS: auto-detect</option>
+                  <option value="windows">OS: Windows</option>
+                  <option value="linux">OS: Linux</option>
+                  <option value="darwin">OS: macOS</option>
+                </select>
                 <Button variant="primary" size="sm" disabled={!!busy || !host.trim()}
                         onClick={() => void patchIncident('target',
-                          { targetHost: host.trim(), connectionMethod: connection },
+                          { targetHost: host.trim(), connectionMethod: connection, targetPlatform: platform },
                           'Saved. Create the plan again on the incident to re-evaluate with this target.')}>
                   {busy === 'target' ? <Spinner size="sm" /> : <Check size={14} />} Save answer
                 </Button>

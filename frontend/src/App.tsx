@@ -32,7 +32,7 @@ import HitlPage from './pages/HitlPage';
 import AccountPage from './pages/AccountPage';
 import AutonomyPage from './pages/AutonomyPage';
 import ChatbotWidget from './components/ChatbotWidget';
-import { AuthUser, clearAuth, getStoredUser, isTokenExpiringSoon, refreshToken } from './services/api';
+import { AuthUser, clearAuth, getStoredUser } from './services/api';
 
 const DEFAULT_TENANT_ID = 'tenant-1';
 
@@ -109,16 +109,10 @@ function AppContent({ user, onLogout }: { user: AuthUser; onLogout: () => void }
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  useEffect(() => {
-    if (!user) return;
-    const interval = window.setInterval(async () => {
-      if (isTokenExpiringSoon(30 * 60 * 1000)) {
-        const ok = await refreshToken();
-        if (!ok) onLogout();
-      }
-    }, 4 * 60 * 1000);
-    return () => window.clearInterval(interval);
-  }, [user, onLogout]);
+  // No keep-alive timer on purpose. authFetch() refreshes the access token when a request
+  // needs one, so the session follows the person: work and it renews, walk away and it
+  // lapses at the refresh token's own expiry. A clock-driven renewal did the opposite —
+  // it kept an unattended tab signed in for as long as the browser stayed open.
 
   const go = (path: string) => {
     navigate(path);

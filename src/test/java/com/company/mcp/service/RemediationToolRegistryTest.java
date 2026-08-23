@@ -37,6 +37,30 @@ class RemediationToolRegistryTest {
         assertEquals("200", parsed.args().get(1));
     }
 
+    /** The same problem from the other end: a Windows path carries the delimiter too. */
+    @Test
+    void keepsAWindowsJobPathIntactDespiteItsColon() {
+        RemediationToolRegistry.ParsedAction parsed = registry.parse("RERUN_JOB:windows:C:\\batch\\nightly.ps1");
+
+        assertTrue(parsed.valid(), () -> "rejected: " + parsed.reason());
+        assertEquals("windows", parsed.args().get(0));
+        assertEquals("C:\\batch\\nightly.ps1", parsed.args().get(1));
+    }
+
+    /**
+     * The action key's OS segment is a hint and nothing more — the host's own answer outranks
+     * it (see IncidentTargetTest). Tools that name no OS must say so rather than default,
+     * otherwise a CHECK_URL key would silently vote for Linux on a Windows till.
+     */
+    @Test
+    void theOsSegmentIsOfferedAsAHintOnlyWhereTheKeyHasOne() {
+        assertEquals("windows", registry.parse("RESTART_SERVICE:spooler:windows").platformHint());
+        assertEquals("linux", registry.parse("RERUN_JOB:linux:/opt/batch/nightly.sh").platformHint());
+        assertEquals("", registry.parse("CHECK_URL:http://host:8080/health:200").platformHint());
+        assertEquals("", registry.parse("CLEAR_CACHE:redis:cache-01:6379").platformHint());
+        assertEquals("", registry.parse("DELETE_DATABASE:customers").platformHint());
+    }
+
     @Test
     void rejectsAToolThatIsNotOnTheAllowList() {
         RemediationToolRegistry.ParsedAction parsed = registry.parse("DELETE_DATABASE:customers");

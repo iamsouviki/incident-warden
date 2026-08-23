@@ -8,8 +8,8 @@ export function Button({ variant = 'secondary', size = 'md', className = '', ...
   return <button className={`ui-button ui-button-${variant} ui-button-${size} ${className}`} {...props} />;
 }
 
-export function Badge({ tone = 'neutral', children, className = '' }: { tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger'; children: ReactNode; className?: string }) {
-  return <span className={`ui-badge ui-badge-${tone} ${className}`}>{children}</span>;
+export function Badge({ tone = 'neutral', children, className = '', title }: { tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger'; children: ReactNode; className?: string; title?: string }) {
+  return <span className={`ui-badge ui-badge-${tone} ${className}`} title={title}>{children}</span>;
 }
 
 export function Spinner({ size = 'md' }: { size?: 'sm' | 'md' }) {

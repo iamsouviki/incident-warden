@@ -485,6 +485,15 @@ public class IncidentService {
             changes.add(describe("Connection", existing.getConnectionMethod(), details.getConnectionMethod()));
             existing.setConnectionMethod(details.getConnectionMethod());
         }
+        // Historied for the same reason as the host: this field decides whether the approved
+        // script is PowerShell or bash, and it can overrule what the machine itself reported.
+        // "Who declared this a Windows box, and when" is an audit question the moment a
+        // PowerShell script is dispatched at a Linux server.
+        if (supplied(existing.getTargetPlatform(), details.getTargetPlatform())) {
+            saveHistoryRecord(id, "target_platform", existing.getTargetPlatform(), details.getTargetPlatform(), updatedBy);
+            changes.add(describe("Platform", existing.getTargetPlatform(), details.getTargetPlatform()));
+            existing.setTargetPlatform(details.getTargetPlatform());
+        }
         existing.setUpdatedAt(OffsetDateTime.now());
         return changes;
     }

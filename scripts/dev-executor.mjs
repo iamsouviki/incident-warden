@@ -12,7 +12,9 @@
 // It also answers POST /probe {target, connection}: 200 if it believes it could reach
 // that host, 409 if not. That is the "try without a token first" step — an empty
 // connection means "use whatever path you already have", and only a 409 sends the
-// incident back to a human to name the server and the method.
+// incident back to a human to name the server and the method. A 200 also reports
+// platform=<os>, which is what makes the control plane write PowerShell for a Windows
+// host and bash for a Linux one instead of trusting the SOP author's guess.
 //
 // ponytail: no auth check and no allow-list. A real agent MUST verify the
 // Authorization bearer token (mcp.autonomy.executor-token) and refuse targets outside
@@ -25,9 +27,19 @@
 
 import { createServer } from 'node:http';
 import { promises as dns } from 'node:dns';
+import { platform as osPlatform } from 'node:os';
 
 const PORT = Number(process.env.PORT ?? 9099);
 const MAX_BODY = 1_000_000;
+
+// What the control plane writes the script for. A real agent reports the OS of the machine
+// it is about to run on; this stub reports its own, which is the honest answer when the
+// "target" is a hostname it is only pretending to reach. Override to demo a platform you
+// are not sitting on:  EXECUTOR_PLATFORM=windows node scripts/dev-executor.mjs
+//
+// Absent or unrecognised is fine — the platform then falls back to the SOP action key's
+// segment, which is how every executor written before this field behaved.
+const PLATFORM = process.env.EXECUTOR_PLATFORM ?? osPlatform();
 
 // Hosts this stub pretends it can reach, so a realistic store hostname works in a demo
 // without editing /etc/hosts. Anything resolvable in DNS is reachable too; everything
@@ -71,10 +83,10 @@ const probe = async (req, res) =>
                 reachable = false;
             }
         }
-        console.log(`[PROBE] target='${target}' via ${via} -> ${reachable ? 'REACHABLE' : 'UNREACHABLE'}`);
+        console.log(`[PROBE] target='${target}' via ${via} -> ${reachable ? `REACHABLE platform=${PLATFORM}` : 'UNREACHABLE'}`);
         res.writeHead(reachable ? 200 : 409, { 'Content-Type': 'text/plain' });
         res.end(reachable
-            ? `Reached '${target}' over ${via}.\n`
+            ? `Reached '${target}' over ${via}. platform=${PLATFORM}\n`
             : `Cannot reach '${target}' over ${via}: name does not resolve and it is not in this agent's known hosts.\n`);
     });
 
@@ -99,5 +111,5 @@ createServer((req, res) => {
     res.end('dev executor: POST /execute {"script","language","target","connection"}'
         + ' | POST /probe {"target","connection"}\n');
 }).listen(PORT, () => console.log(
-    `dev executor listening on http://localhost:${PORT}`
+    `dev executor listening on http://localhost:${PORT} (reporting platform=${PLATFORM})`
     + (KNOWN.length ? ` (known hosts: ${KNOWN.join(', ')})` : '')));

@@ -92,7 +92,7 @@ model-backed tiers return `SCRIPT_GENERATION_UNAVAILABLE`. Enable them with Olla
 
 | Script | Stands in for | Behaviour |
 |---|---|---|
-| `scripts/dev-executor.mjs` | the agent on the store server | `POST /probe` → 200 for hosts named on the command line (or `EXECUTOR_KNOWN_HOSTS`), 409 otherwise. `POST /execute` → prints the script, returns 200. **Runs nothing.** |
+| `scripts/dev-executor.mjs` | the agent on the store server | `POST /probe` → 200 for hosts named on the command line (or `EXECUTOR_KNOWN_HOSTS`), 409 otherwise; the 200 body reports `platform=<os>` (override with `EXECUTOR_PLATFORM=windows`). `POST /execute` → prints the script, returns 200. **Runs nothing.** |
 | `scripts/dev-smtp.mjs` | the mail relay | Speaks the plain-SMTP subset JavaMailSender uses. Prints envelope, subject and body. **Delivers nowhere.** |
 
 ---
@@ -141,7 +141,7 @@ Six: `incident` · `sop` · `tools` · `teams` · `auth` · `config`. The hash-c
 pgvector table is `sop.vector_store` (`spring.ai.vectorstore.pgvector.schema-name: sop`,
 `initialize-schema: false` — Liquibase owns it, not Spring AI).
 
-Liquibase owns the schema: **22 changesets**, `1.0-ddl` → `1.19-user-meta`
+Liquibase owns the schema: **23 changesets**, `1.0-ddl` → `1.21-target-platform`
 ([db.changelog-master.xml](src/main/resources/db/changelog/db.changelog-master.xml)). The recent
 ones matter for the flow:
 
@@ -154,6 +154,8 @@ ones matter for the flow:
 | `1.17-team-email` | team distribution address |
 | `1.18-target-host` | `store_number`, `target_host`, `connection_method` on the incident |
 | `1.19-user-meta` | `full_name`, `department` on users; `full_name`, `role`, `department` on team employees |
+| `1.20-default-password` | BCrypt of the shared starting password onto the seeded admin |
+| `1.21-target-platform` | `target_platform` on the incident — the operator's answer to "which OS", overriding detection |
 
 ### Two different SOP stores — do not confuse them
 
@@ -278,6 +280,8 @@ poller). It refuses in this order, and every refusal is a reason string written 
 | `TOOL_NOT_AUTO_RUNNABLE` | not read-only or restart — cache flushes and job reruns always wait |
 | `SCRIPT_SCAN_NOT_CLEAN` | fresh guardrail scan found anything |
 | `GUARDRAIL_BLOCKED` | action/target boundary refused it again |
+| `TARGET_HOST_UNKNOWN` / probe reason | mutating action with no confirmed, reachable machine |
+| `PLATFORM_MISMATCH:bash!=powershell` | the saved script's interpreter is not the one this host needs |
 
 When every gate passes it runs the **saved tool from the precedent** against **this** incident's
 host — never the precedent's host — then resolves the incident and emails. Log line:
@@ -295,7 +299,7 @@ Stored in the database, effective on the next incident, no redeploy.
 
 ---
 
-## Which machine, at which store, over which connection
+## Which machine, at which store, over which connection, running which OS
 
 Three columns on the incident, added in `1.18`, and one resolver so the answer cannot differ
 between lanes:
@@ -311,6 +315,9 @@ between lanes:
   path"**. That blank is the "try without a token first" behaviour: the dry run probes the host
   over the default path, and only if that fails is a human asked to confirm the server and how to
   reach it. The credential for a named method is always the executor's.
+* `target_platform` — `windows` / `linux` / `darwin`, or **blank meaning "ask the machine"**. The
+  operator's override for the OS question below; blank is the normal case and behaves exactly as
+  it did before the column existed.
 
 ### When the agent needs an answer, it asks on the screen
 
@@ -329,6 +336,47 @@ the answer *and* re-plans:
 The incident page's **"Save answer and plan again"** issues the partial `PUT /api/v1/incidents/{id}`
 and re-runs the planner in one click; a P3 with an approved procedure goes straight from
 `TARGET_HOST_UNKNOWN` to `PENDING_APPROVAL` without leaving the panel.
+
+### And which operating system
+
+`IncidentTarget.platform(incident, reportedPlatform, authoredHint)` answers the fourth question,
+and it is deliberately answered **after** the host is resolved: the reachability probe is where the
+machine gets to say what it is, and the script has to be written for that answer. Five rungs, first
+one that holds:
+
+| Rung | `targetPlatformSource` | Signal |
+|---|---|---|
+| 1 | `OPERATOR_DECLARED` | `incident.target_platform` — a person picked the OS on the incident (create form, **🖥 Remediation target** panel, or the HITL answer panel) and nothing contradicts it |
+| 1b | `OPERATOR_OVERRODE_HOST` | the same field, but the probed host reported a *different* OS. The person still wins; the disagreement is carried in the source and the HITL badge turns red |
+| 2 | `HOST_REPORTED` | the executor's `POST /probe` 200 body contains `platform=<os>` |
+| 3 | `CONNECTION_METHOD` | `connection_method = WINRM` — WinRM only talks to Windows, so choosing it *is* the answer. SSH implies nothing: it serves Linux, macOS and Windows alike |
+| 4 | `SOP_ACTION_KEY` | the OS segment of the approved action key (`RESTART_SERVICE:spooler:windows`) — the procedure author's guess about machines they never saw |
+| 5 | `DEFAULT` | `linux`, recorded as a guess |
+
+A typed field beating a measurement looks backwards until you ask what the alternative is: with no
+override, a mis-detected till can only be corrected by editing the SOP that every other store
+shares. It is the same rule the host already follows — a typed `target_host` beats one extracted
+from prose, because the field is a person's answer to this exact question. The one thing the ladder
+must not do is *silently* discard the machine's answer, which is why the contradiction gets its own
+source token instead of being folded into `OPERATOR_DECLARED`.
+
+Distro names normalise (`Ubuntu 22.04` → `linux`, `Mac OS X` → `darwin`, `Windows_NT` → `windows`);
+an unrecognised token returns nothing and **falls through a rung** rather than overriding a real
+signal, so an executor written before this field keeps working unchanged — and a declared
+`solaris` is ignored rather than honoured. Matching is by prefix, so `windwos` is still Windows:
+ignoring an operator who answered right and typed badly is the worse failure.
+
+The platform selects two separate things, because they are not the same constraint:
+
+* the **template body** — `Restart-Service` on Windows, `launchctl kickstart -k` on macOS,
+  `systemctl restart` on Linux. linux and darwin share the bash interpreter and share no service
+  manager, which is exactly the case a language-only model gets wrong.
+* the **language** the executor is handed — `powershell` on Windows, `bash` everywhere else.
+
+Both `targetPlatform` and `targetPlatformSource` are written into the plan's `parameters_json`,
+which is inside the SHA-256 approval hash: the reviewer approves a platform as well as a script.
+Lane B compares the interpreter of the saved script against the freshly resolved one and refuses
+`PLATFORM_MISMATCH` rather than dispatching bash at a Windows till.
 
 ---
 
@@ -357,8 +405,17 @@ CLEAR_CACHE:<cache-type>:<host>:<port>
 RERUN_JOB:<linux|windows>:<identifier>
 ```
 
+The OS segment is only the **lowest-but-one rung** of the platform ladder above — a hint from the
+procedure's author, overridden by what the host itself reports. `RESTART_SERVICE:tomcat:linux`
+renders PowerShell when the machine answers Windows. Both `CHECK_URL` and `RERUN_JOB` rejoin their
+tail on `:` so a URL's port and a `C:\batch\nightly.ps1` path survive parsing intact.
+
 `CHECK_URL` runs in-process (read-only, cannot change anything, `Redirect.NEVER` so a redirect
 cannot move the probe off the approved host). Everything mutating goes to the executor.
+
+Templates exist per tool **and per platform**. `CLEAR_CACHE` is templated only for redis on a
+non-Windows host, because `redis-cli` is usually absent on Windows; that combination falls through
+to `SOP_GROUNDED` rather than shipping a command the host has never heard of.
 
 ---
 
@@ -401,6 +458,24 @@ ordinary, and flagging them trains reviewers to click through warnings.
 ### Access control
 
 Stateless JWT (HS256, jjwt), BCrypt hashes (`BCryptPasswordEncoder(10)`), no sessions.
+
+**Session lifetime.** Two tokens: a 1-hour access token, and a refresh token whose expiry *is*
+the session length — 7 days with "keep me signed in" ticked, 1 day without. `tokenType` is a
+claim, and [JwtAuthFilter](src/main/java/com/company/mcp/config/JwtAuthFilter.java) authenticates
+an `access` token only, so the long-lived one opens nothing but `/api/auth/refresh`.
+
+Rotation deliberately does **not** extend the window: the replacement refresh token inherits the
+old one's `exp` rather than being minted with a full TTL, and the access token is capped at
+whatever is left (`Math.min(ACCESS_TTL, remainingMs)`). With no session table, that expiry is the
+only thing that can end a session — mint a fresh 7 days on every rotation and "7 days" silently
+means "until the browser closes", because the client rotates every half hour. Day 7 asks for the
+password again. Covered by
+[TokenRotationTest](src/test/java/com/company/mcp/controller/TokenRotationTest.java).
+
+Renewal is request-driven, never clock-driven: `authFetch()` refreshes when the token it is about
+to send is within 5 minutes of expiry. So the session follows the person — work and it renews
+silently, walk away and it lapses on its own. There is no keep-alive timer, because a timer keeps
+an unattended workstation signed in.
 
 | | VIEWER | ANALYST | ADMIN |
 |---|:---:|:---:|:---:|
@@ -480,10 +555,16 @@ Authorization: Bearer <executor-token>   Authorization: Bearer <executor-token>
 2xx → REACHABLE                            "connection": "" }
 non-2xx → UNREACHABLE:<host>
                                          2xx → SUCCEEDED, body stored as output (8 000 chars)
+2xx body may contain platform=<os>
+  → decides the script's language
 ```
 
 `"connection": ""` means "use your default path" — the no-credential attempt made before anyone is
 asked for anything.
+
+The `platform=<os>` token in a 2xx probe body is optional and free-form (`platform=windows` or
+`"platform":"windows"` both parse). Absent or unrecognised, the control plane falls back a rung —
+so an executor that has never heard of the field behaves exactly as it did before it existed.
 
 Responsibilities that belong to the executor because this platform cannot hold them:
 
@@ -574,7 +655,10 @@ is Ollama (`phi3:mini` chat, `nomic-embed-text` embeddings), no API key needed.
 
 React 18 + Vite + TypeScript. JWT in `localStorage` (`mcp_jwt_token`, `mcp_refresh_token`,
 `mcp_user`); every call through `authFetch()`, which proactively refreshes a token expiring within
-5 minutes and dispatches `mcp:auth-expired` on a hard 401.
+5 minutes and dispatches `mcp:auth-expired` on a hard 401. `localStorage` and not a store like
+Redux because the refresh token has to survive a page reload — in-memory state cannot hold a
+7-day value. Hardening path, when the deployment warrants it: move the refresh token to an
+`HttpOnly; Secure; SameSite=Strict` cookie so no script can read it at all.
 
 | Route | Page | Notes |
 |---|---|---|

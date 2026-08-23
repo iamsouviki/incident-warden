@@ -179,12 +179,28 @@ public class AuthController {
             return ResponseEntity.status(401).body(Map.of("error", "Account is no longer active"));
 
         boolean remember = Boolean.TRUE.equals(claims.get("rememberMe", Boolean.class));
-        long refreshTtl = remember ? REMEMBER_REFRESH_TTL : SESSION_REFRESH_TTL;
+
+        // Rotation must not extend the session. The replacement refresh token inherits the
+        // OLD token's expiry rather than getting a fresh 7 days, so the clock that started
+        // at password entry keeps running: rotate every half hour for a week and you are
+        // still signed out on day 7.
+        //
+        // Minting a full TTL here — which is what this did — turned "keep me signed in for
+        // 7 days" into "signed in forever, as long as one tab stays open", because every
+        // rotation reset the very deadline it exists to enforce. There is no server-side
+        // session table to expire it instead, so this expiry IS the session length.
+        long remainingMs = claims.getExpiration().getTime() - System.currentTimeMillis();
+        if (remainingMs <= 0)
+            return ResponseEntity.status(401).body(Map.of("error", "Session expired. Please sign in again."));
+
         String role = user.getRole();
+        // Capped for the same reason: an access token minted in the last minute of the
+        // window must not outlive the window.
+        long accessTtl = Math.min(ACCESS_TTL, remainingMs);
         String fresh = jwtService.generate(user.getUsername(),
-                Map.of("role", role, "tenantId", user.getTenantId(), "tokenType", "access"), ACCESS_TTL);
+                Map.of("role", role, "tenantId", user.getTenantId(), "tokenType", "access"), accessTtl);
         String rotatedRefresh = jwtService.generate(user.getUsername(),
-                Map.of("role", role, "tenantId", user.getTenantId(), "tokenType", "refresh", "rememberMe", remember), refreshTtl);
+                Map.of("role", role, "tenantId", user.getTenantId(), "tokenType", "refresh", "rememberMe", remember), remainingMs);
         return ResponseEntity.ok(Map.of(
                 "token", fresh,
                 "refreshToken", rotatedRefresh,
@@ -192,8 +208,8 @@ public class AuthController {
                 "fullName", user.getFullName() != null ? user.getFullName() : user.getUsername(),
                 "department", user.getDepartment() != null ? user.getDepartment() : "",
                 "tenantId", user.getTenantId(),
-                "expiresIn", ACCESS_TTL,
-                "refreshExpiresIn", refreshTtl
+                "expiresIn", accessTtl,
+                "refreshExpiresIn", remainingMs
         ));
     }
 

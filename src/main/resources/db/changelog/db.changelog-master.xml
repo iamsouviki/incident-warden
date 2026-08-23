@@ -119,4 +119,9 @@
         <validCheckSum>ANY</validCheckSum>
         <sqlFile path="versions/1.20/default_password.sql" relativeToChangelogFile="true" />
     </changeSet>
+
+    <changeSet id="1.21-target-platform" author="mcp-incident-automation">
+        <validCheckSum>ANY</validCheckSum>
+        <sqlFile path="versions/1.21/target_platform.sql" relativeToChangelogFile="true" />
+    </changeSet>
 </databaseChangeLog>

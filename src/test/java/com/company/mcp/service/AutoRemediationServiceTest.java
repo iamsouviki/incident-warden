@@ -152,7 +152,7 @@ class AutoRemediationServiceTest {
     void aPrecedentWithNoApprovedProcedureBehindItIsRefused() {
         IncidentPrecedentService.Precedent precedent = new IncidentPrecedentService.Precedent(
                 UUID.randomUUID(), "INC-OLD", UUID.randomUUID(), "restart-approved-service",
-                "RESTART_SERVICE:spooler:windows", "systemctl restart 'spooler'", "bash", "SOP_TEMPLATE",
+                "RESTART_SERVICE:spooler:windows", "Restart-Service -Name 'spooler'", "powershell", "SOP_TEMPLATE",
                 "", List.of(), 0.95, List.of("printer", "queue", "stuck"),
                 "Restarted the spooler.", OffsetDateTime.now(), "0042", "");
         when(precedents.findPrecedent(anyString(), any())).thenReturn(Optional.of(precedent));
@@ -183,7 +183,7 @@ class AutoRemediationServiceTest {
     void theGuardrailBoundaryStillApplies() {
         IncidentPrecedentService.Precedent precedent = new IncidentPrecedentService.Precedent(
                 UUID.randomUUID(), "INC-OLD", UUID.randomUUID(), "delete-everything",
-                "RESTART_SERVICE:spooler:windows", "systemctl restart 'spooler'", "bash", "SOP_TEMPLATE",
+                "RESTART_SERVICE:spooler:windows", "Restart-Service -Name 'spooler'", "powershell", "SOP_TEMPLATE",
                 "SOP: restart the spooler", List.of(UUID.randomUUID()), 0.95, List.of("printer", "queue", "stuck"),
                 "Restarted the spooler.", OffsetDateTime.now(), "0042", "");
         when(precedents.findPrecedent(anyString(), any())).thenReturn(Optional.of(precedent));
@@ -257,7 +257,7 @@ class AutoRemediationServiceTest {
         org.mockito.ArgumentCaptor<RemediationPlan> saved = org.mockito.ArgumentCaptor.forClass(RemediationPlan.class);
         verify(plans, org.mockito.Mockito.atLeastOnce()).save(saved.capture());
         RemediationPlan plan = saved.getValue();
-        assertEquals("systemctl restart 'spooler'", plan.getRemediationScript());
+        assertEquals("Restart-Service -Name 'spooler'", plan.getRemediationScript());
         assertEquals(64, plan.getPlanHash().length());
         assertTrue(plan.getParametersJson().contains("\"reference\":\"INC-OLD\""));
         assertTrue(plan.getGuardrailFindings().contains("AUTO_RUN_FROM_APPROVED_PRECEDENT"));
@@ -294,16 +294,41 @@ class AutoRemediationServiceTest {
         nothingHappened();
     }
 
+    /**
+     * The stored script is replayed verbatim, so it has to be a script this machine can run.
+     * A bash precedent aimed at a Windows till would reach the host and fail on the first
+     * line — noisy, and an unattended lane has nobody to read the noise. Refusing hands it
+     * back to the HITL lane, which regenerates for the platform it actually resolved.
+     */
+    @Test
+    void aScriptForTheWrongPlatformIsRefused() {
+        IncidentPrecedentService.Precedent bashOnAWindowsTill = new IncidentPrecedentService.Precedent(
+                UUID.randomUUID(), "INC-OLD", UUID.randomUUID(), "restart-approved-service",
+                "RESTART_SERVICE:spooler:windows", "systemctl restart 'spooler'", "bash", "SOP_TEMPLATE",
+                "SOP: restart the spooler", List.of(UUID.randomUUID()), 0.95, List.of("printer", "queue", "stuck"),
+                "Restarted the spooler.", OffsetDateTime.now(), "0042", "");
+        when(precedents.findPrecedent(anyString(), any())).thenReturn(Optional.of(bashOnAWindowsTill));
+
+        assertEquals("PLATFORM_MISMATCH:bash!=powershell", service.considerNewIncident(incident("P3")).reason());
+        nothingHappened();
+    }
+
     private void givenPrecedent(String actionKey, String scriptSource, double similarity, List<String> matchedTerms) {
         when(precedents.findPrecedent(anyString(), any()))
                 .thenReturn(Optional.of(precedent(actionKey, scriptSource, similarity, matchedTerms,
-                        "systemctl restart 'spooler'")));
+                        "Restart-Service -Name 'spooler'")));
     }
 
+    /**
+     * A Windows till running the print spooler, which is what the incident describes and what
+     * the action key's OS segment says. The script and its language have to agree with that:
+     * an incoherent fixture is now caught by the platform gate rather than quietly restarting
+     * a service with a command the host does not have.
+     */
     private IncidentPrecedentService.Precedent precedent(String actionKey, String scriptSource, double similarity,
                                                          List<String> matchedTerms, String script) {
         return new IncidentPrecedentService.Precedent(UUID.randomUUID(), "INC-OLD", UUID.randomUUID(),
-                "restart-approved-service", actionKey, script, "bash", scriptSource,
+                "restart-approved-service", actionKey, script, "powershell", scriptSource,
                 "SOP: restart the approved service", List.of(UUID.randomUUID()), similarity, matchedTerms,
                 "Restarted the spooler.", OffsetDateTime.now(), "0042", "");
     }
@@ -327,7 +352,7 @@ class AutoRemediationServiceTest {
     @Test
     void theCitedPrecedentBecomesTheEvidenceTheGuardrailsSee() {
         SopEvidence evidence = precedent("RESTART_SERVICE:spooler:windows", "SOP_TEMPLATE", 0.9,
-                List.of("printer", "queue", "stuck"), "systemctl restart 'spooler'").asEvidence();
+                List.of("printer", "queue", "stuck"), "Restart-Service -Name 'spooler'").asEvidence();
 
         assertTrue(evidence.approvedEvidencePresent());
         assertEquals("PRECEDENT_APPROVED_EXECUTION:INC-OLD", evidence.reason());

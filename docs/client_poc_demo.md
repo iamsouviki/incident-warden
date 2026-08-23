@@ -78,6 +78,7 @@ so answer it before they ask it.
 | Description | `Back-office app is not responding. Tomcat appears down on the application server.` |
 | Priority | `P3` |
 | Store Number | `0042` |
+| Operating system | leave on **Auto-detect** — the machine gets asked |
 | Server / Host | *leave blank on purpose* |
 
 Submit. The form refuses and says the ticket names no server. **This is a feature — show
@@ -112,9 +113,14 @@ Walk them through what comes back, in this order:
    0.20, system health 0.15, minus a risk penalty for priority.
 4. **Guardrails** — `PASS`. The action is on the allow-list, the script is scanned, the
    target host is set.
-5. **The script** — source `SOP_TEMPLATE`. Read the eight lines out loud. It is
-   `systemctl restart tomcat` with a health check either side. Nothing the model wrote
-   freehand.
+5. **The script** — source `SOP_TEMPLATE`, and read the language field before the body:
+   the plan says `bash` on a Linux target and `powershell` on a Windows one. Read the lines
+   out loud. It is a service restart with a health check either side. Nothing the model
+   wrote freehand.
+
+   On a Mac laptop the executor stub reports `darwin`, so the same procedure renders
+   `launchctl kickstart -k` instead of `systemctl restart`. That is the point, not a quirk —
+   see the sidebar below.
 
 What to say:
 
@@ -122,6 +128,58 @@ What to say:
 > SOP says yes. *Has it worked before?* — a past incident here says yes, and here is that
 > ticket. Both are shown to the approver, and both are stored on the plan, so an auditor six
 > months from now sees the same two answers.
+
+### Optional 60-second sidebar: the script is written for the machine, not for the SOP author
+
+Worth doing if the client runs a mixed estate — Windows tills and Linux back-office servers.
+
+The approved procedure behind this plan is `RESTART_SERVICE:tomcat:linux`. Note the `linux`.
+Now stop the executor, restart it pretending to be a till, and create the plan again:
+
+```bash
+EXECUTOR_PLATFORM=windows node scripts/dev-executor.mjs store-0042-pos-01,store-0042-app-01,store-0099-pos-01
+```
+
+The same procedure, the same ticket, and the plan now reads:
+
+```
+scriptLanguage : powershell
+targetPlatform : windows  (source: HOST_REPORTED)
+
+# SOP-approved remediation: restart the 'tomcat' service.
+$ErrorActionPreference = 'Stop'
+Write-Output "Before: $((Get-Service -Name 'tomcat').Status)"
+Restart-Service -Name 'tomcat'
+Start-Sleep -Seconds 5
+$after = (Get-Service -Name 'tomcat').Status
+Write-Output "After: $after"
+if ($after -ne 'Running') { exit 1 }
+```
+
+> The person who wrote that procedure typed `linux`, because that is the machine they had in
+> front of them. They were never going to be asked about every till in the estate. So we
+> don't ask them: the reachability check is also where the machine tells us what it is, and
+> the script gets written for that answer. `targetPlatformSource` on the plan records which
+> rung of evidence was used — the host's own answer, the WinRM connection method the operator
+> chose, the procedure's guess, or our default — and it is inside the approval hash, so the
+> reviewer approved a platform as well as a script.
+
+And if the operator knows better than the detection does, they say so: **🖥 Remediation target
+→ Operating system** on the incident (also on the create form and in the HITL answer panel) is
+normally on *Auto-detect*, and setting it outranks the probe. Do this one if they ask "what if
+your detection is wrong?" — set it to Windows on a Linux host and create the plan again:
+
+```
+targetPlatform : windows  (source: OPERATOR_OVERRODE_HOST)
+```
+
+and the badge next to the script in the HITL console turns **red** and reads
+`windows (operator override)`.
+
+> A person can overrule the machine, because sometimes the machine cannot be probed at all and
+> sometimes the detection is simply wrong. What a person cannot do is overrule it quietly. The
+> reviewer is told, in red, that the host said something different — and the field is audited,
+> so "who declared this a Windows box, and when" has an answer.
 
 ---
 
@@ -134,10 +192,11 @@ What to say:
    version A and have version B execute."*
 2. **Dry run.** Result: `DRY_RUN_PASSED` — *"Reachability: REACHABLE. Nothing was
    dispatched."* The executor window prints
-   `[PROBE] target='store-0042-app-01' via default path -> REACHABLE`.
+   `[PROBE] target='store-0042-app-01' via default path -> REACHABLE platform=linux`.
    Say: *"'Default path' means we tried to reach the machine with no credential of its own
    first. No token, no key, nothing stored in our database. Only if that fails do we ask a
-   human how to connect."*
+   human how to connect. And notice the machine told us what it is — that is what decided
+   the language of the script you just approved."*
 3. **Execute for real.** Result: `LIVE` / `SUCCEEDED` — *"Executor responded 200 … over
    default path."* The executor window prints the script it was handed:
 
@@ -151,6 +210,9 @@ What to say:
    sleep 5
    systemctl is-active 'tomcat'
    ```
+
+   (`language=powershell` and a `Restart-Service` body if the executor reported a Windows
+   host — the executor is handed the interpreter, it does not guess.)
 
 4. The incident flips to **RESOLVED**.
 
@@ -229,6 +291,7 @@ visible in **AI configuration → Unattended Remediation**:
 | `TOOL_NOT_AUTO_RUNNABLE` | anything beyond read-only / restart |
 | `SCRIPT_SCAN_NOT_CLEAN` / `GUARDRAIL_BLOCKED` | fresh scan on every run, not just at approval |
 | `PRECEDENT_TOO_WEAK` / `TOO_THIN` | <60% wording overlap or <3 distinct matching terms |
+| `PLATFORM_MISMATCH` | the saved script is bash and this machine answered Windows (or the reverse) |
 | `AUTORUN_DISABLED` | the master switch |
 
 And the master switch itself: toggle **Act without approval on proven precedent** to
@@ -276,9 +339,10 @@ It refuses, and the refusal is a question, not a stack trace:
 > No server is named on this incident or in its description. Enter the server this affects,
 > then create the plan again.
 
-Underneath it, the fields to answer it appear: **Server / host** and **Connect via**. Type
-`store-0042-app-01`, leave the connection on *Executor default (try first)* — that is the "try
-without a token first" path — and press **Save answer and plan again**. One click writes the
+Underneath it, the fields to answer it appear: **Server / host**, **Connect via** and
+**Operating system**. Type `store-0042-app-01`, leave the connection on *Executor default (try
+first)* — that is the "try without a token first" path — leave the OS on *Auto-detect* so the
+machine gets to answer it, and press **Save answer and plan again**. One click writes the
 answer to the ticket and re-plans:
 
 > **Plan ready for HITL review.** A tenant-scoped SOP-backed plan passed the deterministic

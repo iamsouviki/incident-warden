@@ -219,6 +219,21 @@ public class AutoRemediationService {
             if (!host.known()) return Result.refused("TARGET_HOST_UNKNOWN");
             RemediationToolRegistry.Probe reach = tools.reachable(host.host(), connection);
             if (reach.unreachable()) return Result.refused(reach.reason());
+
+            // This lane repeats a stored script rather than writing a new one, so the machine
+            // it repeats it on has to be the same *kind* of machine. A Windows till and a
+            // Linux application server can sit in one store under one store number, and
+            // Restart-Service dispatched to bash is not a fix, it is a mystery in a log.
+            //
+            // ponytail: compares the interpreter, so windows-vs-unix is caught and
+            // linux-vs-darwin is not (both are bash, and only the service manager differs —
+            // which fails loudly on the host and lands the ticket back with a person rather
+            // than doing damage). Record the platform on remediation_plans and compare that
+            // instead if a mixed Linux/macOS estate ever turns up.
+            String language = IncidentTarget.platform(incident, reach.platform(), parsed.platformHint()).language();
+            if (!language.equalsIgnoreCase(precedent.scriptLanguage())) {
+                return Result.refused("PLATFORM_MISMATCH:" + precedent.scriptLanguage() + "!=" + language);
+            }
         }
 
         return run(incident, precedent, parsed, target, connection, scan);

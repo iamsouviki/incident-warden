@@ -91,6 +91,18 @@ public class Incident {
     @Column(name = "connection_method")
     private String connectionMethod;
 
+    /**
+     * The operating system on that machine, as declared by a person: windows | linux | darwin.
+     *
+     * Blank is the normal case and means "work it out" — the probe reply, then the WinRM
+     * connection method, then the procedure's own guess. Set, it outranks all of them,
+     * because it is a person's answer to this exact question rather than an inference about
+     * it. A value that does not normalise is ignored rather than honoured, so a typo cannot
+     * hand a Windows till a bash script.
+     */
+    @Column(name = "target_platform")
+    private String targetPlatform;
+
     public Incident() {}
 
     public Incident(UUID id, String subject, String description, String assignee, String assignedGteam, 
@@ -187,6 +199,9 @@ public class Incident {
 
     public String getConnectionMethod() { return connectionMethod; }
     public void setConnectionMethod(String connectionMethod) { this.connectionMethod = connectionMethod; }
+
+    public String getTargetPlatform() { return targetPlatform; }
+    public void setTargetPlatform(String targetPlatform) { this.targetPlatform = targetPlatform; }
 
     // Builder Pattern
     public static Builder builder() {
