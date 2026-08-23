@@ -215,6 +215,35 @@ class IncidentTargetTest {
         assertEquals("darwin", IncidentTarget.platform(incident("x", ""), "Mac OS X", "").name());
     }
 
+    /**
+     * What the UI prefills has to be what the planner would resolve, or the operator
+     * confirms one host and a script runs on another.
+     */
+    @Test
+    void whatIsOfferedAsAPrefillIsWhatTheResolverWouldHaveFound() {
+        Incident ticket = incident("Tomcat down at Store #0042", "hostname: POS01.store42.local is unreachable");
+
+        assertEquals("pos01.store42.local", IncidentTarget.hostInText(ticket.getSubject(), ticket.getDescription()));
+        assertEquals(IncidentTarget.resolve(ticket).host(),
+                IncidentTarget.hostInText(ticket.getSubject(), ticket.getDescription()));
+        assertEquals("0042", IncidentTarget.storeInText(ticket.getSubject(), ticket.getDescription()));
+        // Read straight off the entity, which is the shape the UI actually receives.
+        assertEquals("pos01.store42.local", ticket.getDetectedTargetHost());
+        assertEquals("0042", ticket.getDetectedStoreNumber());
+    }
+
+    /** A ticket that names nothing prefills nothing — blank, never a guess. */
+    @Test
+    void aTicketThatNamesNoMachineOrStoreOffersNothing() {
+        Incident ticket = incident("Printer is jammed", "Please send someone to look at it.");
+
+        assertEquals("", ticket.getDetectedTargetHost());
+        assertEquals("", ticket.getDetectedStoreNumber());
+        // A store embedded in a hostname still counts; that is where it usually lives.
+        assertEquals("0042", IncidentTarget.storeInText("restart iis on store-0042-pos-01", ""));
+        assertEquals("", IncidentTarget.storeInText("the store is closed today", ""));
+    }
+
     private Incident incident(String subject, String description) {
         return Incident.builder().id(UUID.randomUUID()).tenantId("tenant-a")
                 .subject(subject).description(description)

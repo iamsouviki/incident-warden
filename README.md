@@ -182,8 +182,48 @@ The UI refuses the first submit if neither the description nor the host field na
 set later from the incident's **🖥 Remediation target** panel (`PUT /api/v1/incidents/{id}` with
 `storeNumber` / `targetHost` / `connectionMethod`).
 
+That panel does not start empty. `Incident.getDetectedTargetHost()` / `getDetectedStoreNumber()`
+are `@Transient` `READ_ONLY` fields on every incident JSON, computed by
+`IncidentTarget.hostInText` / `storeInText` — the same extractor `resolve()` uses, so what an
+operator is offered is exactly what the planner would have found. They prefill the Store and
+Server boxes when the typed columns are blank, with a visible "filled in from this ticket, press
+Save target" note, and they are blank when the ticket names nothing. Read-only on purpose: a
+prefill is a suggestion for a person to confirm, never a saved answer. The OS is deliberately
+*not* prefilled — writing `target_platform` is `OPERATOR_DECLARED`, the top of the platform
+ladder, and a keyword guess sitting in that box would outrank the machine's own probe reply the
+moment somebody pressed Save.
+
 Bulk imports never trigger Lane B. An import of a thousand historical tickets must not fire a
 thousand restarts.
+
+### Suggestions — `POST /api/v1/incidents/analyze` (advisory only)
+
+The **✨ AI Incident Copilot** card on an incident, and the same button in the New-incident form.
+This lane changes nothing: it names a likely team and suggests steps.
+
+Which source it uses is a database question, asked once, before any model call:
+`RagService.findApprovedSopEvidence(tenantId, subject + description).approvedEvidencePresent()`.
+
+* **Approved SOP present** → the steps are generated *grounded on the approved excerpt itself*,
+  not routed through `askStrictSopRag` (whose scope check and vector-store availability are
+  separate questions from "does an approved procedure exist"). No model configured → the excerpt
+  is shown verbatim. Response carries `source: SOP`, `sourceLabel: "From your approved SOP"`.
+* **No approved SOP** → public web research on the **first** attempt, `source: WEB`. If the search
+  returns nothing reachable, `source: AI` and the label says so — the assistant's own reasoning,
+  labelled as such.
+* Nothing at all → `source: NONE`.
+
+This used to be decided by string-matching the model's English (`!answer.contains("couldn't
+find")`), which is why the same ticket answered from the SOP on one click and from the web on the
+next: two runs worded their non-answer differently. Worse, `askStrictSopRag`'s own notices ("that
+is outside the SOPs I have", "the knowledge service is not available") passed that test and were
+shown as if they were the runbook's advice. Do not reintroduce prose matching here.
+
+Provenance is returned as `source` / `sourceLabel` / `sourceDetail` rather than a `"(Source: RAG
+Knowledge Base)"` tail glued onto the prose — the reader is on a service desk, and "RAG" is not a
+word they need. The UI shows the label as a chip, green only for `SOP`. Prompts share
+`IncidentService.PLAIN_LANGUAGE_RULES`: numbered steps, plain text with no markdown, every command
+explained in one clause, and never a hostname or path the ticket did not supply.
 
 ### Analysis — both halves
 

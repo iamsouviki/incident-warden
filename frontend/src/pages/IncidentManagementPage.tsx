@@ -24,6 +24,13 @@ export interface Incident {
   targetHost?: string;
   /** SSH | WINRM | AGENT, or blank for the executor's own default path to the host. */
   connectionMethod?: string;
+  /**
+   * What the ticket's own words point at, computed by the backend's one extractor. Read-only
+   * and never saved by itself — the fields above are what a plan uses, and these are only
+   * offered as a prefill so nobody retypes a hostname that is already in the description.
+   */
+  detectedTargetHost?: string;
+  detectedStoreNumber?: string;
 }
 
 export interface Comment {
@@ -81,10 +88,24 @@ interface Props {
 const withCurrent = (options: string[], current?: string | null): string[] =>
   current && !options.includes(current) ? [current, ...options] : options;
 
+/**
+ * How a suggestion's origin is coloured. Green is reserved for the workspace's own approved
+ * SOPs, because "your runbook says this" and "a web page said this" are not the same claim
+ * and the person deciding whether to act on it is not always an engineer.
+ */
+const SOURCE_TONE: Record<string, string> = {
+  SOP: 'var(--green)',
+  WEB: 'var(--amber)',
+  AI: 'var(--amber)',
+  NONE: 'var(--text-muted)',
+};
+
 
 const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setShowCreateModal }) => {
   const currentUser = getStoredUser();
   const currentUsername = currentUser?.username || 'User';
+  // A viewer's plan request is refused by the API, so the button says so instead of failing.
+  const isViewer = (currentUser?.role || '').toUpperCase() === 'VIEWER';
 
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
@@ -150,7 +171,14 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
   // Teams & AI Suggestion states
   const [teams, setTeams] = useState<Team[]>([]);
   const [statuses, setStatuses] = useState<string[]>(['New', 'In Progress', 'Resolved', 'Closed']);
-  const [aiSuggestion, setAiSuggestion] = useState<{ suggestedTeam?: string; suggestedResolution?: string } | null>(null);
+  const [aiSuggestion, setAiSuggestion] = useState<{
+    suggestedTeam?: string;
+    suggestedResolution?: string;
+    /** SOP | WEB | AI | NONE — where the advice came from, decided by the backend. */
+    source?: string;
+    sourceLabel?: string;
+    sourceDetail?: string;
+  } | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [modalAiLoading, setModalAiLoading] = useState(false);
 
@@ -221,8 +249,8 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
         // this is a question the operator can answer inline by matching on TARGET_*.
         reason: data.reason,
         message: route === 'HITL_REQUIRED'
-          ? 'A tenant-scoped SOP-backed plan passed the deterministic guardrails and was sent to the HITL queue.'
-          : `No approval was created. The agent escalated this incident: ${data.reason || plan.sopEvidence || 'required evidence or safety criteria were not met.'}`
+          ? 'A plan was written from your approved SOP and passed every safety check. It is waiting in the approval queue for a person to read and approve. Nothing has run.'
+          : `No plan was created and nothing will run. Why: ${data.reason || plan.sopEvidence || 'the required SOP evidence or safety criteria were not met.'}`
             // What to do about it, when the backend knows: naming the server, or the way to
             // reach it, is a fix the operator can apply in the card above without a ticket.
             + (data.action ? `\n\n${data.action}` : ''),
@@ -253,7 +281,10 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
         const employees = teams.find(t => t.name === data.suggestedTeam)?.employees || [];
         setNewAssignee(employees[0]?.username || 'Unassigned');
         if (data.suggestedResolution) {
-          setInitialComment(`AI Suggested Resolution:\n${data.suggestedResolution}`);
+          // The origin is part of the note, not a "(Source: RAG …)" tail: whoever picks this
+          // ticket up needs to know whether the steps are the company's own procedure or a
+          // starting point read off the web.
+          setInitialComment(`Suggested first steps — ${data.sourceLabel || 'from the assistant'}:\n${data.suggestedResolution}`);
         }
       }
     } catch (err) {
@@ -304,8 +335,18 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
       setEditPriority(selectedIncident.priority);
       setEditAssignee(selectedIncident.assignee);
       setEditGteam(selectedIncident.assignedGteam);
-      setEditStoreNumber(selectedIncident.storeNumber || '');
-      setEditTargetHost(selectedIncident.targetHost || '');
+      // The saved answer if there is one, otherwise what the ticket itself says. The backend
+      // reads the host and store out of the subject and description with the same extractor
+      // the planner uses, so offering it here saves retyping a hostname that is sitting two
+      // inches above the field — and it is still only an offer: nothing is saved until the
+      // operator presses "Save target".
+      //
+      // Only the two facts that are safe to read from prose. The OS is deliberately not
+      // prefilled: setting that field is OPERATOR_DECLARED, the top of the platform ladder,
+      // and a keyword guess sitting in the box would outrank the machine's own probe reply
+      // the moment somebody pressed Save.
+      setEditStoreNumber(selectedIncident.storeNumber || selectedIncident.detectedStoreNumber || '');
+      setEditTargetHost(selectedIncident.targetHost || selectedIncident.detectedTargetHost || '');
       setEditConnectionMethod(selectedIncident.connectionMethod || '');
       setEditTargetPlatform(selectedIncident.targetPlatform || '');
       setEditMode(false);
@@ -1013,6 +1054,23 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
                             </select>
                           </div>
                         </div>
+                        {/* Prefilled-but-unsaved is its own state and has to look like one:
+                            the boxes are full, yet a plan would still be blocked, and without
+                            this line that reads as the platform ignoring a host it can see. */}
+                        {((!selectedIncident.targetHost && !!selectedIncident.detectedTargetHost)
+                          || (!selectedIncident.storeNumber && !!selectedIncident.detectedStoreNumber)) && (
+                          <div style={{ marginTop: '8px', padding: '7px 9px', borderRadius: '6px', background: 'var(--surface)', border: '1px dashed var(--amber)', fontSize: '11px', lineHeight: 1.45 }}>
+                            <strong>Filled in from this ticket.</strong>{' '}
+                            We found{' '}
+                            {!selectedIncident.targetHost && selectedIncident.detectedTargetHost
+                              ? <>the server <code>{selectedIncident.detectedTargetHost}</code></> : null}
+                            {!selectedIncident.targetHost && selectedIncident.detectedTargetHost
+                              && !selectedIncident.storeNumber && selectedIncident.detectedStoreNumber ? ' and ' : null}
+                            {!selectedIncident.storeNumber && selectedIncident.detectedStoreNumber
+                              ? <>store <code>{selectedIncident.detectedStoreNumber}</code></> : null}
+                            {' '}written in the subject or description. Check it is right, then press <strong>Save target</strong> — nothing uses these values until you do.
+                          </div>
+                        )}
                         <small style={{ display: 'block', marginTop: '8px', color: 'var(--text-muted)', fontSize: '11px', lineHeight: 1.45 }}>
                           {selectedIncident.targetHost
                             ? 'A mutating plan is refused unless the executor can reach this host. Leave "Connect via" on the default until a plan reports it unreachable — the executor tries the path it already has first.'
@@ -1030,25 +1088,40 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
                           padding: '16px',
                           marginTop: '10px',
                       }}>
-                        <div style={{ display: 'flex', alignItems: 'center', marginBottom: '10px', width: '100%', justifyContent: 'space-between' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', marginBottom: '6px', width: '100%', justifyContent: 'space-between', gap: '10px' }}>
                           <h4 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--amber)', fontSize: '13px' }}>
                             ✨ AI Incident Copilot
                           </h4>
-                          <button 
+                          <button
                             type="button"
-                            className="btn-sync" 
-                            style={{ padding: '4px 8px', fontSize: '11px', height: '28px' }}
+                            className="btn-sync"
+                            style={{ padding: '4px 8px', fontSize: '11px', height: '28px', display: 'flex', alignItems: 'center', gap: '6px', opacity: aiLoading ? 0.55 : 1, cursor: aiLoading ? 'progress' : 'pointer' }}
                             onClick={() => getAiSuggestion(selectedIncident.subject, selectedIncident.description)}
                             disabled={aiLoading}
+                            aria-busy={aiLoading}
                           >
-                            {aiLoading ? 'Analyzing...' : 'Get AI Suggestions'}
+                            {aiLoading
+                              ? <><Loader size={12} className="spin" /> Analysing…</>
+                              : aiSuggestion ? 'Regenerate suggestion' : 'Get suggestion'}
                           </button>
                         </div>
+                        <p style={{ margin: '0 0 10px', fontSize: '11.5px', color: 'var(--text-muted)', lineHeight: 1.45 }}>
+                          Reads this ticket, checks your own approved SOPs for a procedure that covers it, and searches
+                          the public web only when your SOPs have nothing for it. It suggests — it never changes anything.
+                        </p>
 
-                        {aiSuggestion && (
+                        {/* An empty card during a slow model call reads as a broken button, so the
+                            wait says which of the two searches is happening. */}
+                        {aiLoading && (
+                          <div style={{ padding: '10px', borderRadius: '6px', background: 'var(--surface)', border: '1px dashed var(--border)', fontSize: '12px', color: 'var(--text-muted)' }}>
+                            Looking for a matching procedure in your approved SOPs…
+                          </div>
+                        )}
+
+                        {aiSuggestion && !aiLoading && (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                             <div>
-                              <span style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Suggested Team</span>
+                              <span style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Best team for this</span>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '4px' }}>
                                 <strong style={{ color: 'var(--green)', fontSize: '13px' }}>{aiSuggestion.suggestedTeam}</strong>
                                 {selectedIncident.assignedGteam !== aiSuggestion.suggestedTeam && (
@@ -1082,93 +1155,141 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
                               </div>
                             </div>
                             <div>
-                              <span style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Suggested Resolution</span>
-                              <div style={{ 
-                                marginTop: '4px', 
-                                padding: '10px', 
-                                background: 'var(--surface)', 
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                <span style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>What to try</span>
+                                {/* The origin, in the reader's words. This used to be "(Source: RAG
+                                    Knowledge Base)" glued onto the end of the answer — a phrase that
+                                    means nothing to the person on the service desk and buried the one
+                                    thing that decides how much to trust it. */}
+                                <span style={{
+                                  fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.3px',
+                                  padding: '2px 7px', borderRadius: '999px',
+                                  color: SOURCE_TONE[aiSuggestion.source || 'NONE'] || 'var(--text-muted)',
+                                  border: `1px solid ${SOURCE_TONE[aiSuggestion.source || 'NONE'] || 'var(--border)'}`,
+                                }}>
+                                  {aiSuggestion.sourceLabel || 'Suggested'}
+                                </span>
+                              </div>
+                              {aiSuggestion.sourceDetail && (
+                                <div style={{ marginTop: '4px', fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.45 }}>
+                                  {aiSuggestion.sourceDetail}
+                                </div>
+                              )}
+                              <div style={{
+                                marginTop: '6px',
+                                padding: '10px',
+                                background: 'var(--surface)',
                                 border: '1px solid var(--border)',
-                                borderRadius: '6px', 
-                                fontSize: '12.5px', 
+                                borderRadius: '6px',
+                                fontSize: '12.5px',
                                 whiteSpace: 'pre-wrap',
-                                lineHeight: '1.4' 
+                                lineHeight: '1.4'
                               }}>
                                 {aiSuggestion.suggestedResolution}
                               </div>
                             </div>
                           </div>
                         )}
-
-                        {/* Guarded remediation plan: no incident-side script execution is available. */}
-                        {selectedIncident && (
-                          <div style={{
-                            marginTop: '12px', paddingTop: '12px', borderTop: '1px solid var(--border)',
-                            display: 'flex', flexDirection: 'column', gap: '8px'
-                          }}>
-                            <span style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Guarded remediation workflow</span>
-                            <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.45 }}>
-                              Create a proposal only. The service requires approved tenant SOP evidence and all nine deterministic guardrails before routing it to human review. It cannot run a script from this screen.
-                            </p>
-                            <button
-                              type="button"
-                              className="btn-primary"
-                              style={{ width: 'fit-content', padding: '7px 12px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '6px' }}
-                              disabled={planCreating || selectedIncident.status === 'PENDING_APPROVAL'}
-                              onClick={() => void createGuardedPlan()}
-                            >
-                              {planCreating ? <><Loader size={12} className="spin" /> Evaluating SOP evidence and guardrails…</> : <><ShieldAlert size={12} /> Create guarded remediation plan</>}
-                            </button>
-                            {planOutcome && (
-                              <div style={{ padding: '9px 10px', borderRadius: '6px', fontSize: '11.5px', lineHeight: 1.45, whiteSpace: 'pre-wrap', background: planOutcome.route === 'HITL_REQUIRED' ? 'var(--green-dim)' : 'var(--red-dim)', border: `1px solid ${planOutcome.route === 'HITL_REQUIRED' ? 'var(--green)' : 'var(--red)'}` }}>
-                                <strong>{planOutcome.route === 'HITL_REQUIRED' ? 'Plan ready for HITL review.' : planOutcome.route === 'ESCALATE' ? 'Plan blocked and escalated.' : 'Plan creation failed.'}</strong><br />
-                                {planOutcome.message}
-                              </div>
-                            )}
-                            {/* The agent asked a question it cannot answer itself. Answer it here
-                                and re-plan in one click, rather than hunting for the target card
-                                further up the page and remembering to press the button twice. */}
-                            {planOutcome?.reason?.startsWith('TARGET_') && (
-                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'flex-end', padding: '9px 10px', borderRadius: '6px', border: '1px dashed var(--border)' }}>
-                                <div style={{ flex: '1 1 190px' }}>
-                                  <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Server / host</label>
-                                  <input value={editTargetHost} onChange={e => setEditTargetHost(e.target.value)}
-                                    placeholder="store-0042-app-01"
-                                    style={{ width: '100%', height: '32px', padding: '4px 8px', fontSize: '12px' }} />
-                                </div>
-                                <div style={{ flex: '0 1 150px' }}>
-                                  <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Connect via</label>
-                                  <select value={editConnectionMethod} onChange={e => setEditConnectionMethod(e.target.value)}
-                                    style={{ width: '100%', height: '32px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}>
-                                    <option value="">Executor default (try first)</option>
-                                    <option value="SSH">SSH</option>
-                                    <option value="WINRM">WinRM</option>
-                                    <option value="AGENT">Local agent</option>
-                                  </select>
-                                </div>
-                                <div style={{ flex: '0 1 150px' }}>
-                                  <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Operating system</label>
-                                  <select value={editTargetPlatform} onChange={e => setEditTargetPlatform(e.target.value)}
-                                    style={{ width: '100%', height: '32px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}>
-                                    <option value="">Auto-detect</option>
-                                    <option value="windows">Windows</option>
-                                    <option value="linux">Linux</option>
-                                    <option value="darwin">macOS</option>
-                                  </select>
-                                </div>
-                                <button
-                                  type="button"
-                                  className="btn-primary"
-                                  style={{ height: '32px', padding: '0 12px', fontSize: '11px' }}
-                                  disabled={targetSaving || planCreating || !editTargetHost.trim()}
-                                  onClick={async () => { if (await saveTarget()) await createGuardedPlan(); }}
-                                >
-                                  {targetSaving || planCreating ? 'Saving…' : 'Save answer and plan again'}
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        )}
                       </div>
+
+                      {/* Its own card, not a strip glued under the copilot's answer. Nested there
+                          it read as part of the suggestion — a fifth paragraph of AI output with a
+                          button — when it is the opposite: the deterministic, human-approved lane.
+                          Same reason the wording below dropped "nine deterministic guardrails". */}
+                      {selectedIncident && (
+                        <div style={{
+                          background: 'var(--surface2)',
+                          border: '1px solid var(--border)',
+                          borderRadius: '12px',
+                          padding: '16px',
+                          marginTop: '10px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '10px',
+                        }}>
+                          <h4 style={{ margin: 0, fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <ShieldAlert size={14} /> Fix it with approval
+                          </h4>
+                          <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                            This does not touch any server. It writes a proposal — the exact commands, the machine they
+                            would run on, and the checks they must pass — and puts it in the approval queue for a person
+                            to read. Nothing runs until someone approves it there.
+                          </p>
+                          <ul style={{ margin: 0, paddingLeft: '18px', fontSize: '11.5px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                            <li>A matching approved SOP is required. No SOP, no plan.</li>
+                            <li>The server must be named and reachable before anything that changes it is allowed.</li>
+                            <li>The approved commands are locked; a plan that is edited after approval is refused.</li>
+                          </ul>
+                          <button
+                            type="button"
+                            className="btn-primary"
+                            style={{ width: 'fit-content', padding: '7px 12px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                            disabled={planCreating || isViewer || selectedIncident.status === 'PENDING_APPROVAL'}
+                            title={isViewer ? 'Your access is read-only. Ask an analyst or admin to create the plan.' : undefined}
+                            onClick={() => void createGuardedPlan()}
+                          >
+                            {planCreating ? <><Loader size={12} className="spin" /> Checking your SOPs and safety rules…</> : <><ShieldAlert size={12} /> Create plan for approval</>}
+                          </button>
+                          {isViewer && (
+                            <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                              Your access is read-only. An analyst or admin can create the plan for this incident.
+                            </span>
+                          )}
+                          {selectedIncident.status === 'PENDING_APPROVAL' && !planCreating && (
+                            <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                              A plan for this incident is already waiting in the approval queue.
+                            </span>
+                          )}
+                          {planOutcome && (
+                            <div style={{ padding: '9px 10px', borderRadius: '6px', fontSize: '11.5px', lineHeight: 1.45, whiteSpace: 'pre-wrap', background: planOutcome.route === 'HITL_REQUIRED' ? 'var(--green-dim)' : 'var(--red-dim)', border: `1px solid ${planOutcome.route === 'HITL_REQUIRED' ? 'var(--green)' : 'var(--red)'}` }}>
+                              <strong>{planOutcome.route === 'HITL_REQUIRED' ? 'Plan ready for HITL review.' : planOutcome.route === 'ESCALATE' ? 'Plan blocked and escalated.' : 'Plan creation failed.'}</strong><br />
+                              {planOutcome.message}
+                            </div>
+                          )}
+                          {/* The agent asked a question it cannot answer itself. Answer it here
+                              and re-plan in one click, rather than hunting for the target card
+                              further up the page and remembering to press the button twice. */}
+                          {planOutcome?.reason?.startsWith('TARGET_') && (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'flex-end', padding: '9px 10px', borderRadius: '6px', border: '1px dashed var(--border)' }}>
+                              <div style={{ flex: '1 1 190px' }}>
+                                <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Server / host</label>
+                                <input value={editTargetHost} onChange={e => setEditTargetHost(e.target.value)}
+                                  placeholder="store-0042-app-01"
+                                  style={{ width: '100%', height: '32px', padding: '4px 8px', fontSize: '12px' }} />
+                              </div>
+                              <div style={{ flex: '0 1 150px' }}>
+                                <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Connect via</label>
+                                <select value={editConnectionMethod} onChange={e => setEditConnectionMethod(e.target.value)}
+                                  style={{ width: '100%', height: '32px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}>
+                                  <option value="">Executor default (try first)</option>
+                                  <option value="SSH">SSH</option>
+                                  <option value="WINRM">WinRM</option>
+                                  <option value="AGENT">Local agent</option>
+                                </select>
+                              </div>
+                              <div style={{ flex: '0 1 150px' }}>
+                                <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Operating system</label>
+                                <select value={editTargetPlatform} onChange={e => setEditTargetPlatform(e.target.value)}
+                                  style={{ width: '100%', height: '32px', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}>
+                                  <option value="">Auto-detect</option>
+                                  <option value="windows">Windows</option>
+                                  <option value="linux">Linux</option>
+                                  <option value="darwin">macOS</option>
+                                </select>
+                              </div>
+                              <button
+                                type="button"
+                                className="btn-primary"
+                                style={{ height: '32px', padding: '0 12px', fontSize: '11px' }}
+                                disabled={targetSaving || planCreating || !editTargetHost.trim()}
+                                onClick={async () => { if (await saveTarget()) await createGuardedPlan(); }}
+                              >
+                                {targetSaving || planCreating ? 'Saving…' : 'Save answer and plan again'}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </form>
 
                     {/* COMMENTS LIST & ADD FORM SHIFTED TO DETAILS PAGE UNDER COPILOT */}
@@ -1259,11 +1380,12 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
                   <button 
                     type="button" 
                     className="btn-sync" 
-                    style={{ padding: '2px 8px', fontSize: '11px', height: 'auto', background: 'rgba(255,255,255,0.05)' }} 
+                    style={{ padding: '2px 8px', fontSize: '11px', height: 'auto', background: 'rgba(255,255,255,0.05)', opacity: modalAiLoading ? 0.55 : 1, cursor: modalAiLoading ? 'progress' : 'pointer' }}
                     onClick={handleModalAiSuggest}
                     disabled={modalAiLoading || !newSubject.trim()}
+                    aria-busy={modalAiLoading}
                   >
-                    {modalAiLoading ? 'Analyzing...' : '✨ Run AI Copilot'}
+                    {modalAiLoading ? 'Analysing…' : initialComment ? '✨ Regenerate suggestion' : '✨ Suggest team and first steps'}
                   </button>
                 </div>
                 <input

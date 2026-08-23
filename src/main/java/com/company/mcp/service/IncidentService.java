@@ -719,9 +719,27 @@ public class IncidentService {
 
     public Map<String, String> analyzeIncident(String subject, String description) {
         String team = autoAssignTeam(subject, description);
-        String resolution = suggestResolution(subject, description);
-        return Map.of("suggestedTeam", team, "suggestedResolution", resolution);
+        Suggestion suggestion = suggestResolution(subject, description);
+        return Map.of("suggestedTeam", team,
+                "suggestedResolution", suggestion.text(),
+                "source", suggestion.source(),
+                "sourceLabel", suggestion.label(),
+                "sourceDetail", suggestion.detail());
     }
+
+    /**
+     * A suggested fix and an honest account of where it came from.
+     *
+     * The provenance used to be a suffix glued onto the prose — "(Source: RAG Knowledge
+     * Base)" — which is both untranslatable in the UI and jargon at the one place a
+     * non-engineer is deciding whether to trust the advice. Separate fields instead, and
+     * the words are the reader's: "your team's approved SOP", never "RAG".
+     *
+     * @param source SOP | WEB | AI | NONE — for styling and logic
+     * @param label  the one-line badge the operator reads
+     * @param detail why that source was used, in plain language
+     */
+    private record Suggestion(String text, String source, String label, String detail) {}
 
     private String autoAssignTeam(String subject, String description) {
         try {
@@ -752,48 +770,110 @@ public class IncidentService {
         return "IT Ops";
     }
 
-    private String suggestResolution(String subject, String description) {
-        String question = subject + " " + description;
-        
-        // 1. Try RAG
-        try {
-            String answer = ragService.askStrictSopRag(UUID.randomUUID().toString(), question);
-            if (answer != null && !answer.contains("couldn't find") && !answer.contains("NOT_FOUND") && !answer.contains("error occurred")) {
-                return answer + "\n\n(Source: RAG Knowledge Base)";
-            }
-        } catch (Exception e) {
-            log.warn("RAG resolution check failed: {}", e.getMessage());
+    /**
+     * Plain-language rules every suggestion prompt inherits. The reader is a service desk
+     * agent, not the engineer who wrote the runbook.
+     */
+    private static final String PLAIN_LANGUAGE_RULES = """
+            Write for a service desk agent who is not a systems engineer:
+            - Short numbered steps, one action per step.
+            - Plain text only. No markdown, no asterisks, no headings, no bold, no ``` fences
+              — the answer is shown as-is in a plain panel, so markup is just clutter on
+              screen. Put a command on its own indented line instead.
+            - No jargon. If a step needs a command, give the command and then say in one
+              short clause what it does.
+            - Say plainly when a step needs someone with server access.
+            - Never invent a hostname, path, service name or credential that is not given
+              to you.
+            """;
+
+    /**
+     * What to try on this incident, and where that came from.
+     *
+     * Which source is used is decided by a database question — does this tenant have an
+     * approved procedure that matches? — asked once, before any model is called.
+     *
+     * It used to be decided by reading the assistant's English: if the answer did not
+     * contain "couldn't find" or "NOT_FOUND" it was treated as SOP-backed. That is why the
+     * same ticket answered from the SOP on one click and from a web search on the next —
+     * the two runs worded their non-answer differently. Worse, askStrictSopRag's own notices
+     * ("that is outside the SOPs I have", "the knowledge service is not available") passed
+     * that test and were shown to the operator as if they were the runbook's advice.
+     *
+     * So: no approved procedure means the web path on the FIRST attempt, not the second.
+     */
+    private Suggestion suggestResolution(String subject, String description) {
+        String question = (trim(subject) + " " + trim(description)).trim();
+        SopEvidence evidence = ragService.findApprovedSopEvidence(currentUser.tenantId(), question);
+
+        if (evidence.approvedEvidencePresent()) {
+            // Grounded on the approved text itself rather than routed through
+            // askStrictSopRag, whose scope check and vector-store availability are separate
+            // questions from "does an approved procedure exist". The excerpt is the source
+            // of truth; the model only reformats it, and if there is no model the operator
+            // still gets the procedure verbatim.
+            String steps = ask("""
+                    %s
+                    Below is your organisation's APPROVED procedure for this kind of incident.
+                    Rewrite it as the steps to take on this specific ticket. Use only what the
+                    procedure says — if it does not cover something, say that instead of filling
+                    the gap yourself.
+
+                    Approved procedure:
+                    %s
+
+                    Ticket subject: %s
+                    Ticket description: %s
+                    """.formatted(PLAIN_LANGUAGE_RULES, evidence.excerpt(), subject, description));
+            int matched = evidence.procedureIds().size();
+            return new Suggestion(steps.isBlank() ? evidence.excerpt() : steps, "SOP",
+                    "From your approved SOP",
+                    matched == 1
+                            ? "1 approved procedure in your workspace covers this ticket, so these steps come from your own runbook."
+                            : matched + " approved procedures in your workspace cover this ticket, so these steps come from your own runbook.");
         }
 
-        // 2. Try Web Search
-        String searchResults = searchWeb(question);
-        
-        // 3. LLM resolution using web results
-        try {
-            org.springframework.ai.chat.client.ChatClient chatClient = ragService.getOrBuildChatClient();
-            if (chatClient != null) {
-                String prompt = """
-                        You are a technical resolution suggestion assistant. An incident has occurred, and the RAG system has no matching SOP.
-                        We searched the web and found the following references:
-                        %s
-                        
-                        Incident Subject: %s
-                        Incident Description: %s
-                        
-                        Based on the incident details and any web search results, suggest a step-by-step resolution.
-                        """.formatted(searchResults, subject, description);
-                String suggestion = chatClient.prompt().user(prompt).call().content();
-                if (suggestion != null && !suggestion.isBlank()) {
-                    return suggestion + "\n\n(Source: Web Search & LLM)";
-                }
-            }
-        } catch (Exception e) {
-            log.error("LLM suggestion generation failed: {}", e.getMessage());
-        }
+        String webResults = searchWeb(question);
+        String steps = ask("""
+                %s
+                Your organisation has NO approved procedure for this incident, so you are
+                suggesting a starting point that a human must review before acting.
+                %s
+                Ticket subject: %s
+                Ticket description: %s
+                """.formatted(PLAIN_LANGUAGE_RULES,
+                webResults.isBlank() ? "No reference material was available." : "Public references found:\n" + webResults,
+                subject, description));
 
-        return "No automated suggestion available. Please route to the appropriate team for diagnostics.";
+        if (steps.isBlank())
+            return new Suggestion(
+                    "No suggestion could be produced for this ticket. Assign it to the right team for a look.",
+                    "NONE", "Nothing found",
+                    "No approved procedure matched this ticket and the assistant is unavailable, so there is nothing to show yet.");
+
+        return webResults.isBlank()
+                ? new Suggestion(steps, "AI", "Suggested by the assistant",
+                    "No approved procedure matched this ticket and no public reference was reachable, so this is the assistant's own reasoning. Check it before acting.")
+                : new Suggestion(steps, "WEB", "Researched from public sources",
+                    "No approved procedure in your workspace matched this ticket, so this was researched from public web results. Check it before acting, then consider adding an SOP.");
     }
 
+    /** One prompt, one answer, never an exception and never null. "" means "no answer". */
+    private String ask(String prompt) {
+        try {
+            org.springframework.ai.chat.client.ChatClient chatClient = ragService.getOrBuildChatClient();
+            if (chatClient == null) return "";
+            String answer = chatClient.prompt().user(prompt).call().content();
+            return answer == null ? "" : answer.trim();
+        } catch (Exception e) {
+            log.warn("Suggestion generation failed: {}", e.getMessage());
+            return "";
+        }
+    }
+
+    private static String trim(String value) { return value == null ? "" : value.trim(); }
+
+    /** Public references for a ticket nothing in the SOP library covers, or "" when none. */
     private String searchWeb(String query) {
         try {
             String encodedQuery = java.net.URLEncoder.encode(query, java.nio.charset.StandardCharsets.UTF_8);
@@ -828,7 +908,10 @@ public class IncidentService {
         } catch (Exception e) {
             log.warn("Web search failed, returning empty context: {}", e.getMessage());
         }
-        return "No web results found due to network error.";
+        // Blank, not a sentence explaining the failure. The old "No web results found due to
+        // network error." string was passed to the model as if it were reference material,
+        // and the answer was then labelled as web-researched when nothing had been read.
+        return "";
     }
 
     public List<IncidentHistory> getAllHistory() {

@@ -62,7 +62,40 @@ public final class IncidentTarget {
     /** Connection methods the executor agent is expected to understand. */
     private static final Set<String> METHODS = Set.of("SSH", "WINRM", "AGENT");
 
+    /**
+     * A store written into the ticket: "store 0042", "Store #42", "store-0042-pos-01".
+     *
+     * Digits only, up to six, because the number is compared against other incidents'
+     * store numbers to decide whether a tool has already been proven here. A loose match
+     * that captured "store" plus the next word would make two unrelated stores compare
+     * equal, which is an autonomy decision made on a typo.
+     */
+    private static final Pattern STORE = Pattern.compile(
+            "\\bstore\\s*(?:number|no\\.?|#)?\\s*[:=#-]?\\s*(\\d{1,6})\\b", Pattern.CASE_INSENSITIVE);
+
     private IncidentTarget() {}
+
+    /**
+     * The host named in the ticket text, or "" when it names none.
+     *
+     * The same extractor {@link #resolve} uses, exposed so the UI can offer what the ticket
+     * already says instead of asking a person to retype it. One extraction path on purpose:
+     * a second copy of these patterns in the frontend would drift from the one that actually
+     * decides where a script runs, and the operator would be shown a host the planner will
+     * not use.
+     *
+     * Read-only — a value from here is a suggestion for a human to confirm, never an answer.
+     * {@link #resolve} still prefers the typed field over this for anything dispatched.
+     */
+    public static String hostInText(String subject, String description) {
+        return extract(trim(subject) + " " + trim(description)).toLowerCase(Locale.ROOT);
+    }
+
+    /** The store number written into the ticket text, or "" when none is. */
+    public static String storeInText(String subject, String description) {
+        Matcher matcher = STORE.matcher(trim(subject) + " " + trim(description));
+        return matcher.find() ? matcher.group(1) : "";
+    }
 
     /**
      * The machine this incident is about, or a refusal that names why.
@@ -83,10 +116,10 @@ public final class IncidentTarget {
                     : new Target("", "NONE", "TARGET_HOST_INVALID:" + clip(typed));
         }
 
-        String found = extract(trim(incident.getSubject()) + " " + trim(incident.getDescription()));
+        String found = hostInText(incident.getSubject(), incident.getDescription());
         return found.isBlank()
                 ? new Target("", "NONE", "TARGET_HOST_UNKNOWN")
-                : new Target(found.toLowerCase(Locale.ROOT), "DESCRIPTION", "");
+                : new Target(found, "DESCRIPTION", "");
     }
 
     /**

@@ -203,6 +203,34 @@ public class Incident {
     public String getTargetPlatform() { return targetPlatform; }
     public void setTargetPlatform(String targetPlatform) { this.targetPlatform = targetPlatform; }
 
+    /**
+     * The host and store this ticket's own words point at — read from subject and
+     * description, blank when they point at nothing.
+     *
+     * Not columns and not answers: they exist so the UI can offer what the ticket already
+     * says as a prefill, rather than making a person retype a hostname that is sitting in
+     * the description two inches above the field. The person still has to save it, at which
+     * point it becomes the typed {@code targetHost} and outranks this.
+     *
+     * READ_ONLY because this class is also the PUT request body — a client echoing the
+     * object it was given back must not be rejected for sending a field it did not invent,
+     * and must not be able to set one either.
+     *
+     * ponytail: computed per serialisation, two regex passes over a few hundred characters.
+     * Cache it on the entity if a list endpoint ever shows up in a profile.
+     */
+    @Transient
+    @com.fasterxml.jackson.annotation.JsonProperty(access = com.fasterxml.jackson.annotation.JsonProperty.Access.READ_ONLY)
+    public String getDetectedTargetHost() {
+        return com.company.mcp.service.IncidentTarget.hostInText(subject, description);
+    }
+
+    @Transient
+    @com.fasterxml.jackson.annotation.JsonProperty(access = com.fasterxml.jackson.annotation.JsonProperty.Access.READ_ONLY)
+    public String getDetectedStoreNumber() {
+        return com.company.mcp.service.IncidentTarget.storeInText(subject, description);
+    }
+
     // Builder Pattern
     public static Builder builder() {
         return new Builder();
