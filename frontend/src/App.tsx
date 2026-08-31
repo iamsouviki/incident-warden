@@ -14,6 +14,7 @@ import {
   Settings,
   SlidersHorizontal,
   Sun,
+  UploadCloud,
   User,
   X,
 } from 'lucide-react';
@@ -35,17 +36,12 @@ const DEFAULT_TENANT_ID = 'tenant-1';
 type NavItem = { path: string; label: string; icon: React.ReactNode; group: 'Operate' | 'Manage' };
 
 /**
- * Three management surfaces and the assistant, and nothing else. The queue, the incident table
- * and the team editor are all still mounted as routes below — chat now drives the HITL flow
- * inline, so listing a second way to reach the same three endpoints was menu for menu's sake.
- * They stay reachable by URL rather than deleted, since the incident dump lives on one of them.
- *
- * Every entry is admin-only, so there is no per-item role column: an analyst gets the assistant
- * and nothing else, which is one boolean rather than a table.
+ * Incident operations navigation items.
  */
 const NAV_ITEMS: NavItem[] = [
   { path: '/', label: 'Assistant', icon: <MessageSquare size={16} />, group: 'Operate' },
-  { path: '/tools', label: 'Tools & scripts', icon: <FileCode2 size={16} />, group: 'Operate' },
+  { path: '/incidents', label: 'Incident Dump', icon: <UploadCloud size={16} />, group: 'Operate' },
+  { path: '/tools', label: 'Skills & Tools', icon: <FileCode2 size={16} />, group: 'Operate' },
   { path: '/sops', label: 'SOP library', icon: <BookOpen size={16} />, group: 'Manage' },
   { path: '/settings/ai', label: 'Settings', icon: <SlidersHorizontal size={16} />, group: 'Manage' },
 ];
@@ -172,25 +168,13 @@ function ForcePasswordReset({ user, onDone, onLogout }: { user: AuthUser; onDone
   );
 }
 
-function AppContent({ user, onLogout }: { user: AuthUser | null; onLogout: () => void }) {
-  // From the router, not window.location: the global reads correctly today only because this
-  // component happens to re-render on every navigation. The hook subscribes to the change.
+function AppContent({ user, onLogin, onLogout, theme, toggleTheme }: { user: AuthUser | null; onLogin: (user: AuthUser) => void; onLogout: () => void; theme: 'dark' | 'light'; toggleTheme: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState('');
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('mcp_theme') as 'dark' | 'light') || 'dark');
-
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('mcp_theme', theme);
-  }, [theme]);
-
-  const toggleTheme = () => {
-    setTheme(prev => (prev === 'dark' ? 'light' : 'dark'));
-  };
 
   // The management surfaces are the admin's; everyone else gets the assistant. Enforced here
   // for what renders and in SecurityConfig for what the API answers — the sidebar hiding a
@@ -334,7 +318,7 @@ function AppContent({ user, onLogout }: { user: AuthUser | null; onLogout: () =>
           {(activePath === '/incidents' || activePath === '/hitl' || activePath === '/tools') && <WorkflowRail active={activePath === '/incidents' ? 0 : activePath === '/hitl' ? 2 : 3} />}
           <div className={`page-content ${isChat ? 'page-content-chat' : ''}`}>
             <Routes>
-              <Route path="/" element={<ChatPage user={user} />} />
+              <Route path="/" element={<ChatPage user={user} onLogin={onLogin} />} />
               {/* Admin-only, and a non-admin URL guess lands on the assistant rather than an
                   empty shell that looks broken. */}
               {isAdmin ? (
@@ -372,7 +356,17 @@ function AppContent({ user, onLogout }: { user: AuthUser | null; onLogout: () =>
 
 const App: React.FC = () => {
   const [user, setUser] = useState<AuthUser | null>(getStoredUser());
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('mcp_theme') as 'dark' | 'light') || 'dark');
   const handleLogout = () => { clearAuth(); setUser(null); };
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('mcp_theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme(prev => (prev === 'dark' ? 'light' : 'dark'));
+  };
 
   useEffect(() => {
     const handleAuthExpired = () => setUser(null);
@@ -380,18 +374,14 @@ const App: React.FC = () => {
     return () => window.removeEventListener('mcp:auth-expired', handleAuthExpired);
   }, []);
 
-  // The router always mounts, signed in or not: the assistant at / is the product's front
-  // door, and short-circuiting to a login form made a stranger's first screen a password box.
   return (
     <BrowserRouter>
-      {/* Ahead of the router on purpose: a forced reset is not a page you can navigate away
-          from, so it replaces the app rather than sitting on top of one route. */}
       {user?.mustChangePassword ? (
         <ForcePasswordReset user={user} onDone={setUser} onLogout={handleLogout} />
       ) : (
         <Routes>
           <Route path="/login" element={<LoginRoute onLogin={setUser} />} />
-          <Route path="*" element={<AppContent user={user} onLogout={handleLogout} />} />
+          <Route path="*" element={<AppContent user={user} onLogin={setUser} onLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} />} />
         </Routes>
       )}
     </BrowserRouter>

@@ -43,9 +43,8 @@ const ToolsPage: React.FC = () => {
 
   // Left panel state
   const [leftTab, setLeftTab] = useState<'saved' | 'history'>('saved');
-  // Skills live here rather than behind a seventh menu entry: they are what decides which
-  // scripts this page is allowed to produce, so they belong on the same page as the scripts.
-  const [mode, setMode] = useState<'scripts' | 'skills'>('scripts');
+  // Skills default: Categorization, Extraction, and Skill Mapping define what actions the platform takes.
+  const [mode, setMode] = useState<'skills' | 'scripts'>('skills');
   const isAdmin = user?.role === 'ADMIN';
   const [savedScripts, setSavedScripts] = useState<SavedScript[]>([]);
   const [executionLogs, setExecutionLogs] = useState<ExecutionLog[]>([]);
@@ -354,27 +353,33 @@ const ToolsPage: React.FC = () => {
   return (
     <div style={{ display: 'grid', gap: '16px', width: '100%' }}>
 
-    {/* ── Scripts vs Skills. Admin only: skills decide what may run at all. ── */}
-    {isAdmin && (
-      <div style={{ display: 'inline-grid', gridTemplateColumns: '1fr 1fr', gap: '6px', background: 'var(--surface2)', padding: '4px', borderRadius: '6px', maxWidth: '320px' }}>
-        {(['scripts', 'skills'] as const).map(m => (
-          <button
-            key={m}
-            onClick={() => setMode(m)}
-            style={{
-              border: 'none', background: mode === m ? 'var(--surface)' : 'transparent',
-              color: mode === m ? 'var(--text)' : 'var(--text-dim)',
-              minHeight: '36px', padding: '0 14px', borderRadius: '4px', cursor: 'pointer',
-              fontSize: '12px', fontWeight: 600, textTransform: 'capitalize',
-            }}
-          >
-            {m === 'scripts' ? 'Scripts' : 'Skills'}
-          </button>
-        ))}
-      </div>
-    )}
+    {/* ── 3 Core Skills vs Custom Scripts ── */}
+    <div style={{ display: 'inline-grid', gridTemplateColumns: '1fr 1fr', gap: '6px', background: 'var(--surface2)', padding: '4px', borderRadius: '6px', maxWidth: '420px' }}>
+      <button
+        onClick={() => setMode('skills')}
+        style={{
+          border: 'none', background: mode === 'skills' ? 'var(--surface)' : 'transparent',
+          color: mode === 'skills' ? 'var(--text)' : 'var(--text-dim)',
+          minHeight: '36px', padding: '0 16px', borderRadius: '4px', cursor: 'pointer',
+          fontSize: '12px', fontWeight: 600,
+        }}
+      >
+        🎯 3 Core Skills Engine
+      </button>
+      <button
+        onClick={() => setMode('scripts')}
+        style={{
+          border: 'none', background: mode === 'scripts' ? 'var(--surface)' : 'transparent',
+          color: mode === 'scripts' ? 'var(--text)' : 'var(--text-dim)',
+          minHeight: '36px', padding: '0 16px', borderRadius: '4px', cursor: 'pointer',
+          fontSize: '12px', fontWeight: 600,
+        }}
+      >
+        🛠 Custom Scripts & Sandbox
+      </button>
+    </div>
 
-    {isAdmin && mode === 'skills' ? <SkillsPanel /> : (
+    {mode === 'skills' ? <SkillsPanel /> : (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr)) 1.2fr', gap: '20px', minHeight: 'calc(100vh - 160px)', width: '100%' }}>
       
       {/* ── LEFT PANEL: Saved Tools Directory and execution history ── */}

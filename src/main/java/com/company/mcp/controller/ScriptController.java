@@ -189,6 +189,24 @@ public class ScriptController {
         return ResponseEntity.ok(Map.of("level", scan.level(), "findings", scan.findings()));
     }
 
+    @PostMapping("/explain")
+    public ResponseEntity<?> explainScript(@RequestBody Map<String, String> body) {
+        String script = body.getOrDefault("scriptContent", "");
+        String actionKey = body.getOrDefault("actionKey", "");
+        String toolDescription = body.getOrDefault("toolDescription", "");
+        String language = body.getOrDefault("language", "bash");
+        String target = body.getOrDefault("targetHost", "");
+        var explanation = com.company.mcp.service.ScriptExplainer.explain(actionKey, toolDescription, script, language, target);
+        GuardrailService.ScriptScan scan = guardrails.scanScript(script);
+        return ResponseEntity.ok(Map.of(
+                "what", explanation.what(),
+                "how", explanation.how(),
+                "lines", explanation.lines(),
+                "level", scan.level(),
+                "findings", scan.findings()
+        ));
+    }
+
     @PostMapping("/execute")
     public ResponseEntity<?> executeScript(@RequestBody Map<String, Object> body) {
         String scriptContent = (String) body.getOrDefault("scriptContent", "");

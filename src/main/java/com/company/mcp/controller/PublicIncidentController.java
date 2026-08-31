@@ -27,10 +27,26 @@ public class PublicIncidentController {
 
     private final PublicReadService publicRead;
     private final RateLimiterService rateLimiter;
+    private final com.company.mcp.service.RagService ragService;
 
-    public PublicIncidentController(PublicReadService publicRead, RateLimiterService rateLimiter) {
+    public PublicIncidentController(PublicReadService publicRead, RateLimiterService rateLimiter,
+                                    com.company.mcp.service.RagService ragService) {
         this.publicRead = publicRead;
         this.rateLimiter = rateLimiter;
+        this.ragService = ragService;
+    }
+
+    @org.springframework.web.bind.annotation.PostMapping("/chat")
+    public ResponseEntity<?> chat(@org.springframework.web.bind.annotation.RequestBody Map<String, String> body,
+                                  HttpServletRequest request) {
+        ResponseEntity<?> refusal = gate(request);
+        if (refusal != null) return refusal;
+        String question = body != null ? body.get("question") : null;
+        if (question == null || question.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Question is required"));
+        }
+        String answer = ragService.askPublicRag(question);
+        return ResponseEntity.ok(Map.of("answer", answer));
     }
 
     @GetMapping("/stats")

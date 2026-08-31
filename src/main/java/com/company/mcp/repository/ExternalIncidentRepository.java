@@ -17,6 +17,6 @@ public interface ExternalIncidentRepository extends JpaRepository<ExternalIncide
 
     /** @see IncidentRepository#findMaxInternalTicketNumber() — ticket numbers are shared across both tables. */
     @Query("select max(cast(substring(i.externalId, 4) as long)) from ExternalIncident i "
-            + "where i.externalId like 'INC%' and length(i.externalId) = 12")
+            + "where i.externalSource = 'Internal' and i.externalId like 'INC%' and length(i.externalId) = 12")
     Long findMaxInternalTicketNumber();
 }

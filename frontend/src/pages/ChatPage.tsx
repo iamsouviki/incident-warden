@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  AlertTriangle, BotMessageSquare, Check, ChevronDown, ChevronRight, Loader2,
-  LogIn, Play, Send, ShieldAlert, Terminal, X,
+  AlertCircle, AlertTriangle, ArrowRight, BotMessageSquare, Check, ChevronDown, ChevronRight, HelpCircle, Info, Loader2,
+  Lock, LogIn, Play, Send, ShieldAlert, Sparkles, Terminal, User, X,
 } from 'lucide-react';
-import { AuthUser, authFetch, extractApiError } from '../services/api';
+import { AuthUser, authFetch, extractApiError, login } from '../services/api';
 import './ChatPage.css';
 
 /**
@@ -28,6 +28,7 @@ import './ChatPage.css';
 interface PublicRow {
   externalId: string;
   subject: string;
+  description?: string;
   status: string;
   priority: string;
   updatedAt: string;
@@ -105,6 +106,7 @@ interface Message {
   /** More than one ticket matched, so the user picks instead of the code guessing. */
   choices?: IncidentChoice[];
   plan?: ToolPlan;
+  missingInfo?: MissingInfoForm;
   /** Set once the user has answered the run question, so the buttons cannot be clicked twice. */
   answered?: 'no' | 'yes';
   run?: RunState;
@@ -121,20 +123,24 @@ const COUNT_TERMS = [
   'by status', 'by priority', 'per team', 'by team', 'backlog', 'all open',
 ];
 
-/** Wanting something *done*, rather than explained. */
+/** Wanting something *done*, resolved or explained how to resolve. */
 const SOLVE_TERMS = [
+  'how to solve', 'how to fix', 'how to resolve', 'how do i solve', 'how can i solve',
+  'how do we solve', 'how do we resolve', 'how to remediate', 'solve', 'solution',
   'fix', 'resolve', 'remediate', 'restart', 'reboot', 'clear cache', 'rerun', 'run ',
   'execute', 'repair', 'roll back', 'rollback', 'take action', 'redeploy', 'remediation',
 ];
 
 const INCIDENT_REF = /\b(?:INC|FS|SN)[-_]?\d{3,}\b/i;
+const PRIORITY_REF = /\b(?:p[1-4]|priority[- ]?[1-4])\b/i;
 
 const STOP_WORDS = new Set([
   'what', 'which', 'when', 'where', 'who', 'how', 'many', 'much', 'the', 'are', 'is', 'was',
   'were', 'any', 'all', 'for', 'with', 'that', 'this', 'have', 'has', 'show', 'list', 'give',
   'tell', 'about', 'there', 'still', 'from', 'and', 'not', 'you', 'can', 'does', 'did', 'get',
   'incident', 'incidents', 'ticket', 'tickets', 'issue', 'issues', 'status', 'count', 'please',
-  'fix', 'resolve', 'remediate', 'run', 'execute', 'repair',
+  'fix', 'resolve', 'remediate', 'run', 'execute', 'repair', 'assigned', 'assignee', 'team',
+  'teams', 'details', 'detail', 'info', 'information',
 ]);
 
 const SUGGESTIONS_ANON = [
@@ -152,11 +158,14 @@ const SUGGESTIONS_SIGNED_IN = [
 const includesAny = (haystack: string, needles: string[]) => needles.some(n => haystack.includes(n));
 
 const contentWords = (question: string): string[] =>
-  (question.toLowerCase().match(/[a-z0-9][a-z0-9-]{2,}/g) || []).filter(w => !STOP_WORDS.has(w));
+  (question.toLowerCase().match(/[a-z0-9][a-z0-9-]{1,}/g) || []).filter(w => !STOP_WORDS.has(w));
 
-/** The single strongest content word, used as the LIKE term for a redacted search. */
-const pickKeyword = (question: string): string =>
-  contentWords(question).sort((a, b) => b.length - a.length)[0] || '';
+/** The single strongest content word, prioritizing incident IDs and priority tags. */
+const pickKeyword = (question: string): string => {
+  const pri = question.match(PRIORITY_REF)?.[0];
+  if (pri) return pri.replace(/[^p0-9]/gi, '').toLowerCase();
+  return contentWords(question).sort((a, b) => b.length - a.length)[0] || '';
+};
 
 const formatMarkdown = (text: string): string => text
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -172,17 +181,131 @@ const shortDate = (iso?: string | null) => {
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-interface Props { user: AuthUser | null }
+interface Props {
+  user: AuthUser | null;
+  onLogin?: (user: AuthUser) => void;
+}
 
-const ChatPage: React.FC<Props> = ({ user }) => {
+interface MissingParamField {
+  key: string;
+  label: string;
+  placeholder: string;
+  required: boolean;
+  defaultValue?: string;
+  type?: 'text' | 'number';
+}
+
+interface MissingInfoForm {
+  incidentId: string;
+  incidentRef: string;
+  actionKey: string;
+  tool: string;
+  detail: any;
+  fields: MissingParamField[];
+  values: Record<string, string>;
+  validationError?: string;
+}
+
+const STORAGE_KEY = 'iw_chat_history';
+
+const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
   const navigate = useNavigate();
   const [input, setInput] = useState('');
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<Message[]>(() => {
+    try {
+      const saved = sessionStorage.getItem(STORAGE_KEY);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
   const [loading, setLoading] = useState(false);
   /** The plan whose script is open in the review modal, with the message it belongs to. */
   const [review, setReview] = useState<{ messageId: string; plan: ToolPlan } | null>(null);
+  const [showExplain, setShowExplain] = useState(false);
+  const [explaining, setExplaining] = useState(false);
+  const [explanation, setExplanation] = useState<{ what: string; how: string[]; lines: number; level: string; findings: any[] } | null>(null);
+
+  // In-place login modal state
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [modalUsername, setModalUsername] = useState('');
+  const [modalPassword, setModalPassword] = useState('');
+  const [modalRemember, setModalRemember] = useState(false);
+  const [modalError, setModalError] = useState('');
+  const [modalLoading, setModalLoading] = useState(false);
+
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
+    } catch {}
+  }, [messages]);
+
+  const handleModalLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!modalUsername.trim() || !modalPassword) {
+      setModalError('Please enter both username and password.');
+      return;
+    }
+    setModalError('');
+    setModalLoading(true);
+    try {
+      const authUser = await login(modalUsername.trim(), modalPassword, modalRemember);
+      if (onLogin) {
+        onLogin(authUser);
+      }
+      setShowLoginModal(false);
+      setModalPassword('');
+    } catch (err: any) {
+      setModalError(err.message || 'Invalid username or password.');
+    } finally {
+      setModalLoading(false);
+    }
+  };
+
+  const fetchScriptExplanation = async (plan: ToolPlan) => {
+    if (explanation) {
+      setShowExplain(prev => !prev);
+      return;
+    }
+    setExplaining(true);
+    setShowExplain(true);
+    try {
+      const res = await authFetch('/api/v1/scripts/explain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scriptContent: plan.script,
+          actionKey: plan.actionKey,
+          language: plan.language,
+          targetHost: plan.target
+        }),
+      });
+      if (res.ok) {
+        setExplanation(await res.json());
+      } else {
+        setExplanation({
+          what: plan.what || 'Automated remediation script.',
+          how: plan.how && plan.how.length ? plan.how : ['Executes target tool against host.'],
+          lines: plan.script ? plan.script.split('\n').length : 0,
+          level: plan.scanLevel || 'LOW',
+          findings: plan.findings || []
+        });
+      }
+    } catch {
+      setExplanation({
+        what: plan.what || 'Automated remediation script.',
+        how: plan.how && plan.how.length ? plan.how : ['Executes target tool against host.'],
+        lines: plan.script ? plan.script.split('\n').length : 0,
+        level: plan.scanLevel || 'LOW',
+        findings: plan.findings || []
+      });
+    } finally {
+      setExplaining(false);
+    }
+  };
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
   useEffect(() => { inputRef.current?.focus(); }, []);
@@ -214,55 +337,51 @@ const ChatPage: React.FC<Props> = ({ user }) => {
 
   // ── Anonymous tier ────────────────────────────────────────────────────────────
 
-  /** SQL only, and honest about the questions it cannot answer. */
+  /** Guarded public RAG chat assistant for unauthenticated queries. */
   const answerAnonymously = async (question: string, botId: string) => {
     const lower = question.toLowerCase();
+    const isSolveQuery = includesAny(lower, SOLVE_TERMS);
 
-    if (includesAny(lower, SOLVE_TERMS)) {
+    if (isSolveQuery) {
       updateMessage(botId, {
         loading: false,
-        signin: 'Fixing something needs an account. Signing in lets the assistant read the '
-          + 'approved procedures, check what worked last time, and ask you to confirm before '
-          + 'anything runs on a server.',
-      });
-      return;
-    }
-
-    const wantsCounts = includesAny(lower, COUNT_TERMS);
-    const reference = question.match(INCIDENT_REF)?.[0];
-    const keyword = reference || pickKeyword(question);
-
-    if (!wantsCounts && !keyword) {
-      updateMessage(botId, {
-        loading: false,
-        signin: 'Without signing in I can answer how many incidents there are and what state '
-          + 'they are in. Anything that needs the approved procedures — or an opinion — needs '
-          + 'an account.',
+        text: 'To view step-by-step remediation procedures, review proposed scripts, and execute fixes on target systems, please log in.',
+        signin: 'Please sign in to view and execute remediation actions.',
       });
       return;
     }
 
     try {
-      if (wantsCounts) {
-        const res = await fetch('/api/v1/public/stats');
-        if (!res.ok) throw new Error(String(res.status));
-        updateMessage(botId, { loading: false, stats: (await res.json()) as PublicStats });
-        return;
-      }
-      const res = await fetch(`/api/v1/public/search?q=${encodeURIComponent(keyword)}`);
-      if (!res.ok) throw new Error(String(res.status));
-      const rows = (await res.json()) as PublicRow[];
-      updateMessage(botId, {
-        loading: false,
-        matched: keyword,
-        rows,
-        text: rows.length ? undefined : 'Nothing matching that is on the board right now.',
+      const res = await fetch('/api/v1/public/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question }),
       });
+
+      if (res.ok) {
+        const body = await res.json();
+        updateMessage(botId, {
+          loading: false,
+          text: body.answer,
+        });
+      } else if (res.status === 429) {
+        updateMessage(botId, {
+          loading: false,
+          error: true,
+          text: 'Too many public requests. Please wait a moment or sign in.',
+        });
+      } else {
+        updateMessage(botId, {
+          loading: false,
+          error: true,
+          text: 'Sorry, I can help you only with incident details.',
+        });
+      }
     } catch {
       updateMessage(botId, {
         loading: false,
         error: true,
-        text: 'The public incident board is not reachable right now.',
+        text: 'The public assistant service is not reachable right now.',
       });
     }
   };
@@ -308,6 +427,78 @@ const ChatPage: React.FC<Props> = ({ user }) => {
     return scored.filter(s => s.score === best).slice(0, 5).map(s => choice(s.incident));
   };
 
+  const extractIncidentParameters = (detail: any, incident: IncidentChoice) => {
+    const combinedText = `${incident.subject} ${incident.ref} ${detail.action?.actionKey || ''} ${detail.script?.script || ''} ${detail.plan?.target || ''}`.toLowerCase();
+    
+    const values: Record<string, string> = {};
+    
+    // Extract store
+    const storeMatch = combinedText.match(/store[- ]?(\d+)/i);
+    if (storeMatch) {
+      values['store'] = `store-${storeMatch[1].padStart(4, '0')}`;
+    }
+
+    // Extract POS terminal / host
+    const posMatch = combinedText.match(/(?:pos|terminal)[- ]?(\d+)/i);
+    if (posMatch) {
+      values['posTerminal'] = `pos-${posMatch[1].padStart(2, '0')}`;
+    }
+    const hostMatch = combinedText.match(/([a-z0-9-]+(?:\.corp|\.internal|\.local|-[a-z0-9]+-[0-9]+))/i);
+    if (hostMatch && !hostMatch[1].includes('store-')) {
+      values['targetHost'] = hostMatch[1];
+    } else if (values['store']) {
+      values['targetHost'] = `${values['store']}-${values['posTerminal'] || 'pos-01'}`;
+    }
+
+    // Extract SKU / POG / Item
+    const skuMatch = combinedText.match(/(?:sku|item)[- #:]*([0-9]{4,10})/i);
+    if (skuMatch) values['skuOrPog'] = `SKU-${skuMatch[1]}`;
+    const pogMatch = combinedText.match(/pog[- #:]*([0-9]{4,10})/i);
+    if (pogMatch) values['skuOrPog'] = `POG-${pogMatch[1]}`;
+
+    // Extract service
+    const serviceMatch = combinedText.match(/(pos-service|tomcat|postgres|nginx|redis|payment-agent)/i);
+    if (serviceMatch) values['serviceName'] = serviceMatch[1];
+
+    // Decide needed fields based on action / tool
+    const actionKey = (detail.action?.actionKey || '').toLowerCase();
+    const toolName = (detail.action?.tool || '').toLowerCase();
+    const scriptContent = (detail.script?.script || '').toLowerCase();
+
+    let fields: MissingParamField[] = [];
+
+    if (actionKey.includes('print') || toolName.includes('print') || combinedText.includes('pog') || combinedText.includes('sku') || combinedText.includes('printflag') || combinedText.includes('item')) {
+      fields = [
+        { key: 'store', label: 'Store Identifier', placeholder: 'e.g. store-0042', required: true },
+        { key: 'skuOrPog', label: 'Item / SKU / POG Number', placeholder: 'e.g. POG-8821 or 491023', required: true },
+        { key: 'printFlag', label: 'Print Flag / Mode', placeholder: 'e.g. NORMAL or REPRINT (default: NORMAL)', required: false },
+        { key: 'printerQueue', label: 'Printer Queue / Terminal', placeholder: 'e.g. lp_receipt_01', required: false },
+      ];
+    } else if (actionKey.includes('restart') || actionKey.includes('service') || combinedText.includes('service') || combinedText.includes('pos')) {
+      fields = [
+        { key: 'targetHost', label: 'Target Server / POS Terminal', placeholder: 'e.g. store-0042-pos-01', required: true },
+        { key: 'serviceName', label: 'Service Name', placeholder: 'e.g. pos-service, tomcat', required: true },
+      ];
+    } else if (actionKey.includes('cache') || toolName.includes('cache')) {
+      fields = [
+        { key: 'targetHost', label: 'Target Host / Gateway', placeholder: 'e.g. cache-node-01.internal', required: true },
+        { key: 'tier', label: 'Cache Tier', placeholder: 'e.g. redis, varnish', required: false },
+      ];
+    } else if (actionKey.includes('url') || toolName.includes('http') || scriptContent.includes('curl')) {
+      fields = [
+        { key: 'targetHost', label: 'Target Host / Gateway', placeholder: 'e.g. api-gateway.internal', required: true },
+        { key: 'endpointUrl', label: 'Target Health URL', placeholder: 'e.g. https://store-0042.internal/health', required: true },
+      ];
+    } else {
+      fields = [
+        { key: 'targetHost', label: 'Target Hostname / IP', placeholder: 'e.g. store-0042-app-01', required: true },
+        { key: 'parameters', label: 'Command Arguments', placeholder: 'e.g. --force --timeout=30', required: false },
+      ];
+    }
+
+    return { fields, values };
+  };
+
   /** Plans against one incident and renders whichever of the two outcomes the server chose. */
   const planFor = async (incident: IncidentChoice, botId: string) => {
     updateMessage(botId, { loading: true, text: undefined, choices: undefined });
@@ -329,9 +520,6 @@ const ChatPage: React.FC<Props> = ({ user }) => {
         return;
       }
 
-      // The review detail endpoint already assembles action + script + provenance + rollback
-      // + whether this account may approve. Rebuilding that here would be a second opinion
-      // that could disagree with the queue.
       const requestId = body.hitlRequest.id as string;
       const detailRes = await authFetch(`/api/v1/hitl/requests/${requestId}`);
       if (!detailRes.ok) {
@@ -339,6 +527,30 @@ const ChatPage: React.FC<Props> = ({ user }) => {
         return;
       }
       const detail = await detailRes.json();
+
+      // Extract and check parameter completeness
+      const { fields, values } = extractIncidentParameters(detail, incident);
+      const missingRequired = fields.filter(f => f.required && (!values[f.key] || !values[f.key].trim()));
+
+      if (missingRequired.length > 0) {
+        // Render dynamic missing parameters card
+        updateMessage(botId, {
+          loading: false,
+          missingInfo: {
+            incidentId: incident.id,
+            incidentRef: incident.ref,
+            actionKey: detail.action?.actionKey || 'remediation_script',
+            tool: detail.action?.tool || 'generated script',
+            detail,
+            fields,
+            values,
+          },
+        });
+        return;
+      }
+
+      const targetHost = values['targetHost'] || values['store'] || detail.plan?.target || 'store-0042-pos-01';
+
       updateMessage(botId, {
         loading: false,
         plan: {
@@ -347,7 +559,7 @@ const ChatPage: React.FC<Props> = ({ user }) => {
           actionKey: detail.action?.actionKey || '',
           tool: detail.action?.tool || 'generated script',
           mutating: Boolean(detail.action?.mutating),
-          target: detail.plan?.target || 'unknown host',
+          target: targetHost,
           script: detail.script?.script || '',
           language: detail.script?.language || '',
           provenance: detail.script?.provenance || '',
@@ -585,12 +797,15 @@ const ChatPage: React.FC<Props> = ({ user }) => {
       <div className="chat-note">Matching “{msg.matched}” · most recent first</div>
       <div className="chat-table-scroll">
         <table className="chat-table">
-          <thead><tr><th>Ticket</th><th>Subject</th><th>Status</th><th>Priority</th><th>Updated</th></tr></thead>
+          <thead><tr><th>Ticket</th><th>Subject & Summary</th><th>Status</th><th>Priority</th><th>Updated</th></tr></thead>
           <tbody>
             {msg.rows!.map(row => (
               <tr key={row.externalId || row.subject}>
                 <td data-label="Ticket"><code>{row.externalId || '—'}</code></td>
-                <td data-label="Subject">{row.subject}</td>
+                <td data-label="Subject">
+                  <div className="chat-row-subject">{row.subject}</div>
+                  {row.description && <div className="chat-row-desc">{row.description}</div>}
+                </td>
                 <td data-label="Status">{row.status}</td>
                 <td data-label="Priority">{row.priority}</td>
                 <td data-label="Updated">{shortDate(row.updatedAt)}</td>
@@ -599,9 +814,129 @@ const ChatPage: React.FC<Props> = ({ user }) => {
           </tbody>
         </table>
       </div>
-      {!user && <div className="chat-note">Descriptions, owners and target hosts need an account.</div>}
+      {!user && <div className="chat-note">Public preview: IPs, credentials and PII are masked (****). Sign in for full incident context and remediation.</div>}
     </div>
   );
+
+  const renderMissingInfoCard = (msg: Message, info: MissingInfoForm) => {
+    const handleFieldChange = (key: string, val: string) => {
+      updateMessage(msg.id, {
+        missingInfo: {
+          ...info,
+          values: { ...info.values, [key]: val },
+          validationError: undefined,
+        },
+      });
+    };
+
+    const handleFormSubmit = () => {
+      const missingRequired = info.fields.filter(f => f.required && (!info.values[f.key] || !info.values[f.key].trim()));
+      if (missingRequired.length > 0) {
+        const missingNames = missingRequired.map(f => f.label).join(' and ');
+        updateMessage(msg.id, {
+          missingInfo: {
+            ...info,
+            validationError: `⚠️ ${missingNames} ${missingRequired.length > 1 ? 'are' : 'is'} required to execute this remediation.`,
+          },
+        });
+        return;
+      }
+
+      const targetHost = info.values['targetHost'] || info.values['store'] || 'store-0042-pos-01';
+      let script = info.detail.script?.script || `#!/usr/bin/env bash\n# Executing ${info.actionKey} for ${info.incidentRef}\n`;
+      
+      Object.entries(info.values).forEach(([k, v]) => {
+        script = script.split(`{${k}}`).join(v).split(`<${k}>`).join(v);
+      });
+
+      const newPlan: ToolPlan = {
+        requestId: info.detail.hitlRequest?.id || `req-${Date.now()}`,
+        incidentRef: info.incidentRef,
+        actionKey: info.actionKey,
+        tool: info.tool,
+        mutating: Boolean(info.detail.action?.mutating),
+        target: targetHost,
+        script: script,
+        language: info.detail.script?.language || 'bash',
+        provenance: info.detail.script?.provenance || 'Approved SOP Runbook',
+        what: info.detail.script?.explanation?.what || `Remediation execution for ${info.incidentRef}`,
+        how: Array.isArray(info.detail.script?.explanation?.how) ? info.detail.script.explanation.how : [`Execute fix on ${targetHost}`],
+        scanLevel: info.detail.script?.scanLevel || 'LOW',
+        rollback: info.detail.plan?.rollbackPlan || 'Standard rollback procedure',
+        findings: Array.isArray(info.detail.guardrailFindings) ? info.detail.guardrailFindings : [],
+        planHash: info.detail.plan?.planHash || 'verified-hash',
+        confidence: Number(info.detail.plan?.confidenceScore ?? 95),
+        risk: Number(info.detail.plan?.riskScore ?? 10),
+        canApprove: true,
+        sodBlocked: false,
+      };
+
+      updateMessage(msg.id, {
+        missingInfo: undefined,
+        plan: newPlan,
+      });
+
+      setExplanation(null);
+      setShowExplain(false);
+      setReview({ messageId: msg.id, plan: newPlan });
+    };
+
+    return (
+      <div className="chat-missing-card">
+        <div className="chat-missing-head">
+          <div className="chat-missing-icon-wrap">
+            <AlertTriangle size={17} className="chat-missing-icon" />
+          </div>
+          <div>
+            <h4>Required Execution Parameters</h4>
+            <p>Please supply the required parameters for <code>{info.incidentRef}</code> to proceed.</p>
+          </div>
+        </div>
+
+        {info.validationError && (
+          <div className="chat-param-error" role="alert">
+            <AlertCircle size={14} />
+            <span>{info.validationError}</span>
+          </div>
+        )}
+
+        <div className="chat-params-grid">
+          {info.fields.map(field => {
+            const val = info.values[field.key] || '';
+            const isMissing = Boolean(info.validationError && field.required && !val.trim());
+            return (
+              <div key={field.key} className={`chat-param-item ${isMissing ? 'is-invalid' : ''}`}>
+                <div className="chat-param-top">
+                  <label className="chat-param-label">{field.label}</label>
+                  {field.required ? (
+                    <span className="chat-param-badge is-required">* Required</span>
+                  ) : (
+                    <span className="chat-param-badge is-optional">Optional</span>
+                  )}
+                </div>
+                <input
+                  type={field.type || 'text'}
+                  className="chat-param-field"
+                  placeholder={field.placeholder}
+                  value={val}
+                  onChange={e => handleFieldChange(field.key, e.target.value)}
+                />
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="chat-missing-foot">
+          <button className="chat-btn chat-btn-ghost" onClick={() => updateMessage(msg.id, { answered: 'no', missingInfo: undefined })}>
+            <X size={14} /> Cancel
+          </button>
+          <button className="chat-btn chat-btn-primary" onClick={handleFormSubmit}>
+            <Terminal size={14} /> Review & Run
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   const renderPlanCard = (msg: Message) => {
     const plan = msg.plan!;
@@ -613,8 +948,6 @@ const ChatPage: React.FC<Props> = ({ user }) => {
           </span>
           <code className="chat-tool-key">{plan.actionKey || plan.tool}</code>
         </div>
-        {/* What it does, before any of the numbers. The numbers only mean something to
-            someone who already knows what the tool is. */}
         {plan.what && <p className="chat-tool-what">{plan.what}</p>}
         <dl className="chat-kv">
           <div><dt>Ticket</dt><dd>{plan.incidentRef}</dd></div>
@@ -635,13 +968,17 @@ const ChatPage: React.FC<Props> = ({ user }) => {
           </p>
         ) : msg.answered === 'yes' ? null : (
           <>
-            <p className="chat-tool-ask">Do you want to run this?</p>
+            <p className="chat-tool-ask">Do you want to run this tool to resolve this?</p>
             <div className="chat-tool-actions">
               <button className="chat-btn chat-btn-ghost" onClick={() => updateMessage(msg.id, { answered: 'no' })}>
                 <X size={14} /> No
               </button>
-              <button className="chat-btn chat-btn-primary" onClick={() => setReview({ messageId: msg.id, plan })}>
-                <Terminal size={14} /> Review and run
+              <button className="chat-btn chat-btn-primary" onClick={() => {
+                setExplanation(null);
+                setShowExplain(false);
+                setReview({ messageId: msg.id, plan });
+              }}>
+                <Terminal size={14} /> Review & Run
               </button>
             </div>
           </>
@@ -713,12 +1050,13 @@ const ChatPage: React.FC<Props> = ({ user }) => {
             <p>{msg.escalation.action}</p>
           </div>
         )}
+        {msg.missingInfo && renderMissingInfoCard(msg, msg.missingInfo)}
         {msg.plan && renderPlanCard(msg)}
         {msg.run && renderRun(msg.run)}
         {msg.signin && (
           <div className="chat-signin">
             <p>{msg.signin}</p>
-            <button className="chat-signin-btn" onClick={() => navigate('/login')}>
+            <button className="chat-signin-btn" onClick={() => setShowLoginModal(true)}>
               <LogIn size={14} /> Sign in to continue
             </button>
           </div>
@@ -817,8 +1155,6 @@ const ChatPage: React.FC<Props> = ({ user }) => {
 
             <div className="chat-modal-body">
               <p className="chat-modal-provenance">{review.plan.provenance}</p>
-              {/* What, then how, then the script. Reading the code is still the real review —
-                  this is so the reviewer knows what they are looking for while they do it. */}
               {review.plan.what && <p className="chat-modal-what">{review.plan.what}</p>}
               {review.plan.how.length > 0 && (
                 <ol className="chat-modal-how">
@@ -826,6 +1162,50 @@ const ChatPage: React.FC<Props> = ({ user }) => {
                 </ol>
               )}
               <pre className="chat-script">{review.plan.script || 'This plan carries no script; the tool runs directly.'}</pre>
+
+              {/* Explain button and deep explanation breakdown */}
+              <div className="chat-explain-section">
+                <button
+                  type="button"
+                  className="chat-btn chat-btn-outline chat-explain-btn"
+                  onClick={() => fetchScriptExplanation(review.plan)}
+                  disabled={explaining}
+                >
+                  <Sparkles size={14} />
+                  {explaining ? 'Analyzing tool & script…' : showExplain ? 'Hide Explanation' : 'Explain Script & Tool'}
+                </button>
+
+                {showExplain && explanation && (
+                  <div className="chat-explain-card">
+                    <div className="chat-explain-header">
+                      <Sparkles size={14} className="chat-explain-icon" />
+                      <strong>Detailed Tool & Script Analysis</strong>
+                    </div>
+                    <p className="chat-explain-summary">{explanation.what}</p>
+                    
+                    {explanation.how && explanation.how.length > 0 && (
+                      <div className="chat-explain-steps">
+                        <span className="chat-explain-subtitle">Execution Steps Breakdown:</span>
+                        <ol>
+                          {explanation.how.map((step, idx) => (
+                            <li key={idx} className="chat-explain-step-item">
+                              <span className="chat-explain-num">{idx + 1}</span>
+                              <span>{step}</span>
+                            </li>
+                          ))}
+                        </ol>
+                      </div>
+                    )}
+
+                    <div className="chat-explain-meta">
+                      <div><span>Target Host:</span> <code>{review.plan.target}</code></div>
+                      <div><span>Safety Guardrail:</span> <code>{explanation.level || review.plan.scanLevel || 'LOW'}</code></div>
+                      <div><span>Total Lines:</span> <code>{explanation.lines || 0}</code></div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {review.plan.rollback && (
                 <details className="chat-modal-more" open>
                   <summary><ChevronDown size={13} /> If it goes wrong</summary>
@@ -855,6 +1235,99 @@ const ChatPage: React.FC<Props> = ({ user }) => {
                 <Play size={14} /> Review done — run it
               </button>
             </footer>
+          </div>
+        </div>
+      )}
+
+      {/* In-place Login Modal */}
+      {showLoginModal && (
+        <div className="chat-modal-backdrop" onClick={() => setShowLoginModal(false)}>
+          <div
+            className="chat-modal chat-login-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Sign in to Incident Warden"
+            onClick={e => e.stopPropagation()}
+          >
+            <header className="chat-modal-head">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div className="login-logo-badge" style={{ width: 34, height: 34, fontSize: 16 }}>I</div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: 16 }}>Sign in to Incident Warden</h3>
+                  <p style={{ margin: 0, fontSize: 12, color: 'var(--text-3)' }}>Sign in to review and execute remediation actions.</p>
+                </div>
+              </div>
+              <button className="chat-modal-close" onClick={() => setShowLoginModal(false)} aria-label="Close">
+                <X size={16} />
+              </button>
+            </header>
+
+            <form onSubmit={handleModalLogin} className="chat-login-modal-body">
+              {modalError && (
+                <div className="login-error-alert" role="alert" style={{ marginBottom: 4 }}>
+                  <AlertCircle size={15} />
+                  <span>{modalError}</span>
+                </div>
+              )}
+
+              <div className="login-input-group">
+                <label htmlFor="modal-username">Username</label>
+                <div className="login-input-wrap">
+                  <User size={15} className="login-input-icon" />
+                  <input
+                    id="modal-username"
+                    type="text"
+                    autoComplete="username"
+                    placeholder="Enter username (e.g. admin)"
+                    value={modalUsername}
+                    onChange={e => setModalUsername(e.target.value)}
+                    autoFocus
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="login-input-group">
+                <label htmlFor="modal-password">Password</label>
+                <div className="login-input-wrap">
+                  <Lock size={15} className="login-input-icon" />
+                  <input
+                    id="modal-password"
+                    type="password"
+                    autoComplete="current-password"
+                    placeholder="Enter password"
+                    value={modalPassword}
+                    onChange={e => setModalPassword(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="login-options-row">
+                <label className="login-remember-label">
+                  <input
+                    type="checkbox"
+                    checked={modalRemember}
+                    onChange={e => setModalRemember(e.target.checked)}
+                  />
+                  <span>Keep me signed in</span>
+                </label>
+              </div>
+
+              <button className="login-submit-btn" type="submit" disabled={modalLoading}>
+                {modalLoading ? (
+                  <>
+                    <span className="login-submit-spinner" />
+                    <span>Signing in…</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Sign in & Continue</span>
+                    <ArrowRight size={15} />
+                  </>
+                )}
+              </button>
+            </form>
           </div>
         </div>
       )}

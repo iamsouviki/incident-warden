@@ -88,9 +88,35 @@ public class PublicReadService {
     public List<Row> search(String q) {
         String like = "%" + (q == null ? "" : q.trim().toLowerCase(Locale.ROOT)) + "%";
         return incidents.searchPublicRows(tenantId(), like, PageRequest.of(0, MAX_ROWS)).stream()
-                .map(row -> new Row((String) row[0], (String) row[1], (String) row[2], (String) row[3],
-                        (OffsetDateTime) row[4]))
+                .map(row -> new Row((String) row[0], (String) row[1], maskSensitive((String) row[2]), (String) row[3],
+                        (String) row[4], (OffsetDateTime) row[5]))
                 .toList();
+    }
+
+    /**
+     * Masks PII, IP addresses, credentials and secret values in public descriptions with '****'.
+     * ponytail: standard regex masking keeping public incident views safe.
+     */
+    public static String maskSensitive(String text) {
+        if (text == null || text.isBlank()) return "";
+        String s = text;
+        // Passwords, secrets, tokens, keys
+        s = s.replaceAll("(?i)(password|passwd|secret|api[_-]?key|token|bearer|auth|credential|pin)\\s*[:=]\\s*\\S+", "$1: ****");
+        // Credentials inside URLs
+        s = s.replaceAll("(?i)(https?://)[^:\\s]+:[^@\\s]+@", "$1****:****@");
+        // Email addresses
+        s = s.replaceAll("[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}", "****@****");
+        // IPv4 addresses
+        s = s.replaceAll("\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b", "****");
+        // IPv6 addresses
+        s = s.replaceAll("\\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\\b", "****");
+        // Credit card numbers
+        s = s.replaceAll("\\b(?:\\d{4}[-\\s]?){3}\\d{4}\\b", "****");
+        // Phone numbers
+        s = s.replaceAll("\\b(?:\\+?\\d{1,3}[-.\\s]?)?\\(?\\d{3}\\)?[-.\\s]?\\d{3}[-.\\s]?\\d{4}\\b", "****");
+        // SSN
+        s = s.replaceAll("\\b\\d{3}-\\d{2}-\\d{4}\\b", "****");
+        return s;
     }
 
     private static Map<String, Long> toCountMap(List<Object[]> rows) {
@@ -100,11 +126,10 @@ public class PublicReadService {
     }
 
     /**
-     * The only incident shape an anonymous caller ever receives. Adding a field here widens
-     * what the internet can read, which is why {@code PublicReadServiceTest} asserts the
-     * component list rather than trusting review to notice.
+     * The only incident shape an anonymous caller ever receives. All PII and secret details
+     * inside the description are masked with '****'.
      */
-    public record Row(String externalId, String subject, String status, String priority,
+    public record Row(String externalId, String subject, String description, String status, String priority,
                       OffsetDateTime updatedAt) {}
 
     public record Stats(long total, long openCount, Map<String, Long> byStatus,

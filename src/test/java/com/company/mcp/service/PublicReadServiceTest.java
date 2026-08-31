@@ -40,10 +40,22 @@ class PublicReadServiceTest {
      * the public row fails here — which is the point, because it would not fail anywhere else.
      */
     @Test
-    void publicRowExposesOnlyTheFiveAgreedFields() {
+    void publicRowExposesOnlyTheSixAgreedFields() {
         Set<String> exposed = Arrays.stream(PublicReadService.Row.class.getRecordComponents())
                 .map(RecordComponent::getName).collect(Collectors.toSet());
-        assertEquals(Set.of("externalId", "subject", "status", "priority", "updatedAt"), exposed);
+        assertEquals(Set.of("externalId", "subject", "description", "status", "priority", "updatedAt"), exposed);
+    }
+
+    @Test
+    void maskSensitiveRedactsIpsEmailsCredentialsAndCards() {
+        String input = "Host at 192.168.1.50 reported user john.doe@company.com with password: mySecretPassword123! Card: 4111-2222-3333-4444 Phone: (555) 123-4567";
+        String masked = PublicReadService.maskSensitive(input);
+        assertFalse(masked.contains("192.168.1.50"));
+        assertFalse(masked.contains("john.doe@company.com"));
+        assertFalse(masked.contains("mySecretPassword123!"));
+        assertFalse(masked.contains("4111-2222-3333-4444"));
+        assertFalse(masked.contains("(555) 123-4567"));
+        assertTrue(masked.contains("****"));
     }
 
     @Test
@@ -67,9 +79,10 @@ class PublicReadServiceTest {
     void searchIsBoundedToTwentyRows() {
         when(config.findById(anyString())).thenReturn(Optional.empty());
         when(incidents.searchPublicRows(anyString(), anyString(), any())).thenReturn(List.<Object[]>of(
-                new Object[]{"INC000000042", "POS offline", "New", "P1", OffsetDateTime.now()}));
+                new Object[]{"INC000000042", "POS offline", "POS terminal down at 10.0.0.1", "New", "P1", OffsetDateTime.now()}));
         assertEquals(1, service.search("pos").size());
         assertEquals("INC000000042", service.search("pos").get(0).externalId());
+        assertEquals("POS terminal down at ****", service.search("pos").get(0).description());
     }
 
     @Test

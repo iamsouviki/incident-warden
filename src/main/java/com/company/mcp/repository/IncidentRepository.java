@@ -17,6 +17,7 @@ import java.util.Optional;
 public interface IncidentRepository extends JpaRepository<Incident, UUID>, JpaSpecificationExecutor<Incident> {
     Optional<Incident> findFirstByExternalSourceAndExternalId(String externalSource, String externalId);
     Optional<Incident> findFirstByTenantIdAndExternalSourceAndExternalId(String tenantId, String externalSource, String externalId);
+    Optional<Incident> findFirstByTenantIdAndExternalId(String tenantId, String externalId);
 
     /** Tenant-scoped and bounded: assistant context must never span tenants or grow without limit. */
     List<Incident> findTop50ByTenantIdOrderByUpdatedAtDesc(String tenantId);
@@ -27,7 +28,7 @@ public interface IncidentRepository extends JpaRepository<Incident, UUID>, JpaSp
      * the next number has to clear every tenant's, not just the caller's.
      */
     @Query("select max(cast(substring(i.externalId, 4) as long)) from Incident i "
-            + "where i.externalId like 'INC%' and length(i.externalId) = 12")
+            + "where i.externalSource = 'Internal' and i.externalId like 'INC%' and length(i.externalId) = 12")
     Long findMaxInternalTicketNumber();
 
     // ── Anonymous read surface (PublicReadService) ──────────────────────────────
@@ -54,8 +55,8 @@ public interface IncidentRepository extends JpaRepository<Incident, UUID>, JpaSp
      * The match is also restricted to those same columns: matching on description would let
      * a stranger confirm a phrase they cannot read.
      */
-    @Query("select i.externalId, i.subject, i.status, i.priority, i.updatedAt from Incident i "
-            + "where i.tenantId = :tenantId and (lower(i.subject) like :like or lower(i.externalId) like :like) "
+    @Query("select i.externalId, i.subject, i.description, i.status, i.priority, i.updatedAt from Incident i "
+            + "where i.tenantId = :tenantId and (lower(i.subject) like :like or lower(i.externalId) like :like or lower(i.priority) like :like or lower(coalesce(i.description, '')) like :like) "
             + "order by i.updatedAt desc")
     List<Object[]> searchPublicRows(@Param("tenantId") String tenantId, @Param("like") String like, Pageable page);
 }

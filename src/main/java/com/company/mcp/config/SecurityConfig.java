@@ -48,10 +48,9 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/sso", "/api/auth/refresh").permitAll()
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 .requestMatchers("/api/health", "/actuator/health", "/actuator/health/**", "/actuator/info").permitAll()
-                // Redacted incident counts and a 20-row status search, so someone can find out
-                // whether their problem is already known before being asked to create an
-                // account. Read-only and GET-only by construction: see PublicReadService.
-                .requestMatchers(HttpMethod.GET, "/api/v1/public/**").permitAll()
+                // Redacted incident counts, search, and guarded public chat assistant.
+                // Read-only on ticket mutation by construction: see PublicReadService and RagService.
+                .requestMatchers("/api/v1/public/**").permitAll()
 
                 // ── Operator surface: read for everyone signed in ───────────────────
                 .requestMatchers(HttpMethod.GET, "/api/auth/me", "/api/auth/users", "/api/v1/teams/**", "/api/v1/statuses/**",

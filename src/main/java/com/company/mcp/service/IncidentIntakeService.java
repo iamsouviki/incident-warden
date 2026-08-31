@@ -43,7 +43,10 @@ public class IncidentIntakeService {
         String tenant = currentUser.tenantId();
         String source = canonicalSource(request.sourceSystem());
         String reference = Optional.ofNullable(request.sourceReference()).filter(v -> !v.isBlank()).orElse(fingerprint(request));
-        Optional<Incident> existing = incidents.findFirstByTenantIdAndExternalSourceAndExternalId(tenant, source, reference);
+        Optional<Incident> existing = incidents.findFirstByTenantIdAndExternalId(tenant, reference);
+        if (existing.isEmpty()) {
+            existing = incidents.findFirstByTenantIdAndExternalSourceAndExternalId(tenant, source, reference);
+        }
         if (existing.isPresent()) return Map.of("status", "DEDUPLICATED", "incident", existing.get());
         Incident created = incidentService.createIncident(Incident.builder()
                 .tenantId(tenant).subject(request.subject().trim()).description(limit(request.description(), 8_000))
@@ -135,20 +138,29 @@ public class IncidentIntakeService {
     private NormalizedIncidentRequest fromValues(String[] keys, String[] values, String sourceSystem) {
         Map<String, String> map = new HashMap<>();
         for (int i = 0; i < keys.length; i++) map.put(cleanHeader(keys[i]), i < values.length ? values[i].trim() : "");
-        String source = first(map, "sourcesystem", "source system", "source", "provider");
+        String source = first(map, "sourcesystem", "source", "provider", "system");
         return new NormalizedIncidentRequest(blank(source) ? sourceSystem : source,
-                first(map, "sourcereference", "source reference", "number", "incident number", "ticket id", "id", "sys_id"),
-                first(map, "subject", "short description", "title", "summary"),
-                first(map, "description", "issue", "details", "work notes"),
-                first(map, "priority"), first(map, "category", "type"),
-                first(map, "target", "configuration item", "asset", "device"), first(map, "severity", "impact"),
+                first(map, "sourcereference", "number", "incidentnumber", "ticketid", "id", "sysid", "key"),
+                first(map, "subject", "shortdescription", "title", "summary", "name"),
+                first(map, "description", "issue", "details", "worknotes", "notes", "body"),
+                first(map, "priority", "urgency"), first(map, "category", "type", "classification"),
+                first(map, "target", "configurationitem", "cmdbci", "asset", "device", "host", "hostname"),
+                first(map, "severity", "impact"),
                 // Header spellings seen across ServiceNow, Freshservice and Jira exports.
-                first(map, "reporteremail", "requester email", "requester_email", "caller email",
-                        "contact email", "reporter email", "email", "from"));
+                first(map, "reporteremail", "requesteremail", "calleremail", "contactemail", "email", "from"));
     }
 
-    private String first(Map<String, String> map, String... names) { for (String name : names) { String value = map.get(cleanHeader(name)); if (!blank(value)) return value; } return ""; }
-    private String cleanHeader(String value) { return value == null ? "" : value.replace("\uFEFF", "").trim().toLowerCase(Locale.ROOT); }
+    private String first(Map<String, String> map, String... names) {
+        for (String name : names) {
+            String value = map.get(cleanHeader(name));
+            if (!blank(value)) return value;
+        }
+        return "";
+    }
+
+    private String cleanHeader(String value) {
+        return value == null ? "" : value.replace("\uFEFF", "").replaceAll("[_\\-\\s]+", "").trim().toLowerCase(Locale.ROOT);
+    }
     private String cell(Cell cell) { return cell == null ? "" : new DataFormatter().formatCellValue(cell); }
     private void validate(NormalizedIncidentRequest r) { if (r == null || blank(r.sourceSystem()) || blank(r.subject())) throw new IllegalArgumentException("sourceSystem and subject are required"); if (r.sourceSystem().length() > 100 || r.subject().length() > 500) throw new IllegalArgumentException("sourceSystem or subject exceeds supported length"); }
     private boolean blank(String value) { return value == null || value.isBlank(); }

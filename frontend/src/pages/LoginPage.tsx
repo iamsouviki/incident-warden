@@ -1,11 +1,10 @@
 import React, { useState } from 'react';
-import { ArrowLeft, ArrowRight, CheckCircle2, KeyRound, LockKeyhole, ShieldCheck } from 'lucide-react';
+import { ArrowRight, Lock, User, AlertCircle } from 'lucide-react';
 import { login, AuthUser } from '../services/api';
 import './LoginPage.css';
 
 interface Props {
   onLogin: (user: AuthUser) => void;
-  /** Back to the assistant without an account. Absent when there is nowhere to go back to. */
   onSkip?: () => void;
 }
 
@@ -18,52 +17,106 @@ export default function LoginPage({ onLogin, onSkip }: Props) {
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
+    if (!username.trim() || !password) {
+      setError('Please enter both username and password.');
+      return;
+    }
     setError('');
     setLoading(true);
     try {
-      onLogin(await login(username.trim(), password, rememberMe));
+      const user = await login(username.trim(), password, rememberMe);
+      onLogin(user);
     } catch (err: any) {
-      setError(err.message || 'Login failed');
+      setError(err.message || 'Invalid username or password.');
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <main className="login-page">
-      <div className="login-grid" />
-      <section className="login-shell">
-        <div className="login-intro">
-          <div className="login-brand"><span className="login-brand-mark">I</span><span>incident<span> warden</span></span></div>
-          <div className="login-eyebrow">Enterprise incident operations</div>
-          <h1>Move from signal to safe action.</h1>
-          <p>Monitor store systems, coordinate agents, and keep a human decision-maker in control of every high-impact remediation.</p>
-          <div className="login-capabilities">
-            <div><CheckCircle2 size={15} /><span>Universal incident intake</span></div>
-            <div><ShieldCheck size={15} /><span>Configurable risk governance</span></div>
-            <div><LockKeyhole size={15} /><span>Audited operator decisions</span></div>
-          </div>
+    <main className="login-root">
+      <div className="login-card">
+        <div className="login-header">
+          <div className="login-logo-badge">I</div>
+          <h1 className="login-title">Sign in to Incident Warden</h1>
+          <p className="login-subtitle">Enter your operator credentials to access tools & remediation.</p>
         </div>
 
-        <div className="login-card">
-          <div className="login-card-head"><div className="login-card-icon"><KeyRound size={17} /></div><div><div className="login-card-kicker">Secure workspace access</div><h2>Sign in</h2></div></div>
-          <p className="login-card-copy">Enter your verified operator account credentials to sign in.</p>
-          {error && <div className="login-error" role="alert">{error}</div>}
-          <form onSubmit={handleSubmit} className="login-form" noValidate>
-            <label>Username<input id="login-username" type="text" autoComplete="username" placeholder="admin" value={username} onChange={event => setUsername(event.target.value)} required autoFocus /></label>
-            <label>Password<input id="login-password" type="password" autoComplete="current-password" placeholder="Enter password" value={password} onChange={event => setPassword(event.target.value)} required /></label>
-            <label className="login-remember"><input type="checkbox" checked={rememberMe} onChange={event => setRememberMe(event.target.checked)} /><span>Keep me signed in for 7 days</span></label>
-            <button className="login-submit" type="submit" disabled={loading}>{loading ? <><span className="login-spinner" /> Signing in…</> : <>Open workspace <ArrowRight size={15} /></>}</button>
-          </form>
-          <div className="login-token-note"><LockKeyhole size={13} /><span>Session uses a short-lived access token with verified signature.</span></div>
-          {onSkip && (
-            <button type="button" className="login-skip" onClick={onSkip}>
-              <ArrowLeft size={13} /> Continue without signing in
+        {error && (
+          <div className="login-error-alert" role="alert">
+            <AlertCircle size={16} />
+            <span>{error}</span>
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="login-form-body" noValidate>
+          <div className="login-input-group">
+            <label htmlFor="login-username">Username</label>
+            <div className="login-input-wrap">
+              <User size={16} className="login-input-icon" />
+              <input
+                id="login-username"
+                type="text"
+                autoComplete="username"
+                placeholder="Enter username (e.g. admin)"
+                value={username}
+                onChange={e => setUsername(e.target.value)}
+                required
+                autoFocus
+              />
+            </div>
+          </div>
+
+          <div className="login-input-group">
+            <label htmlFor="login-password">Password</label>
+            <div className="login-input-wrap">
+              <Lock size={16} className="login-input-icon" />
+              <input
+                id="login-password"
+                type="password"
+                autoComplete="current-password"
+                placeholder="Enter password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                required
+              />
+            </div>
+          </div>
+
+          <div className="login-options-row">
+            <label className="login-remember-label">
+              <input
+                type="checkbox"
+                checked={rememberMe}
+                onChange={e => setRememberMe(e.target.checked)}
+              />
+              <span>Remember me</span>
+            </label>
+          </div>
+
+          <button className="login-submit-btn" type="submit" disabled={loading}>
+            {loading ? (
+              <>
+                <span className="login-submit-spinner" />
+                <span>Signing in…</span>
+              </>
+            ) : (
+              <>
+                <span>Sign in</span>
+                <ArrowRight size={16} />
+              </>
+            )}
+          </button>
+        </form>
+
+        {onSkip && (
+          <div className="login-skip-wrap">
+            <button type="button" className="login-skip-link" onClick={onSkip}>
+              ← Continue as Guest (Public Mode)
             </button>
-          )}
-        </div>
-      </section>
-      <footer className="login-footer">Incident Warden · Operations control plane · Enterprise environment</footer>
+          </div>
+        )}
+      </div>
     </main>
   );
 }

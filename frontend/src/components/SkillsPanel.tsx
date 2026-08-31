@@ -28,25 +28,28 @@ interface Skill {
 
 type Kind = Skill['kind'];
 
-/** What each stage does, in the words of the person editing it. */
-const KINDS: Array<{ kind: Kind; title: string; what: string; field: string }> = [
+/** The 3 Core Agent Skills */
+const KINDS: Array<{ kind: Kind; badge: string; title: string; what: string; field: string }> = [
   {
     kind: 'CATEGORIZATION',
-    title: 'Categorisation',
-    what: 'Decides what kind of problem a ticket is. Comma-separated words; if any of them appear in the subject or description, the ticket takes this category and action.',
-    field: 'Words to look for',
+    badge: 'Skill 1',
+    title: 'Categorization',
+    what: 'Categorizes incoming incidents from ServiceNow & Freshservice by matching symptoms, keywords, and phrases to incident categories and remediation actions.',
+    field: 'Keywords to match (comma-separated)',
   },
   {
     kind: 'EXTRACTION',
-    title: 'Extraction',
-    what: 'Pulls the machine name out of the ticket text. A regular expression with one capturing group — the group is the host. Built-in patterns run first, so a row here only adds shapes they miss.',
-    field: 'Pattern (one capturing group)',
+    badge: 'Skill 2',
+    title: 'Extraction of Required Details',
+    what: 'Extracts critical remediation parameters (target hostname, store number, IP address, server name) from raw incident descriptions using regex patterns with capturing groups.',
+    field: 'Regex pattern (must have 1 capturing group)',
   },
   {
     kind: 'EXECUTION',
-    title: 'Execution',
-    what: 'The tools a plan may use. The key is the action name in CAPS, and the argument count is how many colon-separated values it takes. Nothing outside this list can run.',
-    field: 'Not used',
+    badge: 'Skill 3',
+    title: 'Skill Mapping & Remediation Tools',
+    what: 'Maps incident categories to safe, approved tools and automated scripts (e.g. RESTART_SERVICE, CLEAR_CACHE, CHECK_URL) along with parameter counts and safety levels.',
+    field: 'Tool parameters & configuration',
   },
 ];
 
@@ -231,8 +234,13 @@ const SkillsPanel: React.FC = () => {
           <div key={group.kind} className="card" style={{ padding: '16px 18px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' }}>
               <div style={{ maxWidth: '620px' }}>
-                <strong style={{ fontSize: '13px' }}>{group.title}</strong>
-                <p style={{ margin: '5px 0 0', fontSize: '12px', lineHeight: 1.55, color: 'var(--text-dim)' }}>{group.what}</p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                  <span style={{ fontSize: '10.5px', fontWeight: 800, padding: '2px 7px', borderRadius: '4px', background: 'var(--accent-dim, rgba(59,130,246,0.15))', color: 'var(--accent)' }}>
+                    {group.badge}
+                  </span>
+                  <strong style={{ fontSize: '14px', color: 'var(--text)' }}>{group.title}</strong>
+                </div>
+                <p style={{ margin: '3px 0 0', fontSize: '12px', lineHeight: 1.55, color: 'var(--text-dim)' }}>{group.what}</p>
               </div>
               <button onClick={() => setDraft(empty(group.kind))}
                       style={{
