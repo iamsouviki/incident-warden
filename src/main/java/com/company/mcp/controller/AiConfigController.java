@@ -36,16 +36,22 @@ public class AiConfigController {
 
     @GetMapping
     public ResponseEntity<?> getConfig() {
-        return ResponseEntity.ok(Map.of(
+        // Map.ofEntries, not Map.of: the latter stops at ten pairs and this outgrew it.
+        return ResponseEntity.ok(Map.ofEntries(
                 // apiKey is deliberately absent. It is an environment variable now, and echoing
                 // a credential back to a browser is how it ends up in a screenshot or a log.
                 // "apiKeyPresent" tells the page whether a key exists without disclosing it.
-                "provider", aiConfigService.getProvider(), "baseUrl", aiConfigService.getBaseUrl(),
-                "apiKeyPresent", !aiConfigService.getApiKey().isBlank(),
-                "chatModel", aiConfigService.getActiveChatModel(), "embeddingModel", aiConfigService.getActiveEmbeddingModel(),
-                "autoResolveThreshold", aiConfigService.getAutoResolveThreshold(), "hitlThreshold", aiConfigService.getHitlThreshold(),
-                "blastRadiusThreshold", aiConfigService.getBlastRadiusThreshold(), "servicenowEnabled", aiConfigService.getServicenowEnabled(),
-                "freshserviceEnabled", aiConfigService.getFreshserviceEnabled()));
+                Map.entry("provider", aiConfigService.getProvider()),
+                Map.entry("baseUrl", aiConfigService.getBaseUrl()),
+                Map.entry("apiKeyPresent", !aiConfigService.getApiKey().isBlank()),
+                Map.entry("chatModel", aiConfigService.getActiveChatModel()),
+                Map.entry("embeddingModel", aiConfigService.getActiveEmbeddingModel()),
+                Map.entry("autoResolveThreshold", aiConfigService.getAutoResolveThreshold()),
+                Map.entry("hitlThreshold", aiConfigService.getHitlThreshold()),
+                Map.entry("blastRadiusThreshold", aiConfigService.getBlastRadiusThreshold()),
+                Map.entry("servicenowEnabled", aiConfigService.getServicenowEnabled()),
+                Map.entry("freshserviceEnabled", aiConfigService.getFreshserviceEnabled()),
+                Map.entry("webSearchEnabled", aiConfigService.getWebSearchEnabled())));
     }
 
     @GetMapping("/ollama-models")
@@ -86,6 +92,7 @@ public class AiConfigController {
         if (body.get("blastRadiusThreshold") != null) aiConfigService.setBlastRadiusThreshold(body.get("blastRadiusThreshold"));
         if (body.get("servicenowEnabled") != null) aiConfigService.setServicenowEnabled(body.get("servicenowEnabled"));
         if (body.get("freshserviceEnabled") != null) aiConfigService.setFreshserviceEnabled(body.get("freshserviceEnabled"));
+        if (body.get("webSearchEnabled") != null) aiConfigService.setWebSearchEnabled(body.get("webSearchEnabled"));
         return ResponseEntity.ok(Map.of("message", "AI & Platform Configuration updated successfully", "provider", provider, "chatModel", chatModel, "embeddingModel", embeddingModel));
     }
 

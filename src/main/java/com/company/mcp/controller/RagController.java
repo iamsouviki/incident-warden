@@ -21,11 +21,14 @@ public class RagController {
     private final RagService ragService;
     private final CurrentUser currentUser;
     private final SopProcedureRepository procedures;
+    private final com.company.mcp.service.RateLimiterService rateLimiter;
 
-    public RagController(RagService ragService, CurrentUser currentUser, SopProcedureRepository procedures) {
+    public RagController(RagService ragService, CurrentUser currentUser, SopProcedureRepository procedures,
+                         com.company.mcp.service.RateLimiterService rateLimiter) {
         this.ragService = ragService;
         this.currentUser = currentUser;
         this.procedures = procedures;
+        this.rateLimiter = rateLimiter;
     }
 
     @PostMapping("/ingest")
@@ -49,10 +52,19 @@ public class RagController {
                 : ResponseEntity.status(503).body(Map.of("error", "SOP service is unavailable; no procedure was stored."));
     }
 
+    /**
+     * Rate limited on the same budget as ticket analysis and script generation. This is the
+     * box a user actually types into, and it was the one LLM surface with no ceiling at all:
+     * a held-down enter key spent the provider budget one question at a time. Length, blank
+     * text and scope are checked inside {@link RagService#refuse}, shared with analysis.
+     */
     @PostMapping("/chat")
     public ResponseEntity<?> chat(@RequestBody Map<String, String> body, HttpSession session) {
         String question = body.get("question");
         if (question == null || question.isBlank()) return ResponseEntity.badRequest().body(Map.of("error", "question is required"));
+        if (!rateLimiter.allowLlmCall(currentUser.username())) {
+            return ResponseEntity.status(429).body(Map.of("error", "Too many questions in the last minute. Try again shortly."));
+        }
         return ResponseEntity.ok(Map.of("answer", ragService.askStrictSopRag(session.getId(), question)));
     }
 

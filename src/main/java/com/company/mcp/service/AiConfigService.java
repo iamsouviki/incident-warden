@@ -47,6 +47,18 @@ public class AiConfigService {
     private String servicenowEnabled = "false";
     private String freshserviceEnabled = "false";
 
+    /**
+     * Whether ticket analysis may consult public web results when no approved SOP matches.
+     *
+     * On means the ticket's own subject and description are sent to a third-party search
+     * engine. Tickets routinely contain internal hostnames, addresses and customer names, and
+     * some contain a credential a user pasted in, so for a regulated workspace this is an
+     * egress decision the operator must make rather than a default. Off simply skips the
+     * search: the suggestion is then labelled AI rather than WEB, and an unmatched ticket
+     * still gets a starting point plus the standing advice to add an SOP.
+     */
+    private String webSearchEnabled = "true";
+
     @PostConstruct
     public void init() {
         try {
@@ -84,6 +96,9 @@ public class AiConfigService {
                         break;
                     case "freshservice_enabled":
                         this.freshserviceEnabled = val;
+                        break;
+                    case "web_search_enabled":
+                        this.webSearchEnabled = val;
                         break;
                 }
             }
@@ -181,6 +196,15 @@ public class AiConfigService {
 
     public String getFreshserviceEnabled() {
         return freshserviceEnabled;
+    }
+
+    public String getWebSearchEnabled() {
+        return webSearchEnabled;
+    }
+
+    public void setWebSearchEnabled(String webSearchEnabled) {
+        this.webSearchEnabled = webSearchEnabled;
+        updateConfig("web_search_enabled", webSearchEnabled);
     }
 
     public void setFreshserviceEnabled(String freshserviceEnabled) {

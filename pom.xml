@@ -15,7 +15,15 @@
     <groupId>com.mcp</groupId>
     <artifactId>incident-automation</artifactId>
     <version>1.0.0</version>
-    <name>MCP Incident Automation (Stripped RAG)</name>
+    <name>MCP Incident Automation</name>
+    <description>Open-source human-in-the-loop AI incident automation platform</description>
+    <url>https://github.com/iamsouviki/mcp-incident-automation</url>
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0</url>
+        </license>
+    </licenses>
 
     <properties>
         <java.version>21</java.version>
@@ -39,6 +47,20 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!--
+          Present only so ClientHttpRequestFactories picks it over the JDK client.
+          spring-web 6.1.1 implements the JDK client's read timeout as
+          HttpRequest.Builder#timeout, which the JDK applies to response HEADERS only. A
+          provider that answers 200 and then stalls the body is never timed out: observed
+          live with a hosted LLM, where two chat requests logged "Routing chat query" and
+          then hung indefinitely, each holding a Tomcat worker. Apache's read timeout is a
+          socket timeout, so it covers body reads too. See config/OutboundHttpConfig.
+        -->
+        <dependency>
+            <groupId>org.apache.httpcomponents.client5</groupId>
+            <artifactId>httpclient5</artifactId>
         </dependency>
 
         <!-- Redis for Caching -->

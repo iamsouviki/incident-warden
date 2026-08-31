@@ -3,13 +3,10 @@
   "configurations": [
     {
       "name": "backend",
-      "runtimeExecutable": "mvn",
+      "runtimeExecutable": "sh",
       "runtimeArgs": [
-        "-o",
-        "spring-boot:run",
-        "-Dspring-boot.run.profiles=local",
-        "-Dmaven.test.skip=true",
-        "-Dspring-boot.run.jvmArguments=-Dmcp.autonomy.execution-enabled=true -Dmcp.autonomy.executor-url=http://localhost:9099"
+        "-c",
+        "set -a; [ -f .env.local ] && . ./.env.local; set +a; exec mvn -o spring-boot:run -Dspring-boot.run.profiles=local -Dmaven.test.skip=true \"-Dspring-boot.run.jvmArguments=-Dmcp.autonomy.execution-enabled=true -Dmcp.autonomy.executor-url=http://localhost:9099\""
       ],
       "port": 8080
     },

@@ -20,6 +20,12 @@ public class IncidentController {
     @Autowired
     private IncidentService incidentService;
 
+    @Autowired
+    private com.company.mcp.service.RateLimiterService rateLimiter;
+
+    @Autowired
+    private com.company.mcp.config.CurrentUser currentUser;
+
     @PostMapping
     public ResponseEntity<Incident> createIncident(@RequestBody Incident incident) {
         Incident created = incidentService.createIncident(incident);
@@ -98,8 +104,17 @@ public class IncidentController {
         return ResponseEntity.ok(result);
     }
 
+    /**
+     * Rate-limited because it is the priciest endpoint here: two to three model calls plus a
+     * public web search per request. Same limiter and same 429 as script generation — an
+     * authenticated viewer holding the button down should not be able to spend the whole
+     * provider budget.
+     */
     @PostMapping("/analyze")
     public ResponseEntity<Map<String, String>> analyzeIncident(@RequestBody Map<String, String> body) {
+        if (!rateLimiter.allowLlmCall(currentUser.username())) {
+            return ResponseEntity.status(429).body(Map.of("error", "Analysis rate limit reached. Try again in a minute."));
+        }
         String subject = body.getOrDefault("subject", "");
         String description = body.getOrDefault("description", "");
         Map<String, String> result = incidentService.analyzeIncident(subject, description);

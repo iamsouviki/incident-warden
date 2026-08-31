@@ -1,0 +1,77 @@
+name: Bug report
+description: Something behaves incorrectly
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If the bug is a security issue — an approval that can be bypassed, a credential that
+        leaks, a script that dispatches without a human — please **do not** file it here. Use
+        Security → Advisories → Report a vulnerability. See [SECURITY.md](../blob/main/SECURITY.md).
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The wrong behaviour, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: The smallest sequence that shows it — page and buttons, or the HTTP request.
+      placeholder: |
+        1. Sign in as ANALYST
+        2. POST /api/v1/incidents with { ... }
+        3. Open HITL approval queue
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log lines
+      description: >
+        Backend log lines around the failure. The tagged ones are the useful ones —
+        `[ANALYZE]`, `[RAG-FUSION]`, `[AUTO]`, `[GUARDRAIL]`, `[CONFIG]`. Redact hostnames
+        and anything credential-shaped before pasting.
+      render: text
+
+  - type: dropdown
+    id: lane
+    attributes:
+      label: Which part
+      options:
+        - Intake / incidents
+        - Analysis and suggestions
+        - Script generation
+        - HITL review and approval
+        - Unattended run (Lane B)
+        - Executor dispatch
+        - Notifications
+        - Auth, roles, or rate limits
+        - SOP library
+        - Frontend
+        - Setup / build
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: profile
+    attributes:
+      label: Profile and versions
+      placeholder: local profile, JDK 21.0.4, Postgres 16.3 + pgvector 0.7, Node 20.11
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: executor
+    attributes:
+      label: Execution setup
+      options:
+        - label: I was running the dev stand-in (`scripts/dev-executor.mjs`), which runs nothing
+        - label: I was running my own executor agent, which does run scripts
+        - label: No executor was configured, so execution was simulated

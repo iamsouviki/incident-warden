@@ -28,7 +28,7 @@ request() {
 request health 200 GET /api/health ''
 request unauthenticated_config 403 GET /api/v1/ai/config ''
 request invalid_login 401 POST /api/auth/login '{"username":"admin","password":"wrong-password"}'
-request valid_login 200 POST /api/auth/login '{"username":"admin","password":"admin123"}'
+request valid_login 200 POST /api/auth/login '{"username":"admin","password":"michaels@1"}'
 TOKEN=$(node -e "const fs=require('fs'); console.log(JSON.parse(fs.readFileSync('$OUT_DIR/valid_login.body','utf8')).token || '')")
 if [[ -z "$TOKEN" ]]; then
   record token_obtained nonempty empty FAIL 'Cannot execute authenticated scenarios without a token'

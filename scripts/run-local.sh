@@ -55,7 +55,7 @@ Local development is ready:
   UI:      http://localhost:5173
   API:     http://localhost:8080
   Health:  http://localhost:8080/api/health
-  Login:   admin / admin123
+  Login:   admin / michaels@1
 
 Press Ctrl+C to stop both services.
 EOF

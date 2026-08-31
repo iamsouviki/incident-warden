@@ -16,7 +16,7 @@ def request(path, method="GET", payload=None, token=None):
 
 health = request("/api/health")
 assert health["status"] == "UP", health
-login = request("/api/auth/login", "POST", {"username": "admin", "password": "admin123", "rememberMe": True})
+login = request("/api/auth/login", "POST", {"username": "admin", "password": "michaels@1", "rememberMe": True})
 assert login.get("accessToken") and login.get("refreshToken"), login
 assert login["refreshExpiresIn"] == 7 * 24 * 60 * 60 * 1000, login
 rotated = request("/api/auth/refresh", "POST", {"refreshToken": login["refreshToken"]})

@@ -1,9 +1,65 @@
-# MCP Incident Automation
+<h1 align="center">MCP Incident Automation</h1>
 
-An incident platform that reads your approved SOPs **and your own incident history**, builds a
-concrete remediation script, and puts it in front of a human. Once a human has approved and
-successfully run that fix for a given store, the platform is allowed to repeat *that exact tool*
-on its own for a matching incident — and email everyone involved that it did.
+<p align="center">
+  <b>The open-source human-in-the-loop AI incident automation platform.</b><br>
+  It reads your approved SOPs <i>and your own incident history</i>, writes the actual fix, and asks a
+  human before running it — then repeats proven-safe fixes on its own.
+</p>
+
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#what-this-is">What it is</a> ·
+  <a href="#functional-flow-in-detail">How it works</a> ·
+  <a href="#safeguards">Safeguards</a> ·
+  <a href="#api">API</a> ·
+  <a href="docs/client_poc_demo.md">Demo run sheet</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg"></a>
+  <img alt="Java 21" src="https://img.shields.io/badge/Java-21-orange.svg">
+  <img alt="Spring Boot 3.2" src="https://img.shields.io/badge/Spring%20Boot-3.2-6DB33F.svg">
+  <img alt="PostgreSQL 16 + pgvector" src="https://img.shields.io/badge/PostgreSQL-16%20%2B%20pgvector-336791.svg">
+  <img alt="Execution: human-approved" src="https://img.shields.io/badge/execution-human--approved-brightgreen.svg">
+</p>
+
+---
+
+## What this is
+
+A ticket arrives. It is saved in Postgres, then read against two sources at once: your **approved
+SOP procedures**, and **your own closed incidents** — what someone actually did last time, on which
+machine, and whether it worked. Out of that the platform builds a concrete, platform-correct script
+(PowerShell for a Windows host, Bash for Linux), scans it against a deterministic guardrail, and puts
+it in a review queue for a human with the evidence attached.
+
+Approving it pins a SHA-256 hash of the script. Dispatch re-scans the guardrails. This process never
+runs a shell itself — approved scripts go to a separate executor agent on the target network, which
+is the only thing holding a credential.
+
+Then the part most tools stop before: once a human has approved and successfully run a given tool for
+a given store, the platform may run *that exact tool* by itself the next time the same fault appears
+at the same store — restart-or-read-only actions only — and email everyone involved that it did.
+
+Most AI SRE tooling is advisory: it investigates, it suggests, a person does the work. The tools that
+do act tend to put the approval workflow behind an enterprise licence. Here the approval gate **is**
+the product, and it is in this repository.
+
+## Features
+
+| | |
+|---|---|
+| **Dual-evidence analysis** | Every ticket is matched against approved SOP procedures *and* the closed-incident history — pgvector similarity plus a keyword classifier that learns its vocabulary from approved procedures — not a bare prompt. |
+| **HITL review console** | A queue showing SOP evidence, matching precedent, the resolved target host and OS, the generated script, and approve/reject with a reason. Separation of duties is enforced outside the demo profile. |
+| **Guarded unattended run** | Lane B executes without a human only when the same store already had a human-approved, successful run of the same tool, the action is restart or read-only, the guardrail scan is clean, and the incident is not P1. Anything else falls back to Lane A. |
+| **Platform-aware script generation** | Probes the target to learn its operating system, then emits PowerShell or Bash. Three tiers: deterministic SOP template → model-assisted → refuse. |
+| **Deterministic guardrails** | Allowlisted action keys, blocked terms, hash pinning at approval, re-scan at dispatch, and `dryRun:false` refused on the public execute endpoint. |
+| **AI guardrails** | A scope gate before any model call, a 4 000-character input cap, prompt-injection refusal, a per-user LLM rate limit, and provider failures excluded from the answer cache so one bad minute cannot break a question permanently. |
+| **No credentials in the database** | `connection_method` records *how* to reach a host; the secret lives with the executor. The LLM provider key is environment-only and is never returned by an API. Login passwords are BCrypt hashes. |
+| **Operated from the UI** | Provider and model, thresholds, teams and users, SOP procedures, notification recipients, web-search egress — all database-backed and editable in the browser. No properties file edits to run it. |
+| **JWT access control** | A role matrix over every endpoint, fail-closed on unmapped writes, refresh tokens, and a rate-limited login. |
+| **Runs fully offline** | Postgres + pgvector + Ollama, plus two dev stand-ins (executor, SMTP) that make the whole loop observable with nothing leaving the machine. |
 
 Two lanes, one rule set:
 
@@ -783,3 +839,23 @@ builds offline with `-o`)
 - **Tools & scripts → Run Logs** reads `incident.action_executions`, so HITL runs appear there.
 - `/api/v1/autonomy/status` derives `executionMode` from `RemediationToolRegistry.dispatchMode()` —
   one source of truth. The second `mcp.autonomy.execution-mode` property is gone.
+
+---
+
+## Contributing
+
+[CONTRIBUTING.md](CONTRIBUTING.md) has the build, the test commands, and the short list of things a
+patch must not break in the remediation path. [Known gaps](#known-gaps) is the honest backlog — the
+missing real executor agent and the unwired MCP tool access are the two highest-value pieces.
+
+## Security
+
+[SECURITY.md](SECURITY.md) covers private vulnerability reporting, what the design guarantees, and —
+stated plainly rather than buried — the hardening still needed before this runs anywhere that
+matters, starting with the shared default password.
+
+## License
+
+[Apache 2.0](LICENSE). Use it, fork it, run it commercially; the patent grant is the reason this is
+Apache rather than MIT.
+

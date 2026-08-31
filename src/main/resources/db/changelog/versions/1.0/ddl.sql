@@ -1,3 +1,6 @@
+-- Ensure schemas exist
+CREATE SCHEMA IF NOT EXISTS mcp_rag;
+
 -- Enable pgvector extension
 CREATE EXTENSION IF NOT EXISTS vector;
 

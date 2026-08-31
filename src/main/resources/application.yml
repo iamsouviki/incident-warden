@@ -36,6 +36,7 @@ spring:
     enabled: true
     change-log: classpath:db/changelog/db.changelog-master.xml
     default-schema: mcp_rag
+    liquibase-schema: mcp_rag
 
   autoconfigure:
     exclude:

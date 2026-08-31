@@ -1,0 +1,26 @@
+version: 2
+updates:
+  - package-ecosystem: maven
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    # Spring Boot and Spring AI are pinned deliberately (3.2.0 / 1.0.8) and a bump there
+    # changes model-option APIs, so review those by hand rather than by bot.
+    ignore:
+      - dependency-name: org.springframework.boot:spring-boot-starter-parent
+      - dependency-name: org.springframework.ai:spring-ai-bom
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
