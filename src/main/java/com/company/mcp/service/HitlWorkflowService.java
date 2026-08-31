@@ -41,7 +41,6 @@ public class HitlWorkflowService {
     private final SopProcedureService sopProcedures;
     private final RemediationScriptService scripts;
     private final IncidentPrecedentService precedents;
-    private final com.company.mcp.repository.TeamEmployeeRepository memberRepository;
     private final com.company.mcp.repository.UserRepository userRepository;
     private final com.company.mcp.repository.SystemConfigRepository config;
     /** The deployed default, used only when no admin has decided either way. */
@@ -61,14 +60,12 @@ public class HitlWorkflowService {
                                GuardrailService guardrails, AgentAssessmentService agents, AuditService audit, ObjectMapper json,
                                RemediationToolRegistry tools, SopProcedureService sopProcedures, RemediationScriptService scripts,
                                IncidentPrecedentService precedents,
-                               com.company.mcp.repository.TeamEmployeeRepository memberRepository,
                                com.company.mcp.repository.UserRepository userRepository,
                                com.company.mcp.repository.SystemConfigRepository config) {
         this.incidents = incidents; this.plans = plans; this.requests = requests; this.executions = executions;
         this.currentUser = currentUser; this.rag = rag; this.guardrails = guardrails; this.agents = agents;
         this.audit = audit; this.json = json; this.tools = tools; this.sopProcedures = sopProcedures;
         this.scripts = scripts; this.precedents = precedents;
-        this.memberRepository = memberRepository;
         this.userRepository = userRepository;
         this.config = config;
     }
@@ -298,15 +295,7 @@ public class HitlWorkflowService {
 
     private Map<String, Object> resolveUserInfo(String username) {
         if (username == null || username.isBlank()) return Map.of("username", "", "name", "", "role", "", "department", "");
-        var empOpt = memberRepository.findByUsername(username);
-        if (empOpt.isPresent()) {
-            var emp = empOpt.get();
-            String name = (emp.getFullName() != null && !emp.getFullName().isBlank()) ? emp.getFullName() : emp.getUsername();
-            String role = emp.getRole() != null ? emp.getRole() : "Operations Specialist";
-            String dept = emp.getDepartment() != null ? emp.getDepartment() : (emp.getTeam() != null ? emp.getTeam().getName() : "");
-            return Map.of("username", emp.getUsername(), "name", name, "role", role, "department", dept);
-        }
-        var userOpt = userRepository.findByUsername(username);
+        var userOpt = userRepository.findByUsername(username.trim());
         if (userOpt.isPresent()) {
             var u = userOpt.get();
             String name = (u.getFullName() != null && !u.getFullName().isBlank()) ? u.getFullName() : u.getUsername();

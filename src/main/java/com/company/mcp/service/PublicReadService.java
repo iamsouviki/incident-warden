@@ -94,13 +94,12 @@ public class PublicReadService {
     }
 
     /**
-     * Masks PII, IP addresses, credentials and secret values in public descriptions with '****'.
-     * ponytail: standard regex masking keeping public incident views safe.
+     * Masks PII, IP addresses, internal hosts, credentials and secret values in public views with '****'.
      */
     public static String maskSensitive(String text) {
         if (text == null || text.isBlank()) return "";
         String s = text;
-        // Passwords, secrets, tokens, keys
+        // Passwords, secrets, tokens, keys, credentials
         s = s.replaceAll("(?i)(password|passwd|secret|api[_-]?key|token|bearer|auth|credential|pin)\\s*[:=]\\s*\\S+", "$1: ****");
         // Credentials inside URLs
         s = s.replaceAll("(?i)(https?://)[^:\\s]+:[^@\\s]+@", "$1****:****@");
@@ -110,6 +109,10 @@ public class PublicReadService {
         s = s.replaceAll("\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b", "****");
         // IPv6 addresses
         s = s.replaceAll("\\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\\b", "****");
+        // Internal corporate hostnames / FQDNs (e.g. host.corp, server.internal, node-01.local)
+        s = s.replaceAll("\\b[a-zA-Z0-9-]+\\.(?:corp|internal|local|lan|priv)\\b", "****.internal");
+        // Store POS hostnames (e.g. store-0042-pos-01)
+        s = s.replaceAll("(?i)\\bstore-\\d{2,6}-pos-\\d{1,4}\\b", "store-****-pos-**");
         // Credit card numbers
         s = s.replaceAll("\\b(?:\\d{4}[-\\s]?){3}\\d{4}\\b", "****");
         // Phone numbers

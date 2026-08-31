@@ -2,7 +2,6 @@ package com.company.mcp.controller;
 
 import com.company.mcp.config.CurrentUser;
 import com.company.mcp.service.HitlWorkflowService;
-import com.company.mcp.service.McpServerRegistryService;
 import com.company.mcp.service.RemediationToolRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -52,14 +51,12 @@ public class McpController {
 
     private final HitlWorkflowService workflow;
     private final RemediationToolRegistry tools;
-    private final McpServerRegistryService servers;
     private final CurrentUser currentUser;
 
     public McpController(HitlWorkflowService workflow, RemediationToolRegistry tools,
-                        McpServerRegistryService servers, CurrentUser currentUser) {
+                         CurrentUser currentUser) {
         this.workflow = workflow;
         this.tools = tools;
-        this.servers = servers;
         this.currentUser = currentUser;
     }
 
@@ -197,22 +194,7 @@ public class McpController {
     // dials them — a stored URL that is never called cannot be used to reach an internal
     // service, so registration is safe to ship ahead of the client.
 
-    @GetMapping("/servers")
-    public ResponseEntity<?> listServers() {
-        return ResponseEntity.ok(Map.of("servers", servers.list()));
-    }
 
-    @PostMapping("/servers")
-    public ResponseEntity<?> saveServer(@RequestBody Map<String, Object> body) {
-        return ResponseEntity.ok(servers.save(body));
-    }
-
-    @DeleteMapping("/servers/{id}")
-    public ResponseEntity<?> deleteServer(@PathVariable UUID id) {
-        return servers.delete(id)
-                ? ResponseEntity.ok(Map.of("message", "Server removed"))
-                : ResponseEntity.notFound().build();
-    }
 
     // ── JSON-RPC plumbing ───────────────────────────────────────────────────────────
 

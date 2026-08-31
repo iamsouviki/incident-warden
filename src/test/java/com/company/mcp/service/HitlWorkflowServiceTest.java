@@ -9,7 +9,6 @@ import com.company.mcp.repository.HitlRequestRepository;
 import com.company.mcp.repository.IncidentRepository;
 import com.company.mcp.repository.RemediationPlanRepository;
 import com.company.mcp.repository.SystemConfigRepository;
-import com.company.mcp.repository.TeamEmployeeRepository;
 import com.company.mcp.repository.UserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -52,10 +51,7 @@ class HitlWorkflowServiceTest {
                 rag, new GuardrailService(), new AgentAssessmentService(hitlThreshold, 0.85, null, null, null), audit, new ObjectMapper(),
                 new RemediationToolRegistry(new ObjectMapper(), new GuardrailService(), null),
                 mock(SopProcedureService.class), scripts, mock(IncidentPrecedentService.class),
-                // Roster lookups, for naming who may approve. Left unstubbed: these tests assert
-                // on the gate's decision, not on who gets told about it, and Mockito's empty
-                // Optional/List is the honest answer for a workspace with no roster loaded.
-                mock(TeamEmployeeRepository.class), mock(UserRepository.class),
+                mock(UserRepository.class),
                 // No config rows stubbed, so every UI-managed policy falls back to the
                 // deployed default set below — which is what these tests are asserting on.
                 mock(SystemConfigRepository.class));

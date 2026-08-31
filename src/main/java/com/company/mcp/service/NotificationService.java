@@ -3,11 +3,7 @@ package com.company.mcp.service;
 import com.company.mcp.model.AppUser;
 import com.company.mcp.model.Incident;
 import com.company.mcp.model.SystemConfig;
-import com.company.mcp.model.Team;
-import com.company.mcp.model.TeamEmployee;
 import com.company.mcp.repository.SystemConfigRepository;
-import com.company.mcp.repository.TeamEmployeeRepository;
-import com.company.mcp.repository.TeamRepository;
 import com.company.mcp.repository.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -55,17 +51,11 @@ public class NotificationService {
     private static final Pattern EMAIL = Pattern.compile("^[^\\s<>@,;:\\\\\"]+@[A-Za-z0-9._-]+\\.[A-Za-z]{2,}$");
 
     private final SystemConfigRepository configRepository;
-    private final TeamRepository teamRepository;
-    private final TeamEmployeeRepository teamEmployeeRepository;
     private final UserRepository userRepository;
 
     public NotificationService(SystemConfigRepository configRepository,
-                               TeamRepository teamRepository,
-                               TeamEmployeeRepository teamEmployeeRepository,
                                UserRepository userRepository) {
         this.configRepository = configRepository;
-        this.teamRepository = teamRepository;
-        this.teamEmployeeRepository = teamEmployeeRepository;
         this.userRepository = userRepository;
     }
 
@@ -88,12 +78,17 @@ public class NotificationService {
      * Persists transport settings from the admin UI. Nothing here is secret, which is why
      * it can live in the database at all — see the class comment.
      */
-    public void saveSettings(Settings settings) {
-        configRepository.save(new SystemConfig("notify_enabled", Boolean.toString(settings.enabled())));
-        configRepository.save(new SystemConfig("notify_smtp_host", settings.host() == null ? "" : settings.host().trim()));
-        configRepository.save(new SystemConfig("notify_smtp_port", Integer.toString(settings.port())));
-        configRepository.save(new SystemConfig("notify_from", settings.from() == null ? "" : settings.from().trim()));
-        log.info("[NOTIFY] Settings updated: enabled={} host={} port={}", settings.enabled(), settings.host(), settings.port());
+    public void configure(Settings next) {
+        set("notify_enabled", Boolean.toString(next.enabled()));
+        set("notify_smtp_host", next.host() == null ? "" : next.host().trim());
+        set("notify_smtp_port", Integer.toString(next.port()));
+        set("notify_from", next.from() == null ? "" : next.from().trim());
+        log.info("[NOTIFY] Transport reconfigured: enabled={} host={} port={} from={}",
+                next.enabled(), next.host(), next.port(), next.from());
+    }
+
+    public void saveSettings(Settings next) {
+        configure(next);
     }
 
     private String value(String key, String fallback) {
@@ -101,6 +96,10 @@ public class NotificationService {
                 .map(SystemConfig::getConfigValue)
                 .filter(v -> v != null && !v.isBlank())
                 .orElse(fallback);
+    }
+
+    private void set(String key, String val) {
+        configRepository.save(new SystemConfig(key, val));
     }
 
     private static int parsePort(String raw) {
@@ -113,38 +112,23 @@ public class NotificationService {
     }
 
     /**
-     * Who hears about work done on this incident, taken entirely from the incident itself:
-     *
-     *   1. the reporter — captured on the ticket form, or at import from a third-party ITSM;
-     *   2. the assignee — a username, resolved to an address via teams.team_employees and
-     *      then auth.users, because an assignee may be an operator without a team row;
-     *   3. the assigned group — its distribution address, set on the Teams page.
-     *
-     * Any of the three may be absent. A missing address means that recipient is skipped,
-     * never that one is fabricated from a name. Deduplicated case-insensitively so the
-     * analyst who also reported the ticket gets one email, not two.
+     * The notification list for a ticket update:
+     *   1. the reporter, if one was named and has an address;
+     *   2. the assigned operator — looked up in auth.users;
+     *   3. the assigned group.
      */
     public List<String> recipientsFor(Incident incident) {
         LinkedHashSet<String> to = new LinkedHashSet<>();
         addIfValid(to, incident.getReporterEmail());
         addIfValid(to, addressOfUser(incident.getAssignee()));
-        addIfValid(to, addressOfTeam(incident.getAssignedGteam()));
         return new ArrayList<>(to);
     }
 
-    /** An assignee is a username, not an address. Team roster first, then the login table. */
+    /** An assignee is a username, not an address. Look up in users table. */
     public String addressOfUser(String username) {
         if (username == null || username.isBlank()) return null;
         String name = username.trim();
-        String fromRoster = teamEmployeeRepository.findByUsername(name)
-                .map(TeamEmployee::getEmail).orElse(null);
-        if (fromRoster != null && !fromRoster.isBlank()) return fromRoster;
         return userRepository.findByUsername(name).map(AppUser::getEmail).orElse(null);
-    }
-
-    private String addressOfTeam(String teamName) {
-        if (teamName == null || teamName.isBlank()) return null;
-        return teamRepository.findByName(teamName.trim()).map(Team::getEmail).orElse(null);
     }
 
     private void addIfValid(LinkedHashSet<String> target, String candidate) {

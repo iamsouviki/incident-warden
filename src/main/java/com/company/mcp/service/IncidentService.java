@@ -2,13 +2,9 @@ package com.company.mcp.service;
 
 import com.company.mcp.config.CurrentUser;
 import com.company.mcp.model.Incident;
-import com.company.mcp.model.ExternalIncident;
 import com.company.mcp.model.IncidentComment;
-import com.company.mcp.model.IncidentHistory;
 import com.company.mcp.repository.IncidentRepository;
-import com.company.mcp.repository.ExternalIncidentRepository;
 import com.company.mcp.repository.IncidentCommentRepository;
-import com.company.mcp.repository.IncidentHistoryRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,13 +27,7 @@ public class IncidentService {
     private IncidentRepository incidentRepository;
 
     @Autowired
-    private ExternalIncidentRepository externalIncidentRepository;
-
-    @Autowired
     private IncidentCommentRepository incidentCommentRepository;
-
-    @Autowired
-    private IncidentHistoryRepository incidentHistoryRepository;
 
     @Autowired
     private org.springframework.web.client.RestClient.Builder restClientBuilder;
@@ -83,12 +73,7 @@ public class IncidentService {
     private String jiraToken;
 
     private synchronized String generateNextTicketNumber() {
-        // ponytail: synchronized guards one JVM, not a cluster. The unique constraint on
-        // external_id is the real defence — two instances can pick the same number and the
-        // loser's insert fails. Move to a Postgres sequence if this ever runs multi-instance.
-        long maxNum = Math.max(
-                orZero(incidentRepository.findMaxInternalTicketNumber()),
-                orZero(externalIncidentRepository.findMaxInternalTicketNumber()));
+        long maxNum = orZero(incidentRepository.findMaxInternalTicketNumber());
         return String.format("INC%09d", maxNum + 1);
     }
 
@@ -98,15 +83,6 @@ public class IncidentService {
         return incidentRepository.findFirstByExternalSourceAndExternalId("Telemetry", correlationKey);
     }
 
-    /**
-     * Every incident lands here and every incident waits for a person.
-     *
-     * There used to be a second ending: a precedent-autorun path that fired inline, restarted
-     * a service and emailed about it, gated on one config row. It is deleted rather than
-     * switched off — a path that can run without an approver has to be re-audited every time
-     * that row moves, and there is no version of "we already approved something similar" that
-     * is the same statement as "a person read this script for this host".
-     */
     public Incident createIncident(Incident incident) {
         incident.setTenantId(currentUser.tenantId());
         if (incident.getCreatedAt() == null) {
@@ -122,27 +98,16 @@ public class IncidentService {
             incident.setExternalId(generateNextTicketNumber());
         }
 
-        // "The user who created this incident" — for a ticket logged in this UI that is the
-        // signed-in user, resolved here so the form need not ask for an address the platform
-        // already knows. Only for internal tickets: an imported one was created by whoever
-        // raised it in the source system, and if the export carried no address it has none.
-        // Attributing 500 imported rows to the analyst who ran the import would be a lie.
         if ((incident.getReporterEmail() == null || incident.getReporterEmail().isBlank())
                 && "Internal".equals(incident.getExternalSource())) {
             incident.setReporterEmail(notificationService.addressOfUser(currentUser.username()));
         }
 
-        // Apply Confidence Scoring and Routing
         double score = calculateConfidenceScore(incident);
         incident.setConfidenceScore(score);
         routeIncident(incident, score);
         
-        Incident saved = incidentRepository.save(incident);
-
-        // Record initial history
-        saveHistoryRecord(saved.getId(), "Incident Created", null, incident.getStatus(), "System");
-
-        return saved;
+        return incidentRepository.save(incident);
     }
 
     private double calculateConfidenceScore(Incident incident) {
@@ -178,25 +143,11 @@ public class IncidentService {
         String by = actor == null || actor.isBlank() ? "User" : actor;
         String note = reason == null || reason.isBlank() ? "HITL decision: " + normalized : reason;
 
-        Optional<Incident> manual = incidentRepository.findById(id);
-        if (manual.isPresent()) {
-            Incident incident = manual.get();
-            String previous = incident.getStatus();
-            incident.setStatus(nextStatus);
-            incident.setUpdatedAt(OffsetDateTime.now());
-            incidentRepository.save(incident);
-            saveHistoryRecord(id, "status", previous, nextStatus, by);
-            addComment(id, by, note);
-            return Map.of("id", id, "status", nextStatus, "decision", normalized);
-        }
-
-        ExternalIncident incident = externalIncidentRepository.findById(id)
+        Incident incident = incidentRepository.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Incident not found with ID: " + id));
-        String previous = incident.getStatus();
         incident.setStatus(nextStatus);
         incident.setUpdatedAt(OffsetDateTime.now());
-        externalIncidentRepository.save(incident);
-        saveHistoryRecord(id, "status", previous, nextStatus, by);
+        incidentRepository.save(incident);
         addComment(id, by, note);
         return Map.of("id", id, "status", nextStatus, "decision", normalized);
     }
@@ -212,15 +163,6 @@ public class IncidentService {
         }
     }
 
-    /**
-     * Builds the incident search predicate for either entity type. Both {@code Incident}
-     * and {@code ExternalIncident} expose the same searchable attribute names, so one
-     * generic builder serves both.
-     *
-     * The tenant predicate is applied here and not left to callers: this is the only
-     * place a broad incident query is assembled, so scoping it here means a new caller
-     * cannot forget it and read another tenant's incidents.
-     */
     private <T> Specification<T> buildIncidentSearchSpecification(
             String tenantId, String subject, String description, String assignee, String assignedGteam,
             String priority, String createdDate, String updatedDate, String dueDate) {
@@ -253,7 +195,6 @@ public class IncidentService {
         };
     }
 
-    /** Adds a whole-day UTC range predicate for {@code field}, ignoring an unparseable date. */
     private void addDayRange(List<Predicate> predicates, jakarta.persistence.criteria.CriteriaBuilder cb,
                              jakarta.persistence.criteria.Root<?> root, String field, String day) {
         if (day == null || day.isBlank()) return;
@@ -272,34 +213,15 @@ public class IncidentService {
 
         String tenantId = currentUser.tenantId();
 
-        List<Incident> manual = incidentRepository.findAll(
+        List<Incident> results = incidentRepository.findAll(
                 this.<Incident>buildIncidentSearchSpecification(tenantId, subject, description, assignee,
                         assignedGteam, priority, createdDate, updatedDate, dueDate)
         );
 
-        List<ExternalIncident> external = externalIncidentRepository.findAll(
-                this.<ExternalIncident>buildIncidentSearchSpecification(tenantId, subject, description, assignee,
-                        assignedGteam, priority, createdDate, updatedDate, dueDate)
-        );
-
-        List<Incident> combined = new ArrayList<>();
-        combined.addAll(manual);
-        for (ExternalIncident ext : external) {
-            combined.add(convertToIncident(ext));
-        }
-
-        // Sort by created date descending
-        combined.sort((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()));
-        return combined;
+        results.sort((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()));
+        return results;
     }
 
-    /**
-     * Rejects a cross-tenant record access.
-     *
-     * A UUID is guessable enough to matter and was previously the only thing standing
-     * between tenant A and tenant B's incidents on every by-id path. "Not found" is
-     * returned rather than "forbidden" so the response does not confirm the id exists.
-     */
     private void assertOwnedByCurrentTenant(String recordTenantId, UUID id) {
         if (recordTenantId == null || !recordTenantId.equals(currentUser.tenantId())) {
             throw new NoSuchElementException("Incident not found with ID: " + id);
@@ -307,152 +229,82 @@ public class IncidentService {
     }
 
     public Incident getIncidentById(UUID id) {
-        Optional<Incident> manual = incidentRepository.findById(id);
-        if (manual.isPresent()) {
-            assertOwnedByCurrentTenant(manual.get().getTenantId(), id);
-            return manual.get();
-        }
-
-        Optional<ExternalIncident> external = externalIncidentRepository.findById(id);
-        if (external.isPresent()) {
-            assertOwnedByCurrentTenant(external.get().getTenantId(), id);
-            return convertToIncident(external.get());
-        }
-
-        throw new NoSuchElementException("Incident not found with ID: " + id);
+        Incident incident = incidentRepository.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Incident not found with ID: " + id));
+        assertOwnedByCurrentTenant(incident.getTenantId(), id);
+        return incident;
     }
 
     public List<IncidentComment> getComments(UUID incidentId) {
-        getIncidentById(incidentId);   // tenant check; throws if the incident is not this tenant's
+        getIncidentById(incidentId);
         return incidentCommentRepository.findByIncidentIdOrderByCreatedAtDesc(incidentId);
     }
 
     public IncidentComment addComment(UUID incidentId, String author, String commentText) {
-        getIncidentById(incidentId);   // tenant check
+        getIncidentById(incidentId);
         IncidentComment comment = new IncidentComment(UUID.randomUUID(), incidentId, author, commentText, OffsetDateTime.now());
         return incidentCommentRepository.save(comment);
     }
 
-    public List<IncidentHistory> getHistory(UUID incidentId) {
-        getIncidentById(incidentId);   // tenant check
-        return incidentHistoryRepository.findByIncidentIdOrderByUpdatedAtDesc(incidentId);
+    public List<Map<String, Object>> getHistory(UUID incidentId) {
+        getIncidentById(incidentId);
+        return List.of();
     }
 
     public synchronized Incident updateIncident(UUID id, Incident details, String updatedBy) {
-        Optional<Incident> manualOpt = incidentRepository.findById(id);
-        if (manualOpt.isPresent()) {
-            Incident existing = manualOpt.get();
-            assertOwnedByCurrentTenant(existing.getTenantId(), id);
-            List<String> changes = updateIncidentFields(existing, details, updatedBy);
-            Incident saved = incidentRepository.save(existing);
-            // After the save, never before: an email about a change that failed to persist
-            // is worse than no email. NotificationService swallows its own failures.
-            notificationService.notifyIncidentUpdated(saved, changes, updatedBy);
-            return saved;
-        }
-
-        Optional<ExternalIncident> extOpt = externalIncidentRepository.findById(id);
-        if (extOpt.isPresent()) {
-            ExternalIncident existingExt = extOpt.get();
-            assertOwnedByCurrentTenant(existingExt.getTenantId(), id);
-            Incident dummy = convertToIncident(existingExt);
-            List<String> changes = updateIncidentFields(dummy, details, updatedBy);
-
-            // Map back to external
-            existingExt.setSubject(dummy.getSubject());
-            existingExt.setDescription(dummy.getDescription());
-            existingExt.setAssignee(dummy.getAssignee());
-            existingExt.setAssignedGteam(dummy.getAssignedGteam());
-            existingExt.setPriority(dummy.getPriority());
-            existingExt.setStatus(dummy.getStatus());
-            existingExt.setDueDate(dummy.getDueDate());
-            existingExt.setUpdatedAt(OffsetDateTime.now());
-
-            externalIncidentRepository.save(existingExt);
-            notificationService.notifyIncidentUpdated(dummy, changes, updatedBy);
-            return dummy;
-        }
-
-        throw new NoSuchElementException("Incident not found with ID: " + id);
+        Incident existing = incidentRepository.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Incident not found with ID: " + id));
+        assertOwnedByCurrentTenant(existing.getTenantId(), id);
+        List<String> changes = updateIncidentFields(existing, details, updatedBy);
+        Incident saved = incidentRepository.save(existing);
+        notificationService.notifyIncidentUpdated(saved, changes, updatedBy);
+        return saved;
     }
 
-    /**
-     * Applies the diff and records it. The returned list is the human-readable form of the
-     * same field changes written to incident_history, so the notification email and the
-     * audit trail are produced from one comparison rather than two. Empty when nothing
-     * changed — a PUT that alters no field must not generate mail.
-     *
-     * One rule for every field: {@code null} means "not supplied", {@code ""} means "clear
-     * it". Without that, a partial PUT erased whatever it did not mention, so every caller
-     * had to send the entire incident back — and a caller sending the entire incident sends
-     * its own possibly-stale copy of it. That is how saving a server name silently reverted
-     * a status the remediation lane had just set to ESCALATED. Fixed here, in the one place
-     * every update routes through, rather than in each form that posts to it.
-     */
     private List<String> updateIncidentFields(Incident existing, Incident details, String updatedBy) {
         if (updatedBy == null || updatedBy.isBlank()) {
             updatedBy = "User";
         }
 
         List<String> changes = new ArrayList<>();
-        UUID id = existing.getId();
         if (supplied(existing.getSubject(), details.getSubject())) {
-            saveHistoryRecord(id, "subject", existing.getSubject(), details.getSubject(), updatedBy);
             changes.add(describe("Subject", existing.getSubject(), details.getSubject()));
             existing.setSubject(details.getSubject());
         }
         if (supplied(existing.getDescription(), details.getDescription())) {
-            saveHistoryRecord(id, "description", existing.getDescription(), details.getDescription(), updatedBy);
-            // The description can be pages long; the mail says it changed, not what it now says.
             changes.add("Description edited");
             existing.setDescription(details.getDescription());
         }
         if (supplied(existing.getAssignee(), details.getAssignee())) {
-            saveHistoryRecord(id, "assignee", existing.getAssignee(), details.getAssignee(), updatedBy);
             changes.add(describe("Assignee", existing.getAssignee(), details.getAssignee()));
             existing.setAssignee(details.getAssignee());
         }
         if (supplied(existing.getAssignedGteam(), details.getAssignedGteam())) {
-            saveHistoryRecord(id, "assigned_gteam", existing.getAssignedGteam(), details.getAssignedGteam(), updatedBy);
             changes.add(describe("Assigned group", existing.getAssignedGteam(), details.getAssignedGteam()));
             existing.setAssignedGteam(details.getAssignedGteam());
         }
         if (supplied(existing.getPriority(), details.getPriority())) {
-            saveHistoryRecord(id, "priority", existing.getPriority(), details.getPriority(), updatedBy);
             changes.add(describe("Priority", existing.getPriority(), details.getPriority()));
             existing.setPriority(details.getPriority());
             existing.setDueDate(calculateDueDate(existing.getCreatedAt(), details.getPriority()));
         }
         if (supplied(existing.getStatus(), details.getStatus())) {
-            saveHistoryRecord(id, "status", existing.getStatus(), details.getStatus(), updatedBy);
             changes.add(describe("Status", existing.getStatus(), details.getStatus()));
             existing.setStatus(details.getStatus());
         }
-        // Historied like any other field, and for a stronger reason: "who pointed this ticket
-        // at that server, and when" is the audit question after an unattended restart hits
-        // the wrong machine. The store number is a permission boundary — a change to it moves
-        // which past approvals this incident can inherit — so it is never a silent edit.
         if (supplied(existing.getStoreNumber(), details.getStoreNumber())) {
-            saveHistoryRecord(id, "store_number", existing.getStoreNumber(), details.getStoreNumber(), updatedBy);
             changes.add(describe("Store", existing.getStoreNumber(), details.getStoreNumber()));
             existing.setStoreNumber(details.getStoreNumber());
         }
         if (supplied(existing.getTargetHost(), details.getTargetHost())) {
-            saveHistoryRecord(id, "target_host", existing.getTargetHost(), details.getTargetHost(), updatedBy);
             changes.add(describe("Server", existing.getTargetHost(), details.getTargetHost()));
             existing.setTargetHost(details.getTargetHost());
         }
         if (supplied(existing.getConnectionMethod(), details.getConnectionMethod())) {
-            saveHistoryRecord(id, "connection_method", existing.getConnectionMethod(), details.getConnectionMethod(), updatedBy);
             changes.add(describe("Connection", existing.getConnectionMethod(), details.getConnectionMethod()));
             existing.setConnectionMethod(details.getConnectionMethod());
         }
-        // Historied for the same reason as the host: this field decides whether the approved
-        // script is PowerShell or bash, and it can overrule what the machine itself reported.
-        // "Who declared this a Windows box, and when" is an audit question the moment a
-        // PowerShell script is dispatched at a Linux server.
         if (supplied(existing.getTargetPlatform(), details.getTargetPlatform())) {
-            saveHistoryRecord(id, "target_platform", existing.getTargetPlatform(), details.getTargetPlatform(), updatedBy);
             changes.add(describe("Platform", existing.getTargetPlatform(), details.getTargetPlatform()));
             existing.setTargetPlatform(details.getTargetPlatform());
         }
@@ -460,7 +312,6 @@ public class IncidentService {
         return changes;
     }
 
-    /** Whether this PUT named the field at all, and named something different. */
     private static boolean supplied(String current, String incoming) {
         return incoming != null && !Objects.equals(current, incoming);
     }
@@ -471,33 +322,38 @@ public class IncidentService {
                 to == null || to.isBlank() ? "(unset)" : to);
     }
 
-    private void saveHistoryRecord(UUID incidentId, String fieldName, String oldValue, String newValue, String updatedBy) {
-        IncidentHistory history = new IncidentHistory(
-                UUID.randomUUID(), incidentId, fieldName, oldValue, newValue, updatedBy, OffsetDateTime.now()
-        );
-        incidentHistoryRepository.save(history);
-    }
+    private void saveExternalIncident(String extId, String subject, String description, String priority, String source, String extKey) {
+        Optional<Incident> existing = incidentRepository.findByExternalId(extKey);
+        if (existing.isEmpty()) {
+            UUID id = UUID.randomUUID();
+            Incident dummy = Incident.builder()
+                    .subject(subject)
+                    .description(description)
+                    .priority(priority)
+                    .build();
+            double score = calculateConfidenceScore(dummy);
+            String status = "New";
+            if (score >= AiConfigService.asPercent(aiConfigService.getHitlThreshold(), 80.0)) status = "PENDING_ANALYSIS";
 
-    private Incident convertToIncident(ExternalIncident ext) {
-        Incident inc = new Incident();
-        inc.setId(ext.getId());
-        inc.setSubject(ext.getSubject());
-        inc.setDescription(ext.getDescription());
-        inc.setAssignee(ext.getAssignee());
-        inc.setAssignedGteam(ext.getAssignedGteam());
-        inc.setPriority(ext.getPriority());
-        inc.setStatus(ext.getStatus());
-        inc.setCreatedAt(ext.getCreatedAt());
-        inc.setUpdatedAt(ext.getUpdatedAt());
-        inc.setDueDate(ext.getDueDate());
-        inc.setExternalSource(ext.getExternalSource());
-        inc.setExternalId(ext.getExternalId());
-        inc.setCategory(ext.getCategory());
-        inc.setConfidenceScore(ext.getConfidenceScore());
-        // Carried over so a ticket that arrived from a third-party ITSM still notifies the
-        // person who raised it there.
-        inc.setReporterEmail(ext.getReporterEmail());
-        return inc;
+            Incident incident = Incident.builder()
+                    .id(id)
+                    .tenantId(currentUser.tenantId())
+                    .subject(subject != null ? subject : "Untitled external ticket")
+                    .description(description != null ? description : "")
+                    .priority(priority)
+                    .status(status)
+                    .externalSource(source)
+                    .externalId(extKey)
+                    .assignee("Unassigned")
+                    .assignedGteam("IT Ops")
+                    .createdAt(OffsetDateTime.now())
+                    .dueDate(calculateDueDate(OffsetDateTime.now(), priority))
+                    .updatedAt(OffsetDateTime.now())
+                    .confidenceScore(score)
+                    .category("Universal")
+                    .build();
+            incidentRepository.save(incident);
+        }
     }
 
     public synchronized Map<String, Object> syncExternalIncidents() {
@@ -634,49 +490,6 @@ public class IncidentService {
                 "Jira", jiraCount,
                 "status", "success"
         );
-    }
-
-    private void saveExternalIncident(String extId, String subject, String description, String priority, String source, String extKey) {
-        // Find existing external incident in external repository
-        List<ExternalIncident> existing = externalIncidentRepository.findAll((Specification<ExternalIncident>) (root, query, cb) -> cb.and(
-                cb.equal(root.get("externalSource"), source),
-                cb.equal(root.get("externalId"), extKey)
-        ));
-
-        if (existing.isEmpty()) {
-            UUID id = UUID.randomUUID();
-            // Apply Confidence Scoring and Routing for External
-            Incident dummy = Incident.builder()
-                    .subject(subject)
-                    .description(description)
-                    .priority(priority)
-                    .build();
-            double score = calculateConfidenceScore(dummy);
-            String status = "New";
-            if (score >= AiConfigService.asPercent(aiConfigService.getHitlThreshold(), 80.0)) status = "PENDING_ANALYSIS";
-
-            ExternalIncident incident = ExternalIncident.builder()
-                    .id(id)
-                    .tenantId(currentUser.tenantId())
-                    .subject(subject != null ? subject : "Untitled external ticket")
-                    .description(description != null ? description : "")
-                    .priority(priority)
-                    .status(status)
-                    .externalSource(source)
-                    .externalId(extKey)
-                    .assignee("Unassigned")
-                    .assignedGteam("IT Ops")
-                    .createdAt(OffsetDateTime.now())
-                    .dueDate(calculateDueDate(OffsetDateTime.now(), priority))
-                    .updatedAt(OffsetDateTime.now())
-                    .confidenceScore(score)
-                    .category("Universal")
-                    .build();
-            externalIncidentRepository.save(incident);
-            
-            // Record history
-            saveHistoryRecord(id, "Incident Synced", null, "New", "System");
-        }
     }
 
     public Map<String, String> analyzeIncident(String subject, String description) {
@@ -974,7 +787,7 @@ public class IncidentService {
         return "";
     }
 
-    public List<IncidentHistory> getAllHistory() {
-        return incidentHistoryRepository.findAll(org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "updatedAt"));
+    public List<Map<String, Object>> getAllHistory() {
+        return List.of();
     }
 }

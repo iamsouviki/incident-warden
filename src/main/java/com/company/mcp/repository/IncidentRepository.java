@@ -18,6 +18,7 @@ public interface IncidentRepository extends JpaRepository<Incident, UUID>, JpaSp
     Optional<Incident> findFirstByExternalSourceAndExternalId(String externalSource, String externalId);
     Optional<Incident> findFirstByTenantIdAndExternalSourceAndExternalId(String tenantId, String externalSource, String externalId);
     Optional<Incident> findFirstByTenantIdAndExternalId(String tenantId, String externalId);
+    Optional<Incident> findByExternalId(String externalId);
 
     /** Tenant-scoped and bounded: assistant context must never span tenants or grow without limit. */
     List<Incident> findTop50ByTenantIdOrderByUpdatedAtDesc(String tenantId);

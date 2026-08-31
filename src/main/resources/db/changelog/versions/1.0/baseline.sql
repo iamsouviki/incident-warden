@@ -11,7 +11,6 @@ CREATE SCHEMA IF NOT EXISTS sop;
 CREATE SCHEMA IF NOT EXISTS hitl;
 CREATE SCHEMA IF NOT EXISTS incident;
 CREATE SCHEMA IF NOT EXISTS tools;
-CREATE SCHEMA IF NOT EXISTS teams;
 CREATE SCHEMA IF NOT EXISTS config;
 CREATE SCHEMA IF NOT EXISTS ai;
 
@@ -97,7 +96,7 @@ CREATE TABLE IF NOT EXISTS sop.sop_procedure (
     updated_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- 6. Incident: Internal & External Tickets
+-- 6. Incident: Incidents (ServiceNow, Freshservice & Dumps), Comments & Remediation
 CREATE TABLE IF NOT EXISTS incident.incidents (
     id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id          VARCHAR(100) NOT NULL DEFAULT 'tenant-1',
@@ -110,7 +109,7 @@ CREATE TABLE IF NOT EXISTS incident.incidents (
     created_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     due_date           TIMESTAMP WITH TIME ZONE,
-    external_source    VARCHAR(50)  DEFAULT 'Internal',
+    external_source    VARCHAR(50)  DEFAULT 'ServiceNow',
     external_id        VARCHAR(100) UNIQUE,
     category           VARCHAR(100) DEFAULT 'General',
     confidence_score   DOUBLE PRECISION DEFAULT 0.0,
@@ -121,42 +120,12 @@ CREATE TABLE IF NOT EXISTS incident.incidents (
     target_platform    VARCHAR(50)
 );
 
-CREATE TABLE IF NOT EXISTS incident.external_incidents (
-    id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id          VARCHAR(100) NOT NULL DEFAULT 'tenant-1',
-    subject            VARCHAR(255) NOT NULL,
-    description        TEXT,
-    assignee           VARCHAR(100),
-    assigned_gteam     VARCHAR(100),
-    priority           VARCHAR(20)  NOT NULL DEFAULT 'P3',
-    status             VARCHAR(50)  NOT NULL DEFAULT 'NEW',
-    created_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    due_date           TIMESTAMP WITH TIME ZONE,
-    external_source    VARCHAR(50)  NOT NULL,
-    external_id        VARCHAR(100) NOT NULL,
-    category           VARCHAR(100) DEFAULT 'General',
-    confidence_score   DOUBLE PRECISION DEFAULT 0.0,
-    reporter_email     VARCHAR(255),
-    CONSTRAINT uq_ext_tenant UNIQUE (external_id, external_source, tenant_id)
-);
-
 CREATE TABLE IF NOT EXISTS incident.incident_comments (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     incident_id   UUID NOT NULL,
     author        VARCHAR(100) NOT NULL,
     comment_text  TEXT NOT NULL,
     created_at    TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS incident.incident_history (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    incident_id UUID NOT NULL,
-    field_name  VARCHAR(50) NOT NULL,
-    old_value   TEXT,
-    new_value   TEXT,
-    updated_by  VARCHAR(100) NOT NULL,
-    updated_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS incident.statuses (
@@ -233,11 +202,10 @@ CREATE TABLE IF NOT EXISTS incident.telemetry_events (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- Backward compatibility views in public schema
+-- Backward compatibility view in public schema
 CREATE OR REPLACE VIEW public.incidents AS SELECT * FROM incident.incidents;
-CREATE OR REPLACE VIEW public.external_incidents AS SELECT * FROM incident.external_incidents;
 
--- 7. Tools: Saved Scripts, Execution Logs, MCP Server, Skills
+-- 7. Tools: Saved Scripts, Execution Logs, Skills
 CREATE TABLE IF NOT EXISTS tools.saved_scripts (
     id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name           VARCHAR(255) NOT NULL,
@@ -267,19 +235,6 @@ CREATE TABLE IF NOT EXISTS tools.execution_logs (
     stderr            TEXT
 );
 
-CREATE TABLE IF NOT EXISTS tools.mcp_server (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id   VARCHAR(64)  NOT NULL DEFAULT 'tenant-1',
-    name        VARCHAR(150) NOT NULL,
-    transport   VARCHAR(32)  NOT NULL DEFAULT 'http',
-    endpoint    VARCHAR(500) NOT NULL,
-    description VARCHAR(1000),
-    enabled     BOOLEAN      NOT NULL DEFAULT FALSE,
-    created_by  VARCHAR(150),
-    created_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
 CREATE TABLE IF NOT EXISTS tools.skills (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id   VARCHAR(64)  NOT NULL DEFAULT 'tenant-1',
@@ -296,27 +251,7 @@ CREATE TABLE IF NOT EXISTS tools.skills (
     updated_by  VARCHAR(120)
 );
 
--- 8. Teams: Teams & Team Employees
-CREATE TABLE IF NOT EXISTS teams.teams (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name        VARCHAR(100) NOT NULL UNIQUE,
-    description TEXT,
-    email       VARCHAR(255),
-    tenant_id   VARCHAR(100) NOT NULL DEFAULT 'tenant-1',
-    created_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS teams.team_employees (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    username    VARCHAR(100) NOT NULL UNIQUE,
-    full_name   VARCHAR(255),
-    email       VARCHAR(255),
-    role        VARCHAR(100),
-    department  VARCHAR(100),
-    team_id     UUID REFERENCES teams.teams(id) ON DELETE CASCADE
-);
-
--- 9. Config: System Config & AI Configuration
+-- 8. Config: System Config & AI Configuration
 CREATE TABLE IF NOT EXISTS config.system_config (
     config_key   VARCHAR(100) PRIMARY KEY,
     config_value TEXT NOT NULL,
@@ -333,7 +268,3 @@ CREATE TABLE IF NOT EXISTS ai.ai_config (
     active          BOOLEAN NOT NULL DEFAULT TRUE,
     updated_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
-
-INSERT INTO ai.ai_config (provider, chat_model, embedding_model, base_url, active)
-VALUES ('ollama', 'qwen2.5-coder:3b', 'nomic-embed-text:latest', 'http://localhost:11434', true)
-ON CONFLICT DO NOTHING;

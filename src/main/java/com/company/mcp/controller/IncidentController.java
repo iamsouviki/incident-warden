@@ -2,7 +2,6 @@ package com.company.mcp.controller;
 
 import com.company.mcp.model.Incident;
 import com.company.mcp.model.IncidentComment;
-import com.company.mcp.model.IncidentHistory;
 import com.company.mcp.service.IncidentService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -94,7 +93,7 @@ public class IncidentController {
     }
 
     @GetMapping("/{id}/history")
-    public ResponseEntity<List<IncidentHistory>> getHistory(@PathVariable UUID id) {
+    public ResponseEntity<List<Map<String, Object>>> getHistory(@PathVariable UUID id) {
         return ResponseEntity.ok(incidentService.getHistory(id));
     }
 
@@ -122,7 +121,7 @@ public class IncidentController {
     }
 
     @GetMapping("/history")
-    public ResponseEntity<List<IncidentHistory>> getAllHistory() {
-        return ResponseEntity.ok(incidentService.getAllHistory());
+    public ResponseEntity<List<Map<String, Object>>> getAllHistory() {
+        return ResponseEntity.ok(List.of());
     }
 }

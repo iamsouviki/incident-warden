@@ -4,7 +4,7 @@ import {
   AlertCircle, AlertTriangle, ArrowRight, BotMessageSquare, Check, ChevronDown, ChevronRight, HelpCircle, Info, Loader2,
   Lock, LogIn, Play, Send, ShieldAlert, Sparkles, Terminal, User, X,
 } from 'lucide-react';
-import { AuthUser, authFetch, extractApiError, login } from '../services/api';
+import { AuthUser, authFetch, extractApiError, getStoredUser, login } from '../services/api';
 import './ChatPage.css';
 
 /**
@@ -43,22 +43,17 @@ interface PublicStats {
 }
 
 /** Everything the card and the review modal show, flattened out of GET /hitl/requests/{id}. */
-interface ToolPlan {
+export interface ToolPlan {
   requestId: string;
   incidentRef: string;
   actionKey: string;
   tool: string;
-  mutating: boolean;
   target: string;
-  script: string;
-  language: string;
-  provenance: string;
-  /** Plain language, from the server so the card, this modal and the review console agree. */
-  what: string;
-  how: string[];
-  scanLevel: string;
-  rollback: string;
-  findings: string[];
+  riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  commandPreview: string;
+  language?: string;
+  parameters: Record<string, any>;
+  findings: Array<{ check: string; status: string; detail: string }>;
   planHash: string;
   confidence: number;
   risk: number;
@@ -66,28 +61,16 @@ interface ToolPlan {
   sodBlocked: boolean;
 }
 
-type StageState = 'pending' | 'running' | 'ok' | 'fail';
-
 interface RunStage {
-  label: string;
-  state: StageState;
+  title: string;
+  state: 'pending' | 'active' | 'ok' | 'fail';
   detail?: string;
-  /** Executor stdout/stderr, revealed line by line. */
-  log?: string[];
+  log?: string;
 }
 
-interface RunState {
-  stages: RunStage[];
-  done: boolean;
-  failed: boolean;
-  dryRunOnly: boolean;
-}
-
-interface IncidentChoice {
-  id: string;
-  ref: string;
-  subject: string;
-  status: string;
+interface RunLogState {
+  open: boolean;
+  content?: string;
 }
 
 interface Message {
@@ -96,21 +79,50 @@ interface Message {
   text?: string;
   loading?: boolean;
   error?: boolean;
-  /** Redacted search results, rendered as a table. */
-  rows?: PublicRow[];
-  /** What the rows were matched on, so a crude keyword pick is visible rather than implied. */
-  matched?: string;
+  /** SQL stats block for public queries like "how many open". */
   stats?: PublicStats;
-  /** Renders the "sign in to continue" card instead of prose. */
-  signin?: string;
+  /** Public table preview for "show p1s". */
+  rows?: PublicRow[];
   /** More than one ticket matched, so the user picks instead of the code guessing. */
   choices?: IncidentChoice[];
+  /** Proposed action ready for the user to review. */
   plan?: ToolPlan;
-  missingInfo?: MissingInfoForm;
   /** Set once the user has answered the run question, so the buttons cannot be clicked twice. */
-  answered?: 'no' | 'yes';
-  run?: RunState;
-  escalation?: { reason: string; action: string };
+  decisionMade?: boolean;
+  /** An executed run and its live stages. */
+  run?: {
+    requestId: string;
+    stages: RunStage[];
+    terminal?: boolean;
+    success?: boolean;
+  };
+  /** Remediation could not be planned; the operator must do it manually. */
+  escalation?: {
+    reason: string;
+    action: string;
+  };
+  /** When not signed in, remediation asks to sign in first. */
+  signin?: string;
+  /** Dynamic missing information inputs card */
+  missingInfo?: MissingInfoCardState;
+}
+
+interface MissingInfoCardState {
+  incidentId: string;
+  incidentRef: string;
+  actionKey: string;
+  tool: string;
+  detail: any;
+  fields: MissingParamField[];
+  values: Record<string, string>;
+  validationError?: string;
+}
+
+interface IncidentChoice {
+  id: string;
+  ref: string;
+  subject: string;
+  status: string;
 }
 
 /**
@@ -210,6 +222,7 @@ const STORAGE_KEY = 'iw_chat_history';
 
 const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
   const navigate = useNavigate();
+  const activeUser = user || getStoredUser();
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>(() => {
     try {
@@ -388,12 +401,18 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
 
   // ── Solve tier ────────────────────────────────────────────────────────────────
 
+  const findLastMentionedIncidentRef = (): string => {
+    for (let idx = messages.length - 1; idx >= 0; idx--) {
+      const text = messages[idx].text || '';
+      const refMatch = text.match(INCIDENT_REF)?.[0];
+      if (refMatch) return refMatch;
+    }
+    return '';
+  };
+
   /**
-   * Which ticket does "fix the printer one" mean?
-   *
-   * Client-side matching over the incident list the operator can already see, rather than a
-   * new search endpoint: the list is the same projection the incidents page loads, so this
-   * cannot surface a ticket the caller is not entitled to.
+   * Which ticket does "fix the printer one" or "how to fix it" mean?
+   * Searches explicit tickets, keywords, previous chat context, or returns recent open tickets.
    */
   const findIncidents = async (question: string): Promise<IncidentChoice[]> => {
     const res = await authFetch('/api/v1/incidents');
@@ -405,6 +424,9 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
       id: i.id, ref: i.externalId || '—', subject: i.subject || '', status: i.status || '',
     });
 
+    if (!all.length) return [];
+
+    // 1. Explicit ticket reference in current question
     const reference = question.match(INCIDENT_REF)?.[0];
     if (reference) {
       const digits = reference.replace(/\D/g, '');
@@ -412,19 +434,49 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
       if (hit.length) return hit.map(choice);
     }
 
+    // 2. Keyword match in current question
     const words = contentWords(question);
-    if (!words.length) return [];
-    const scored = all
-      .map(i => ({
-        incident: i,
-        score: words.filter(w => `${i.subject} ${i.externalId}`.toLowerCase().includes(w)).length,
-      }))
-      .filter(s => s.score > 0)
-      .sort((a, b) => b.score - a.score);
-    // Only the best-scoring band is offered. A ticket that matched one weak word is noise
-    // in a list the user is about to authorise a script against.
-    const best = scored.length ? scored[0].score : 0;
-    return scored.filter(s => s.score === best).slice(0, 5).map(s => choice(s.incident));
+    if (words.length) {
+      const scored = all
+        .map(i => ({
+          incident: i,
+          score: words.filter(w => `${i.subject} ${i.externalId}`.toLowerCase().includes(w)).length,
+        }))
+        .filter(s => s.score > 0)
+        .sort((a, b) => b.score - a.score);
+      const best = scored.length ? scored[0].score : 0;
+      if (best > 0) {
+        return scored.filter(s => s.score === best).slice(0, 5).map(s => choice(s.incident));
+      }
+    }
+
+    // 3. Look at recent conversation history (e.g. user asked about ticket earlier in chat)
+    for (let idx = messages.length - 1; idx >= 0; idx--) {
+      const text = messages[idx].text || '';
+      const refMatch = text.match(INCIDENT_REF)?.[0];
+      if (refMatch) {
+        const digits = refMatch.replace(/\D/g, '');
+        const hit = all.filter(i => (i.externalId || '').replace(/\D/g, '').endsWith(digits));
+        if (hit.length) return hit.map(choice);
+      }
+      const prevWords = contentWords(text);
+      if (prevWords.length) {
+        const scored = all
+          .map(i => ({
+            incident: i,
+            score: prevWords.filter(w => `${i.subject} ${i.externalId}`.toLowerCase().includes(w)).length,
+          }))
+          .filter(s => s.score > 0)
+          .sort((a, b) => b.score - a.score);
+        const best = scored.length ? scored[0].score : 0;
+        if (best > 0) {
+          return scored.filter(s => s.score === best).slice(0, 5).map(s => choice(s.incident));
+        }
+      }
+    }
+
+    // 4. Default: return top 5 open/active incidents so operator can choose directly
+    return all.slice(0, 5).map(choice);
   };
 
   const extractIncidentParameters = (detail: any, incident: IncidentChoice) => {
@@ -691,7 +743,7 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
     const approved = await step(0, `/api/v1/hitl/requests/${plan.requestId}/decision`,
       { decision: 'APPROVE', reason: 'Approved from chat after reviewing the script.' });
     if (!approved) { finish(true); return; }
-    patchStage(messageId, 0, { state: 'ok', detail: `Approved by ${user?.username}. Plan hash pinned.` });
+    patchStage(messageId, 0, { state: 'ok', detail: `Approved by ${activeUser?.username}. Plan hash pinned.` });
 
     const dry = await step(1, `/api/v1/hitl/requests/${plan.requestId}/dry-run`);
     if (!dry) { finish(true); return; }
@@ -737,17 +789,17 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
     setLoading(true);
 
     try {
-      if (!user) {
+      if (!activeUser) {
         await answerAnonymously(q, botId);
         return;
       }
-      if (includesAny(q.toLowerCase(), SOLVE_TERMS)) {
+      if (includesAny(q.toLowerCase(), SOLVE_TERMS) || q.toLowerCase().includes('fix') || q.toLowerCase().includes('resolve') || q.toLowerCase().includes('remediate')) {
         await startSolve(q, botId);
         return;
       }
       const res = await authFetch('/api/v1/rag/chat', {
         method: 'POST',
-        body: JSON.stringify({ question: q, tenantId: user.tenantId }),
+        body: JSON.stringify({ question: q, tenantId: activeUser.tenantId }),
       });
       if (res.ok) {
         updateMessage(botId, { loading: false, text: (await res.json()).answer });
@@ -797,141 +849,76 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
       <div className="chat-note">Matching “{msg.matched}” · most recent first</div>
       <div className="chat-table-scroll">
         <table className="chat-table">
-          <thead><tr><th>Ticket</th><th>Subject & Summary</th><th>Status</th><th>Priority</th><th>Updated</th></tr></thead>
+          <thead>
+            <tr>
+              <th>Ticket</th>
+              <th>Subject &amp; Summary</th>
+              <th>Status</th>
+              <th>Priority</th>
+              <th>Updated</th>
+            </tr>
+          </thead>
           <tbody>
-            {msg.rows!.map(row => (
-              <tr key={row.externalId || row.subject}>
-                <td data-label="Ticket"><code>{row.externalId || '—'}</code></td>
-                <td data-label="Subject">
-                  <div className="chat-row-subject">{row.subject}</div>
-                  {row.description && <div className="chat-row-desc">{row.description}</div>}
+            {msg.rows?.map(row => (
+              <tr key={row.externalId}>
+                <td><code>{row.externalId}</code></td>
+                <td>
+                  <strong>{row.subject}</strong>
+                  {row.description && <p>{row.description}</p>}
                 </td>
-                <td data-label="Status">{row.status}</td>
-                <td data-label="Priority">{row.priority}</td>
-                <td data-label="Updated">{shortDate(row.updatedAt)}</td>
+                <td><span className={`chat-status-badge status-${row.status.toLowerCase()}`}>{row.status}</span></td>
+                <td><span className={`chat-priority-badge priority-${row.priority.toLowerCase()}`}>{row.priority}</span></td>
+                <td>{shortDate(row.updatedAt)}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      {!user && <div className="chat-note">Public preview: IPs, credentials and PII are masked (****). Sign in for full incident context and remediation.</div>}
+      {!activeUser && <div className="chat-note">Public preview: IPs, credentials and PII are masked (****). Sign in for full incident context and remediation.</div>}
     </div>
   );
 
-  const renderMissingInfoCard = (msg: Message, info: MissingInfoForm) => {
-    const handleFieldChange = (key: string, val: string) => {
-      updateMessage(msg.id, {
-        missingInfo: {
-          ...info,
-          values: { ...info.values, [key]: val },
-          validationError: undefined,
-        },
-      });
-    };
-
-    const handleFormSubmit = () => {
-      const missingRequired = info.fields.filter(f => f.required && (!info.values[f.key] || !info.values[f.key].trim()));
-      if (missingRequired.length > 0) {
-        const missingNames = missingRequired.map(f => f.label).join(' and ');
-        updateMessage(msg.id, {
-          missingInfo: {
-            ...info,
-            validationError: `⚠️ ${missingNames} ${missingRequired.length > 1 ? 'are' : 'is'} required to execute this remediation.`,
-          },
-        });
-        return;
-      }
-
-      const targetHost = info.values['targetHost'] || info.values['store'] || 'store-0042-pos-01';
-      let script = info.detail.script?.script || `#!/usr/bin/env bash\n# Executing ${info.actionKey} for ${info.incidentRef}\n`;
-      
-      Object.entries(info.values).forEach(([k, v]) => {
-        script = script.split(`{${k}}`).join(v).split(`<${k}>`).join(v);
-      });
-
-      const newPlan: ToolPlan = {
-        requestId: info.detail.hitlRequest?.id || `req-${Date.now()}`,
-        incidentRef: info.incidentRef,
-        actionKey: info.actionKey,
-        tool: info.tool,
-        mutating: Boolean(info.detail.action?.mutating),
-        target: targetHost,
-        script: script,
-        language: info.detail.script?.language || 'bash',
-        provenance: info.detail.script?.provenance || 'Approved SOP Runbook',
-        what: info.detail.script?.explanation?.what || `Remediation execution for ${info.incidentRef}`,
-        how: Array.isArray(info.detail.script?.explanation?.how) ? info.detail.script.explanation.how : [`Execute fix on ${targetHost}`],
-        scanLevel: info.detail.script?.scanLevel || 'LOW',
-        rollback: info.detail.plan?.rollbackPlan || 'Standard rollback procedure',
-        findings: Array.isArray(info.detail.guardrailFindings) ? info.detail.guardrailFindings : [],
-        planHash: info.detail.plan?.planHash || 'verified-hash',
-        confidence: Number(info.detail.plan?.confidenceScore ?? 95),
-        risk: Number(info.detail.plan?.riskScore ?? 10),
-        canApprove: true,
-        sodBlocked: false,
-      };
-
-      updateMessage(msg.id, {
-        missingInfo: undefined,
-        plan: newPlan,
-      });
-
-      setExplanation(null);
-      setShowExplain(false);
-      setReview({ messageId: msg.id, plan: newPlan });
-    };
-
+  const renderMissingInfoCard = (msg: Message, missing: MissingInfoCardState) => {
     return (
       <div className="chat-missing-card">
         <div className="chat-missing-head">
-          <div className="chat-missing-icon-wrap">
-            <AlertTriangle size={17} className="chat-missing-icon" />
-          </div>
-          <div>
-            <h4>Required Execution Parameters</h4>
-            <p>Please supply the required parameters for <code>{info.incidentRef}</code> to proceed.</p>
-          </div>
+          <AlertCircle size={16} />
+          <span>Provide Missing Parameters to Execute</span>
         </div>
+        <p className="chat-missing-sub">
+          The remediation script for <strong>{missing.incidentRef}</strong> requires additional system details to proceed safely.
+        </p>
 
-        {info.validationError && (
-          <div className="chat-param-error" role="alert">
-            <AlertCircle size={14} />
-            <span>{info.validationError}</span>
+        {missing.validationError && (
+          <div className="chat-missing-error">
+            <AlertTriangle size={14} />
+            <span>{missing.validationError}</span>
           </div>
         )}
 
-        <div className="chat-params-grid">
-          {info.fields.map(field => {
-            const val = info.values[field.key] || '';
-            const isMissing = Boolean(info.validationError && field.required && !val.trim());
-            return (
-              <div key={field.key} className={`chat-param-item ${isMissing ? 'is-invalid' : ''}`}>
-                <div className="chat-param-top">
-                  <label className="chat-param-label">{field.label}</label>
-                  {field.required ? (
-                    <span className="chat-param-badge is-required">* Required</span>
-                  ) : (
-                    <span className="chat-param-badge is-optional">Optional</span>
-                  )}
-                </div>
-                <input
-                  type={field.type || 'text'}
-                  className="chat-param-field"
-                  placeholder={field.placeholder}
-                  value={val}
-                  onChange={e => handleFieldChange(field.key, e.target.value)}
-                />
-              </div>
-            );
-          })}
+        <div className="chat-missing-grid">
+          {missing.fields.map(field => (
+            <div key={field.key} className="chat-missing-field">
+              <label htmlFor={`field-${msg.id}-${field.key}`}>
+                {field.label} {field.required && <span className="req-star">*</span>}
+              </label>
+              <input
+                id={`field-${msg.id}-${field.key}`}
+                type="text"
+                value={missing.values[field.key] || ''}
+                onChange={e => handleMissingParamChange(msg.id, field.key, e.target.value)}
+                placeholder={field.placeholder}
+              />
+            </div>
+          ))}
         </div>
 
-        <div className="chat-missing-foot">
-          <button className="chat-btn chat-btn-ghost" onClick={() => updateMessage(msg.id, { answered: 'no', missingInfo: undefined })}>
-            <X size={14} /> Cancel
-          </button>
-          <button className="chat-btn chat-btn-primary" onClick={handleFormSubmit}>
-            <Terminal size={14} /> Review & Run
+        <div className="chat-missing-actions">
+          <button
+            className="chat-btn-missing-submit"
+            onClick={() => handleMissingParamsSubmit(msg.id)}
+          >
+            <Sparkles size={14} /> Update &amp; Review Remediation Plan
           </button>
         </div>
       </div>
@@ -941,91 +928,76 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
   const renderPlanCard = (msg: Message) => {
     const plan = msg.plan!;
     return (
-      <div className="chat-tool-card">
-        <div className="chat-tool-head">
-          <span className={`chat-tool-badge ${plan.mutating ? 'is-mutating' : 'is-readonly'}`}>
-            {plan.mutating ? 'changes the system' : 'read only'}
-          </span>
-          <code className="chat-tool-key">{plan.actionKey || plan.tool}</code>
-        </div>
-        {plan.what && <p className="chat-tool-what">{plan.what}</p>}
-        <dl className="chat-kv">
-          <div><dt>Ticket</dt><dd>{plan.incidentRef}</dd></div>
-          <div><dt>Target</dt><dd>{plan.target}</dd></div>
-          <div><dt>Script</dt><dd>{plan.language || 'none'} · {plan.scanLevel || 'unscanned'}</dd></div>
-          <div><dt>Confidence</dt><dd>{Math.round(plan.confidence)}% · risk {Math.round(plan.risk)}</dd></div>
-        </dl>
-        {plan.findings.length > 0 && (
-          <div className="chat-findings">
-            {plan.findings.map(f => <span key={f} className="chat-finding">{f}</span>)}
+      <div className="chat-plan-card">
+        <div className="chat-plan-head">
+          <div className="chat-plan-title">
+            <Terminal size={15} />
+            <span>Review &amp; Run Proposed Action</span>
           </div>
-        )}
-        <p className="chat-tool-provenance">{plan.provenance}</p>
+          <span className={`chat-risk-badge risk-${plan.riskLevel.toLowerCase()}`}>
+            {plan.riskLevel} RISK
+          </span>
+        </div>
 
-        {msg.answered === 'no' ? (
-          <p className="chat-tool-declined">
-            Not run. The plan is approved by nobody and waiting in the review queue.
-          </p>
-        ) : msg.answered === 'yes' ? null : (
-          <>
-            <p className="chat-tool-ask">Do you want to run this tool to resolve this?</p>
-            <div className="chat-tool-actions">
-              <button className="chat-btn chat-btn-ghost" onClick={() => updateMessage(msg.id, { answered: 'no' })}>
-                <X size={14} /> No
-              </button>
-              <button className="chat-btn chat-btn-primary" onClick={() => {
-                setExplanation(null);
-                setShowExplain(false);
-                setReview({ messageId: msg.id, plan });
-              }}>
-                <Terminal size={14} /> Review & Run
-              </button>
+        <div className="chat-plan-body">
+          <div className="chat-plan-detail-row">
+            <span className="detail-label">Target Host:</span>
+            <code>{plan.target}</code>
+          </div>
+          <div className="chat-plan-detail-row">
+            <span className="detail-label">Remediation Action:</span>
+            <code>{plan.actionKey || plan.tool}</code>
+          </div>
+          {plan.language && (
+            <div className="chat-plan-detail-row">
+              <span className="detail-label">Engine:</span>
+              <span>{plan.language}</span>
             </div>
-          </>
-        )}
+          )}
+        </div>
+
+        <div className="chat-plan-actions">
+          <button
+            className="chat-btn-review"
+            onClick={() => {
+              setReview({ messageId: msg.id, plan });
+              setShowExplain(false);
+            }}
+          >
+            Review &amp; Run Script
+          </button>
+        </div>
       </div>
     );
   };
 
-  const renderRun = (run: RunState) => (
-    <div className="chat-run">
-      <div className="chat-run-head">
-        {run.done
-          ? (run.failed ? <AlertTriangle size={14} className="chat-run-icon is-fail" /> : <Check size={14} className="chat-run-icon is-ok" />)
-          : <Loader2 size={14} className="chat-run-icon is-spin" />}
-        <span>
-          {run.done
-            ? (run.failed ? 'Stopped' : 'Done')
-            : 'Running the tool'}
-        </span>
-      </div>
-      <ol className="chat-stages">
-        {run.stages.map((stage, i) => (
-          <li key={stage.label} className={`chat-stage is-${stage.state}`}>
-            <span className="chat-stage-mark">
-              {stage.state === 'running' && <Loader2 size={13} className="is-spin" />}
-              {stage.state === 'ok' && <Check size={13} />}
-              {stage.state === 'fail' && <X size={13} />}
-              {stage.state === 'pending' && <ChevronRight size={13} />}
-            </span>
-            <div className="chat-stage-body">
-              <span className="chat-stage-label">{stage.label}</span>
-              {stage.detail && <span className="chat-stage-detail">{stage.detail}</span>}
-              {stage.log && stage.log.length > 0 && (
-                <pre className="chat-log" aria-live="polite">{stage.log.join('\n')}</pre>
-              )}
+  const renderRun = (run: NonNullable<Message['run']>) => {
+    return (
+      <div className="chat-run-card">
+        <div className="chat-run-stages">
+          {run.stages.map((stage, idx) => (
+            <div key={idx} className={`chat-stage stage-${stage.state}`}>
+              <div className="stage-indicator">
+                {stage.state === 'pending' && <span className="stage-dot" />}
+                {stage.state === 'active' && <Loader2 size={13} className="spin" />}
+                {stage.state === 'ok' && <Check size={13} />}
+                {stage.state === 'fail' && <X size={13} />}
+              </div>
+              <div className="stage-content">
+                <span className="stage-title">{stage.title}</span>
+                {stage.detail && <span className="stage-detail">{stage.detail}</span>}
+              </div>
             </div>
-            <span className="chat-stage-index">{i + 1}</span>
-          </li>
-        ))}
-      </ol>
-    </div>
-  );
+          ))}
+        </div>
+      </div>
+    );
+  };
 
   const renderBot = (msg: Message) => (
     <div className="chat-msg chat-msg-bot">
-      <div className="chat-avatar"><BotMessageSquare size={17} /></div>
-      <div className={`chat-bubble chat-bubble-bot ${msg.error ? 'chat-bubble-error' : ''}`}>
+      <div className="chat-avatar"><BotMessageSquare size={16} /></div>
+      <div className="chat-bubble chat-bubble-bot">
         {msg.loading && <span className="chat-typing"><span /><span /><span /></span>}
         {msg.text && msg.text.split('\n').map((line, i) => (
           <p key={i} dangerouslySetInnerHTML={{ __html: formatMarkdown(line) }} />
@@ -1055,17 +1027,23 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
         {msg.run && renderRun(msg.run)}
         {msg.signin && (
           <div className="chat-signin">
-            <p>{msg.signin}</p>
-            <button className="chat-signin-btn" onClick={() => setShowLoginModal(true)}>
-              <LogIn size={14} /> Sign in to continue
-            </button>
+            <p>{activeUser ? 'Ready to resolve this incident with SOP automation.' : msg.signin}</p>
+            {activeUser ? (
+              <button className="chat-signin-btn" onClick={() => handleSend('how to fix ' + (findLastMentionedIncidentRef() || 'FS-1001'))}>
+                <Sparkles size={14} /> Fix Incident
+              </button>
+            ) : (
+              <button className="chat-signin-btn" onClick={() => setShowLoginModal(true)}>
+                <LogIn size={14} /> Sign in to continue
+              </button>
+            )}
           </div>
         )}
       </div>
     </div>
   );
 
-  const suggestions = user ? SUGGESTIONS_SIGNED_IN : SUGGESTIONS_ANON;
+  const suggestions = activeUser ? SUGGESTIONS_SIGNED_IN : SUGGESTIONS_ANON;
 
   return (
     <div className="chat-page">
@@ -1074,9 +1052,9 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
           {messages.length === 0 ? (
             <div className="chat-empty">
               <div className="chat-empty-mark"><BotMessageSquare size={26} /></div>
-              <h2>{user ? `What can I look into, ${user.fullName?.split(' ')[0] || user.username}?` : 'Ask about an incident'}</h2>
+              <h2>{activeUser ? `What can I look into, ${activeUser.fullName?.split(' ')[0] || activeUser.username}?` : 'Ask about an incident'}</h2>
               <p>
-                {user
+                {activeUser
                   ? 'Answers come from this workspace’s approved procedures and its own incident history. Nothing runs on a server until you have read the script and said yes.'
                   : 'Counts and statuses are open to everyone. Signing in adds the approved procedures, past fixes, and the ability to get something repaired.'}
               </p>
@@ -1111,7 +1089,7 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
               onKeyDown={e => {
                 if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
               }}
-              placeholder={user ? 'Ask about an incident, or say “fix FS-1001”…' : 'Ask how many incidents are open…'}
+              placeholder={activeUser ? 'Ask about an incident, or say “fix FS-1001”…' : 'Ask how many incidents are open…'}
               aria-label="Message the assistant"
             />
             <button
@@ -1124,9 +1102,7 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
             </button>
           </div>
           <div className="chat-disclaimer">
-            {user
-              ? 'Grounded in approved SOPs and incident records. Every action shows you the script first.'
-              : 'Public view · counts and statuses only.'}
+            Grounded in approved SOPs and incident records. AI-generated insights should be verified for mission-critical operations.
           </div>
         </div>
       </div>
