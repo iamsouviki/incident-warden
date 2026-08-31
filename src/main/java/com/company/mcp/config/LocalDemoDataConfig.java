@@ -1,6 +1,5 @@
 package com.company.mcp.config;
 
-import com.company.mcp.controller.AuthController;
 import com.company.mcp.model.AppUser;
 import com.company.mcp.model.SopProcedure;
 import com.company.mcp.repository.SopProcedureRepository;
@@ -31,14 +30,15 @@ public class LocalDemoDataConfig {
     private static final String DEMO_TENANT = "tenant-1";
 
     @Bean
-    CommandLineRunner seedLocalDemoUser(UserRepository users, PasswordEncoder encoder) {
+    CommandLineRunner seedLocalDemoUser(UserRepository users, PasswordEncoder encoder,
+                                       BootstrapPassword bootstrapPassword) {
         return args -> {
             if (users.findByUsername("admin").isPresent()) return;
 
             AppUser admin = new AppUser();
             admin.setUsername("admin");
             admin.setEmail("admin@localhost");
-            admin.setPasswordHash(encoder.encode(AuthController.DEFAULT_PASSWORD));
+            admin.setPasswordHash(encoder.encode(bootstrapPassword.value()));
             admin.setRole("ADMIN");
             admin.setTenantId(DEMO_TENANT);
             admin.setTenantName("Local Demo Workspace");
@@ -52,10 +52,9 @@ public class LocalDemoDataConfig {
     /**
      * Seeds the approved procedures the HITL gate treats as authority to act.
      *
-     * These are written out rather than parsed from {@code skills/*.md}: those files
-     * document action-key formats with illustrative examples, not one tenant's approved
-     * procedures. Deriving authorisation records from prose would fabricate authority
-     * that no operator granted — which is the exact failure the SOP-evidence mock had.
+     * These are written out rather than derived from any document: a procedure row is an
+     * authorisation record, and deriving authority from prose would fabricate authority that
+     * no operator granted — which is the exact failure the SOP-evidence mock had.
      *
      * Deliberately incomplete: there is no procedure for a network outage or a database
      * failure, so those incidents produce NO_APPROVED_TENANT_SOP_MATCH and escalate. A

@@ -54,9 +54,6 @@ public class IncidentService {
     @Autowired
     private NotificationService notificationService;
 
-    @Autowired
-    private AutoRemediationService autoRemediationService;
-
     // ServiceNow Settings
     @Value("${mcp.servicenow.enabled:false}")
     private boolean servicenowEnabled;
@@ -101,19 +98,16 @@ public class IncidentService {
         return incidentRepository.findFirstByExternalSourceAndExternalId("Telemetry", correlationKey);
     }
 
-    public Incident createIncident(Incident incident) {
-        return createIncident(incident, true);
-    }
-
     /**
-     * @param considerUnattended whether this ticket is allowed to be auto-remediated from a
-     *        precedent. True for every single ticket — the UI form, a third-party push, a
-     *        telemetry event — and false for bulk import only. AutoRemediationService is
-     *        written on the assumption that a person just logged one incident; a 500-row
-     *        upload arriving through the same method would otherwise be 500 chances to
-     *        restart something, all triggered by one click on Import.
+     * Every incident lands here and every incident waits for a person.
+     *
+     * There used to be a second ending: a precedent-autorun path that fired inline, restarted
+     * a service and emailed about it, gated on one config row. It is deleted rather than
+     * switched off — a path that can run without an approver has to be re-audited every time
+     * that row moves, and there is no version of "we already approved something similar" that
+     * is the same statement as "a person read this script for this host".
      */
-    public Incident createIncident(Incident incident, boolean considerUnattended) {
+    public Incident createIncident(Incident incident) {
         incident.setTenantId(currentUser.tenantId());
         if (incident.getCreatedAt() == null) {
             incident.setCreatedAt(OffsetDateTime.now());
@@ -148,25 +142,6 @@ public class IncidentService {
         // Record initial history
         saveHistoryRecord(saved.getId(), "Incident Created", null, incident.getStatus(), "System");
 
-        // "Have we already been given permission to do this?" Only for a single ticket —
-        // never for a bulk import, where one file could otherwise become hundreds of
-        // unattended restarts. Refusal is the default and the common case; see
-        // AutoRemediationService for the gates.
-        if (considerUnattended) {
-            try {
-                AutoRemediationService.Result auto = autoRemediationService.considerNewIncident(saved);
-                if (auto.ran()) {
-                    log.info("[AUTORUN] {} handled without approval via {} (precedent {})",
-                            saved.getExternalId(), auto.actionKey(), auto.precedentReference());
-                } else if (auto.informative()) {
-                    log.info("[AUTORUN] {} left for human approval: {}", saved.getExternalId(), auto.reason());
-                }
-            } catch (Exception e) {
-                // The ticket is already saved and the HITL queue still works. An auto-run that
-                // throws must not turn a successful ticket creation into a 500 for the user.
-                log.error("[AUTORUN] Skipped for {}: {}", saved.getExternalId(), e.getMessage(), e);
-            }
-        }
         return saved;
     }
 
@@ -183,27 +158,14 @@ public class IncidentService {
         return Math.min(100.0, Math.max(0.0, score));
     }
 
-    private double threshold(String value, double fallback) {
-        try {
-            double parsed = Double.parseDouble(value);
-            // The UI stores thresholds as 0.80 / 1.00 while scores are 0-100.
-            if (parsed > 0 && parsed <= 1.0) parsed *= 100.0;
-            return Math.min(100.0, Math.max(0.0, parsed));
-        } catch (Exception ignored) {
-            return fallback;
-        }
-    }
-
     private void routeIncident(Incident incident, double score) {
-        double autoThreshold = threshold(aiConfigService.getAutoResolveThreshold(), 100.0);
-        double hitlThreshold = threshold(aiConfigService.getHitlThreshold(), 80.0);
-
-        // A score is evidence, not permission. Plans are always sent through guardrails and HITL by default.
-        if (score >= hitlThreshold || score >= autoThreshold) {
-            incident.setStatus("PENDING_ANALYSIS");
-        } else {
-            incident.setStatus("New");
-        }
+        // A score is evidence, not permission. It decides whether this ticket is worth an
+        // analyst opening first — never whether anything runs. There is no auto-resolve
+        // branch here because there is no auto-resolve anywhere: the second threshold this
+        // method used to read moved a label and nothing else, which made the slider that fed
+        // it a promise the platform did not keep.
+        incident.setStatus(score >= AiConfigService.asPercent(aiConfigService.getHitlThreshold(), 80.0)
+                ? "PENDING_ANALYSIS" : "New");
     }
 
     public Map<String, Object> decideIncident(UUID id, String decision, String reason, String actor) {
@@ -691,7 +653,7 @@ public class IncidentService {
                     .build();
             double score = calculateConfidenceScore(dummy);
             String status = "New";
-            if (score >= threshold(aiConfigService.getHitlThreshold(), 80.0)) status = "PENDING_ANALYSIS";
+            if (score >= AiConfigService.asPercent(aiConfigService.getHitlThreshold(), 80.0)) status = "PENDING_ANALYSIS";
 
             ExternalIncident incident = ExternalIncident.builder()
                     .id(id)

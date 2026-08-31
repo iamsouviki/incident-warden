@@ -1,6 +1,6 @@
 spring:
   application:
-    name: mcp-incident-automation
+    name: incident-warden
 
   # ── Multipart file upload limits (SOP document import: PDF, DOCX, TXT) ──────
   servlet:
@@ -153,32 +153,29 @@ mcp:
     allow-ungrounded-scripts: ${MCP_HITL_ALLOW_UNGROUNDED_SCRIPTS:true}
   
   confidence:
-    # Read by AgentAssessmentService and AiConfigService. Confidence never grants
-    # autonomy — it only decides how a plan is presented. Every run is approved
-    # individually regardless of score.
-    auto-resolve-threshold: 1.00
+    # Read by AgentAssessmentService and AiConfigService. The score decides only how a plan
+    # is presented — whether it may be offered for approval at all. Every run is approved
+    # individually regardless of score, so there is no threshold above which one is not.
     hitl-threshold: 0.80
     # Assumed success rate for a remediation with no execution history yet.
     default-prior-success-rate: 0.85
 
-  autonomy:
-    enabled: ${MCP_AUTONOMY_ENABLED:false}
-    poll-interval-ms: ${MCP_AUTONOMY_POLL_INTERVAL_MS:60000}
-    # The only switch that decides whether a script really leaves this process. There used
-    # to be a second one, execution-mode, that the Autonomy page displayed and nothing
-    # honoured — it read SIMULATED while this flag dispatched for real. Removed; the page
-    # now derives LIVE/SIMULATED from this flag and executor-url.
-    execution-enabled: ${MCP_AUTONOMY_EXECUTION_ENABLED:false}
-    batch-size: ${MCP_AUTONOMY_BATCH_SIZE:10}
-    allow-p1: ${MCP_AUTONOMY_ALLOW_P1:false}
-    max-retries: ${MCP_AUTONOMY_MAX_RETRIES:2}
-    # The remediation executor agent. Approved scripts are POSTed to <url>/execute as
-    # {"script","language","target"} rather than run in this process, so the control plane
-    # holding the approvals is never itself a shell.
+  # The remediation executor agent. Approved scripts are POSTed to <url>/execute as
+  # {"script","language","target"} rather than run in this process, so the control plane
+  # holding the approvals is never itself a shell.
+  #
+  # Named mcp.executor, not mcp.autonomy. The old namespace also carried enabled,
+  # poll-interval-ms, batch-size, allow-p1 and max-retries for a polling loop that could
+  # remediate on its own. That loop is deleted, and a config key named "autonomy" on a
+  # platform where every action is approved by a person is a question an auditor has to
+  # ask twice.
+  executor:
+    # The only switch that decides whether a script really leaves this process.
+    enabled: ${MCP_EXECUTOR_ENABLED:false}
     # Empty means approved scripts simulate and change nothing.
-    executor-url: ${MCP_AUTONOMY_EXECUTOR_URL:}
-    executor-token: ${MCP_AUTONOMY_EXECUTOR_TOKEN:}
-    executor-timeout-seconds: ${MCP_AUTONOMY_EXECUTOR_TIMEOUT_SECONDS:30}
+    url: ${MCP_EXECUTOR_URL:}
+    token: ${MCP_EXECUTOR_TOKEN:}
+    timeout-seconds: ${MCP_EXECUTOR_TIMEOUT_SECONDS:30}
 
   telemetry:
     auto-create-incidents: ${MCP_TELEMETRY_AUTO_CREATE_INCIDENTS:true}
@@ -303,7 +300,7 @@ logging:
     console: "%d{yyyy-MM-dd HH:mm:ss} - %logger{36} - %msg%n"
     file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
   file:
-    name: logs/mcp-incident-automation.log
+    name: logs/incident-warden.log
 
 server:
   port: 8080

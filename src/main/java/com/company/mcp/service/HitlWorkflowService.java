@@ -43,8 +43,12 @@ public class HitlWorkflowService {
     private final IncidentPrecedentService precedents;
     private final com.company.mcp.repository.TeamEmployeeRepository memberRepository;
     private final com.company.mcp.repository.UserRepository userRepository;
-    // Off only for single-operator demos. Any shared environment must leave this on.
+    private final com.company.mcp.repository.SystemConfigRepository config;
+    /** The deployed default, used only when no admin has decided either way. */
     @Value("${mcp.hitl.separation-of-duties:true}") private boolean separationOfDutiesRequired;
+
+    /** UI-managed override for the flag above. See {@link #separationOfDuties()}. */
+    public static final String SEPARATION_KEY = "hitl_separation_of_duties";
     /**
      * Whether an incident with no approved procedure may still reach a reviewer with a
      * script written from model knowledge alone. Turning this off restores the strict
@@ -58,13 +62,33 @@ public class HitlWorkflowService {
                                RemediationToolRegistry tools, SopProcedureService sopProcedures, RemediationScriptService scripts,
                                IncidentPrecedentService precedents,
                                com.company.mcp.repository.TeamEmployeeRepository memberRepository,
-                               com.company.mcp.repository.UserRepository userRepository) {
+                               com.company.mcp.repository.UserRepository userRepository,
+                               com.company.mcp.repository.SystemConfigRepository config) {
         this.incidents = incidents; this.plans = plans; this.requests = requests; this.executions = executions;
         this.currentUser = currentUser; this.rag = rag; this.guardrails = guardrails; this.agents = agents;
         this.audit = audit; this.json = json; this.tools = tools; this.sopProcedures = sopProcedures;
         this.scripts = scripts; this.precedents = precedents;
         this.memberRepository = memberRepository;
         this.userRepository = userRepository;
+        this.config = config;
+    }
+
+    /**
+     * Whether the person who raised a plan is barred from approving it.
+     *
+     * A config row rather than a properties value, for the same reason as the autorun kill
+     * switch: the only person who can answer "does this workspace have a second pair of
+     * eyes" is its admin, and a solo operator who cannot answer it cannot run anything at
+     * all. Absent row means the deployed default, which is ON — this loosens on an explicit
+     * decision by an admin, never by omission.
+     */
+    public boolean separationOfDuties() {
+        return config.findById(SEPARATION_KEY).map(com.company.mcp.model.SystemConfig::getConfigValue)
+                .map(Boolean::parseBoolean).orElse(separationOfDutiesRequired);
+    }
+
+    public void setSeparationOfDuties(boolean value) {
+        config.save(new com.company.mcp.model.SystemConfig(SEPARATION_KEY, Boolean.toString(value)));
     }
 
     @Transactional
@@ -208,9 +232,15 @@ public class HitlWorkflowService {
 
         if (!eligible) {
             // The reason an approver or operator actually needs: whichever gate closed.
-            // The target comes first because it is the only one with a fix the operator can
+            //
+            // The active plan comes first, ahead of even the target: when one already exists
+            // there is nothing to fix on the host, and nothing a second plan would add. Every
+            // other rung would send the operator somewhere that cannot help.
+            //
+            // Then the target, because it is the only remaining one with a fix the operator can
             // apply themselves — name the server, or name how to reach it, and re-plan.
-            String reason = !targetReason.isBlank() ? targetReason
+            String reason = active ? "PLAN_ALREADY_AWAITING_DECISION"
+                    : !targetReason.isBlank() ? targetReason
                     : !script.reason().isBlank() ? script.reason()
                     : !grounded ? evidence.reason()
                     // Named separately from GUARDRAIL_BLOCKED, which it used to be reported
@@ -220,9 +250,16 @@ public class HitlWorkflowService {
                     : !"HITL_REQUIRED".equals(assessment.route())
                             ? "CONFIDENCE_BELOW_HITL_BAND:" + Math.round(assessment.confidenceScore())
                             : "GUARDRAIL_BLOCKED";
-            incident.setStatus("ESCALATED");
-            incident.setConfidenceScore(assessment.confidenceScore());
-            incidents.save(incident);
+            // A rejected duplicate is not an escalation. Without this guard, asking to plan an
+            // incident that already had a plan in the queue flipped it from PENDING_APPROVAL to
+            // ESCALATED — the pending plan was still sitting there awaiting a decision, and the
+            // incident now claimed nobody could handle it. The refusal is the whole outcome;
+            // the incident's own state is not this call's to change.
+            if (!active) {
+                incident.setStatus("ESCALATED");
+                incident.setConfidenceScore(assessment.confidenceScore());
+                incidents.save(incident);
+            }
             audit.record(tenant, "INCIDENT", incidentId, "PLAN_ESCALATED", currentUser.username(), Map.of("planId", plan.getId(), "reason", reason));
             Map<String, Object> escalation = new LinkedHashMap<>();
             escalation.put("plan", plan);
@@ -230,7 +267,11 @@ public class HitlWorkflowService {
             escalation.put("route", "ESCALATE");
             escalation.put("reason", reason);
             // What to do about it, in words an operator can act on without reading the code.
-            escalation.put("action", !host.known() ? host.prompt()
+            escalation.put("action", active
+                    ? "This incident already has a plan waiting for a decision in the review queue. "
+                            + "Open that one and approve or reject it — a second plan cannot be raised "
+                            + "while the first is still open, so nothing here is missing."
+                    : !host.known() ? host.prompt()
                     : reach.unreachable() ? reach.detail()
                             + " Confirm the server name and the connection method on this incident, then plan again."
                     : reason.startsWith("CONFIDENCE_BELOW_HITL_BAND")
@@ -305,7 +346,7 @@ public class HitlWorkflowService {
         // Separation of duties: the analyst who raised a plan cannot also approve it.
         // Without this, one compromised account is enough to move a plan from draft to
         // executable, which defeats the point of having a human gate at all.
-        if (separationOfDutiesRequired && currentUser.username().equals(request.getRequestedBy())) {
+        if (separationOfDuties() && currentUser.username().equals(request.getRequestedBy())) {
             throw new AccessDeniedException("The requester of a plan cannot approve it. A second reviewer is required.");
         }
         RemediationPlan plan = plans.findById(request.getPlanId()).filter(p -> tenant.equals(p.getTenantId())).orElseThrow(() -> new NoSuchElementException("Plan not found"));
@@ -404,6 +445,14 @@ public class HitlWorkflowService {
         // host confirmed is not the same act as approving it because nothing said otherwise.
         script.put("platform", pinned(plan, "targetPlatform"));
         script.put("platformSource", pinned(plan, "targetPlatformSource"));
+        // Plain language, next to the code. "Approved because the badge was green" is the
+        // failure mode a review gate exists to stop, and it is what happens when the only
+        // description of a script is the script.
+        ScriptExplainer.Explanation explanation = ScriptExplainer.explain(actionKey,
+                parsed.valid() ? parsed.tool().description() : "",
+                plan.getRemediationScript(), plan.getScriptLanguage(),
+                IncidentTarget.hostOrTicket(incident));
+        script.put("explanation", Map.of("what", explanation.what(), "how", explanation.how()));
 
         Map<String, Object> detail = new LinkedHashMap<>();
         detail.put("request", request);
@@ -422,9 +471,9 @@ public class HitlWorkflowService {
                 ? java.util.List.of() : java.util.List.of(plan.getGuardrailFindings().split(";")));
         detail.put("executions", executions.findByPlanIdOrderByStartedAtAsc(plan.getId()));
         detail.put("canApprove", "PENDING".equals(request.getStatus())
-                && !(separationOfDutiesRequired && currentUser.username().equals(request.getRequestedBy())));
+                && !(separationOfDuties() && currentUser.username().equals(request.getRequestedBy())));
         detail.put("separationOfDutiesBlocked",
-                separationOfDutiesRequired && currentUser.username().equals(request.getRequestedBy()));
+                separationOfDuties() && currentUser.username().equals(request.getRequestedBy()));
         return detail;
     }
 

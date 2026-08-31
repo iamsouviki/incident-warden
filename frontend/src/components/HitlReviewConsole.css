@@ -1,6 +1,11 @@
 /* Review console — the page where a human reads a generated script and decides. */
 
-.review-console { display: grid; gap: 14px; }
+/* minmax(0, …) not the implicit `auto`: an auto track sizes to the widest child's min-content,
+   which on a narrow viewport made the whole console wider than the page and `main`'s
+   overflow:hidden clipped the right edge — silently, no scrollbar. The Approve button and the
+   guardrail badge were the parts that disappeared, on the one page whose job is being read
+   before approving. */
+.review-console { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
 
 .review-state {
   min-height: 260px; display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -52,6 +57,18 @@
   color: var(--text-2); font-size: 12px; line-height: 1.5;
 }
 .review-body { margin: 0; padding: 13px 14px; color: var(--text-2); font-size: 12px; line-height: 1.6; white-space: pre-wrap; }
+/* Plain language above the code: the summary in full text colour, the steps as a list. */
+.review-what {
+  margin: 0; padding: 12px 14px 6px;
+  color: var(--text-1); font-size: 12.5px; line-height: 1.6;
+}
+.review-how {
+  margin: 0; padding: 0 14px 12px 32px;
+  display: grid; gap: 5px;
+  color: var(--text-2); font-size: 12px; line-height: 1.5;
+}
+.review-how li::marker { color: var(--accent, var(--text-3)); font-weight: 600; }
+
 .review-empty { padding: 16px 14px; color: var(--text-3); font-size: 12px; }
 .review-note { margin: 0; padding: 10px 14px; border-top: 1px solid var(--border); color: var(--text-3); font-size: 11px; line-height: 1.5; }
 .review-note-bad { color: var(--crit); }
@@ -133,4 +150,22 @@
 
 @media (max-width: 1100px) {
   .review-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Phone. Approve and Reject are the two most consequential buttons in the product and they
+   were 74x30 and 142x30 here — under every touch-target guideline, side by side, on the
+   gesture edge of the screen. Full width and 44px so a misfire costs a scroll, not a restart
+   of the wrong host. */
+@media (max-width: 640px) {
+  /* The badges are flex: 0 0 auto and the heading is the flexible one, so on a phone the
+     badges kept their 177px and the title was squeezed to "T…" with the incident id wrapping
+     one character per line. Drop the badges to their own row instead. */
+  .review-header { flex-wrap: wrap; }
+  .review-header-badges { flex: 1 1 100%; }
+  .review-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .review-actions { padding: 10px 12px; }
+  .review-reason { flex: 1 1 100%; min-height: 44px; }
+  .review-buttons { flex: 1 1 100%; margin-left: 0; }
+  .review-buttons button { flex: 1 1 0; min-height: 44px; justify-content: center; }
 }

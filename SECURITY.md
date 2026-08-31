@@ -7,7 +7,7 @@ this before deploying it anywhere that matters.
 ## Reporting a vulnerability
 
 Use GitHub's private reporting: **Security → Advisories → Report a vulnerability** on
-<https://github.com/iamsouviki/mcp-incident-automation>.
+<https://github.com/iamsouviki/incident-warden>.
 
 Please do not open a public issue for anything exploitable. Include the endpoint or file, the role
 you were authenticated as (or none), and the smallest request that reproduces it.
@@ -53,9 +53,11 @@ first. Each is described in more detail in the [README](README.md#the-invariants
 
 Stated plainly rather than buried, because a reader deploying this needs them:
 
-- **Every seeded account starts on one default password** (`michaels@1`,
-  `AuthController.DEFAULT_PASSWORD`). Change it immediately, and note there is no self-service
-  change-password screen yet — an admin resets it over the API.
+- **There is no self-service change-password screen yet.** New accounts get the password the server
+  issues at creation (`MCP_DEFAULT_PASSWORD` if you set it, otherwise a value `BootstrapPassword`
+  generates per boot and shows once), and an admin resets it over the API. Set
+  `MCP_DEFAULT_PASSWORD` in any deployment you expect to be able to log back into — a generated
+  password is different after every restart.
 - **The `local` profile ships a committed dev JWT signing key** and turns separation of duties off
   so a single account can both request and approve a plan. It is a demo profile. Do not run it
   anywhere reachable.
@@ -75,5 +77,5 @@ In scope: authentication and authorisation bypass, guardrail or hash-pinning byp
 gets a script dispatched without an approval, secret disclosure, injection into the generated script,
 tenant data leaking across tenants.
 
-Out of scope: findings that require the `local` demo profile, the documented default password, and
-missing hardening already listed above.
+Out of scope: findings that require the `local` demo profile, a weak password an operator chose
+through `MCP_DEFAULT_PASSWORD`, and missing hardening already listed above.

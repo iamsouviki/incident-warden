@@ -21,8 +21,11 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy built JAR from builder
-COPY --from=builder /app/target/mcp-incident-automation-1.0.0.jar app.jar
+# Copy built JAR from builder. Globbed on purpose: this line named a jar
+# (mcp-incident-automation-1.0.0.jar) that the build has never produced — the artifactId is
+# incident-automation — so every docker build failed here. A glob survives the next rename too.
+# .jar.original, Spring Boot's pre-repackage copy, does not match *.jar.
+COPY --from=builder /app/target/*.jar app.jar
 
 # Probe the already-running application; do not launch a second JVM from the health check.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=5 \

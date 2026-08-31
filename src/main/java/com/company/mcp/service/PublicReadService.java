@@ -1,0 +1,112 @@
+package com.company.mcp.service;
+
+import com.company.mcp.model.SystemConfig;
+import com.company.mcp.repository.IncidentRepository;
+import com.company.mcp.repository.SystemConfigRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.stereotype.Service;
+
+import java.time.OffsetDateTime;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+
+/**
+ * What someone with no account is allowed to know.
+ *
+ * The requirement is that a stranger can see how many incidents exist and what state they are
+ * in, and is asked to sign in only when they want something <em>fixed</em>. Two decisions
+ * follow from that and are the whole point of this class:
+ *
+ * <ol>
+ *   <li><b>No model call.</b> Anonymous answers come from SQL. An unauthenticated LLM route is
+ *       a provider-budget DoS with a prompt-injection surface and nobody to attribute it to;
+ *       and {@link RagService#askStrictSopRag} needs a tenant from the security context, which
+ *       an anonymous caller does not have.</li>
+ *   <li><b>Redaction is the projection.</b> {@link Row} carries five fields, and the query
+ *       selects those five columns — descriptions, assignees, teams, notes and target hosts
+ *       never leave the database on this path. Filtering a full entity afterwards is the
+ *       version of this that leaks the first time someone adds a field.</li>
+ * </ol>
+ */
+@Service
+public class PublicReadService {
+    private static final Logger log = LoggerFactory.getLogger(PublicReadService.class);
+
+    /** UI-managed switch, on by default: an anonymous read is the front door of the product. */
+    public static final String ENABLED_KEY = "public_read_enabled";
+
+    /** Which workspace a caller with no account is reading. */
+    public static final String TENANT_KEY = "public_tenant_id";
+    public static final String DEFAULT_TENANT = "tenant-1";
+
+    /** Enough to answer a question, not enough to page through the ticket table. */
+    private static final int MAX_ROWS = 20;
+
+    /** Anything else counts as open — an unrecognised status is not quietly treated as done. */
+    private static final Set<String> CLOSED_STATES = Set.of("resolved", "closed", "cancelled");
+
+    private final SystemConfigRepository config;
+    private final IncidentRepository incidents;
+
+    public PublicReadService(SystemConfigRepository config, IncidentRepository incidents) {
+        this.config = config;
+        this.incidents = incidents;
+    }
+
+    public boolean enabled() {
+        return config.findById(ENABLED_KEY).map(SystemConfig::getConfigValue).map(Boolean::parseBoolean).orElse(true);
+    }
+
+    public void setEnabled(boolean value) {
+        config.save(new SystemConfig(ENABLED_KEY, Boolean.toString(value)));
+        log.warn("[PUBLIC] Anonymous incident read {} by configuration", value ? "ENABLED" : "DISABLED");
+    }
+
+    public String tenantId() {
+        return config.findById(TENANT_KEY).map(SystemConfig::getConfigValue)
+                .filter(value -> !value.isBlank()).orElse(DEFAULT_TENANT);
+    }
+
+    /** Counts over the whole tenant, so "how many are open" is the table's answer. */
+    public Stats stats() {
+        String tenant = tenantId();
+        Map<String, Long> byStatus = toCountMap(incidents.countGroupedByStatus(tenant));
+        Map<String, Long> byPriority = toCountMap(incidents.countGroupedByPriority(tenant));
+        long total = byStatus.values().stream().mapToLong(Long::longValue).sum();
+        long open = byStatus.entrySet().stream()
+                .filter(entry -> !CLOSED_STATES.contains(entry.getKey().toLowerCase(Locale.ROOT)))
+                .mapToLong(Map.Entry::getValue).sum();
+        return new Stats(total, open, byStatus, byPriority, incidents.findLastUpdatedAt(tenant));
+    }
+
+    /** Blank {@code q} lists the most recently updated tickets. Never more than {@value #MAX_ROWS}. */
+    public List<Row> search(String q) {
+        String like = "%" + (q == null ? "" : q.trim().toLowerCase(Locale.ROOT)) + "%";
+        return incidents.searchPublicRows(tenantId(), like, PageRequest.of(0, MAX_ROWS)).stream()
+                .map(row -> new Row((String) row[0], (String) row[1], (String) row[2], (String) row[3],
+                        (OffsetDateTime) row[4]))
+                .toList();
+    }
+
+    private static Map<String, Long> toCountMap(List<Object[]> rows) {
+        Map<String, Long> counts = new LinkedHashMap<>();
+        for (Object[] row : rows) counts.put(String.valueOf(row[0]), ((Number) row[1]).longValue());
+        return counts;
+    }
+
+    /**
+     * The only incident shape an anonymous caller ever receives. Adding a field here widens
+     * what the internet can read, which is why {@code PublicReadServiceTest} asserts the
+     * component list rather than trusting review to notice.
+     */
+    public record Row(String externalId, String subject, String status, String priority,
+                      OffsetDateTime updatedAt) {}
+
+    public record Stats(long total, long openCount, Map<String, Long> byStatus,
+                        Map<String, Long> byPriority, OffsetDateTime updatedAt) {}
+}

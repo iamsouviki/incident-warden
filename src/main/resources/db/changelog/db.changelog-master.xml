@@ -124,4 +124,19 @@
         <validCheckSum>ANY</validCheckSum>
         <sqlFile path="versions/1.21/target_platform.sql" relativeToChangelogFile="true" />
     </changeSet>
+
+    <changeSet id="1.22-skills" author="mcp-incident-automation">
+        <validCheckSum>ANY</validCheckSum>
+        <sqlFile path="versions/1.22/skills.sql" relativeToChangelogFile="true" />
+    </changeSet>
+
+    <changeSet id="1.23-retire-autorun" author="mcp-incident-automation">
+        <validCheckSum>ANY</validCheckSum>
+        <sqlFile path="versions/1.23/retire_autorun.sql" relativeToChangelogFile="true" />
+    </changeSet>
+
+    <changeSet id="1.24-must-change-password" author="mcp-incident-automation">
+        <validCheckSum>ANY</validCheckSum>
+        <sqlFile path="versions/1.24/must_change_password.sql" relativeToChangelogFile="true" />
+    </changeSet>
 </databaseChangeLog>

@@ -36,7 +36,9 @@ npm run dev --prefix frontend
 
 Then:
 
-1. Open <http://localhost:5173>, log in as `admin` / `michaels@1`.
+1. Open <http://localhost:5173>, log in as `admin` (password: `$MCP_DEFAULT_PASSWORD`, or the one
+   the backend logged at startup — `grep BOOTSTRAP logs/backend-local.log`). Set
+   `MCP_DEFAULT_PASSWORD` before the demo so you are not hunting a log line in front of a client.
 2. **AI configuration → Unattended Remediation** → toggle **ON** (amber).
 3. **AI configuration → Notifications** → host `localhost`, port `1025`, from
    `incident-automation@demo.local`, enable, **Send test message**. Confirm the SMTP window
@@ -422,6 +424,6 @@ enough to stop the automation, without touching a switch.
 | Second ticket is *not* auto-resolved | kill switch off, or the first run never reached `SUCCEEDED` | AI configuration → toggle ON; confirm the precedent incident is RESOLVED |
 | No email in the SMTP window | notifications disabled or `notify_smtp_host` unset | AI configuration → Notifications → **Send test message** first |
 | Approve button disabled | separation of duties — you filed it | approve as a second user, or note it as the real-deployment behaviour |
-| Login rejected on `:5174` | Vite took a second port because 5173 was busy | nothing to fix — CORS accepts any loopback port. If it really is a bad password, it is `admin` / `michaels@1` |
+| Login rejected on `:5174` | Vite took a second port because 5173 was busy | nothing to fix — CORS accepts any loopback port. If it really is a bad password, the admin password is `$MCP_DEFAULT_PASSWORD`, or `grep BOOTSTRAP logs/backend-local.log` |
 | HITL assignee list looks short | only accounts in `auth.users` can be handed a review; roster-only people show as `· current, no login` | **Teams → Create User Account**, then reassign |
 | "Save answer and plan again" leaves the box blank | stale build — this was fixed by keying the detail panel on the incident id | hard-reload the page |

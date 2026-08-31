@@ -1,0 +1,14 @@
+-- ── Remove the unattended-remediation kill switch ─────────────────────────────
+-- 1.16 seeded autorun_enabled = 'false' for a precedent-autorun path that fired inline when
+-- an incident was created: if a similar ticket had been fixed before with the same action, it
+-- ran again without asking. That path is deleted, not disabled, so nothing reads this row.
+--
+-- Deleting it rather than leaving it inert. A config table is read by admins as the list of
+-- switches this platform has, and a row named autorun_enabled invites exactly one action —
+-- setting it to true — which would now do nothing at all while looking like it had done
+-- something. An inert switch is worse than a missing one.
+--
+-- Same for auto_resolve_threshold, which paired with the deleted mcp.confidence
+-- auto-resolve-threshold property: no code has read either since remediation became
+-- HITL-only.
+DELETE FROM config.system_config WHERE config_key IN ('autorun_enabled', 'auto_resolve_threshold');

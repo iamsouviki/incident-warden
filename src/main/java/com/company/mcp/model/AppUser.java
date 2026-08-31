@@ -47,6 +47,10 @@ public class AppUser {
     @Column(nullable = false)
     private boolean enabled = true;
 
+    /** True while the account still carries the password an admin handed over. */
+    @Column(name = "must_change_password", nullable = false)
+    private boolean mustChangePassword = false;
+
     @Column(name = "created_at")
     private OffsetDateTime createdAt;
 
@@ -90,6 +94,9 @@ public class AppUser {
 
     public boolean isEnabled()               { return enabled; }
     public void setEnabled(boolean enabled)  { this.enabled = enabled; }
+
+    public boolean isMustChangePassword()                  { return mustChangePassword; }
+    public void setMustChangePassword(boolean mustChange)   { this.mustChangePassword = mustChange; }
 
     public OffsetDateTime getCreatedAt()                     { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt)       { this.createdAt = createdAt; }

@@ -4,9 +4,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.Map;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * Action-key parsing is the last gate before something runs against a real system, so it
@@ -18,7 +22,7 @@ class RemediationToolRegistryTest {
 
     @BeforeEach
     void setUp() {
-        registry = new RemediationToolRegistry(new ObjectMapper(), new GuardrailService());
+        registry = new RemediationToolRegistry(new ObjectMapper(), new GuardrailService(), null);
     }
 
     @Test
@@ -87,6 +91,52 @@ class RemediationToolRegistryTest {
         assertFalse(registry.parse("CLEAR_CACHE:redis:localhost").valid());
         assertFalse(registry.parse("").valid());
         assertFalse(registry.parse(null).valid());
+    }
+
+    /**
+     * The tool table moved from a Java constant into an admin-editable table, so the thing
+     * worth pinning is that it moved without loosening: a DB-backed table must reject exactly
+     * what the constant rejected, and an admin adding a tool must not be able to add a way
+     * around the segment rules.
+     */
+    @Test
+    void aToolTableLoadedFromTheDatabaseIsGuardedExactlyLikeTheBuiltInOne() {
+        SkillService skills = mock(SkillService.class);
+        when(skills.executionTools(null)).thenReturn(Map.of(
+                "RESTART_SERVICE", new SkillService.ToolRow("RESTART_SERVICE", 2, true, "Restart a service."),
+                "ROLL_STORE", new SkillService.ToolRow("ROLL_STORE", 1, true, "An admin-authored tool.")));
+        RemediationToolRegistry dbBacked =
+                new RemediationToolRegistry(new ObjectMapper(), new GuardrailService(), skills);
+
+        // The authored tool parses, so the table is genuinely in force...
+        assertTrue(dbBacked.parse("ROLL_STORE:store-0042-pos-01").valid());
+        // ...and every guard still applies to it.
+        assertFalse(dbBacked.parse("ROLL_STORE:a;rm -rf /").valid());
+        assertFalse(dbBacked.parse("ROLL_STORE:../../etc/passwd").valid());
+        assertFalse(dbBacked.parse("ROLL_STORE:one:two").valid());
+        // A tool the constant shipped but this table omits is now unknown, not grandfathered.
+        assertFalse(dbBacked.parse("CLEAR_CACHE:redis:cache-01:6379").valid());
+        assertTrue(dbBacked.parse("RESTART_SERVICE:tomcat:linux").valid());
+    }
+
+    /** An empty table means "not migrated yet", not "nothing is allowed". */
+    @Test
+    void anEmptySkillsTableFallsBackToTheBuiltInTools() {
+        SkillService skills = mock(SkillService.class);
+        when(skills.executionTools(null)).thenReturn(Map.of());
+
+        assertTrue(new RemediationToolRegistry(new ObjectMapper(), new GuardrailService(), skills)
+                .parse("RESTART_SERVICE:tomcat:linux").valid());
+    }
+
+    /** A database that cannot be read must not silently allowlist nothing. */
+    @Test
+    void anUnreadableSkillsTableFallsBackToTheBuiltInTools() {
+        SkillService skills = mock(SkillService.class);
+        when(skills.executionTools(null)).thenThrow(new RuntimeException("relation does not exist"));
+
+        assertTrue(new RemediationToolRegistry(new ObjectMapper(), new GuardrailService(), skills)
+                .parse("RESTART_SERVICE:tomcat:linux").valid());
     }
 
     @Test

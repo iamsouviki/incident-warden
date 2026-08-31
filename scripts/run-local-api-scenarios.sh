@@ -28,7 +28,10 @@ request() {
 request health 200 GET /api/health ''
 request unauthenticated_config 403 GET /api/v1/ai/config ''
 request invalid_login 401 POST /api/auth/login '{"username":"admin","password":"wrong-password"}'
-request valid_login 200 POST /api/auth/login '{"username":"admin","password":"michaels@1"}'
+# Read from the environment, never embedded: the admin password is whatever
+# MCP_DEFAULT_PASSWORD is set to, or the value the backend logged on first start.
+: "${MCP_DEFAULT_PASSWORD:?set MCP_DEFAULT_PASSWORD to the admin password before running this}"
+request valid_login 200 POST /api/auth/login "{\"username\":\"admin\",\"password\":\"${MCP_DEFAULT_PASSWORD}\"}"
 TOKEN=$(node -e "const fs=require('fs'); console.log(JSON.parse(fs.readFileSync('$OUT_DIR/valid_login.body','utf8')).token || '')")
 if [[ -z "$TOKEN" ]]; then
   record token_obtained nonempty empty FAIL 'Cannot execute authenticated scenarios without a token'

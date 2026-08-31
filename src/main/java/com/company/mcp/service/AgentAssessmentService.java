@@ -14,18 +14,27 @@ import java.util.*;
  */
 @Service
 public class AgentAssessmentService {
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(AgentAssessmentService.class);
 
     private final double hitlThresholdConfig;
     private final double defaultPriorSuccessRate;
     private final SopProcedureRepository sopProcedureRepository;
+    /** Null in unit tests, which assert the arithmetic at an explicitly passed band. */
+    private final AiConfigService aiConfig;
+    /** Admin-authored categorisation vocabulary. Null in unit tests. */
+    private final SkillService skills;
 
     public AgentAssessmentService(
             @org.springframework.beans.factory.annotation.Value("${mcp.confidence.hitl-threshold:0.80}") double hitlThresholdConfig,
             @org.springframework.beans.factory.annotation.Value("${mcp.confidence.default-prior-success-rate:0.85}") double defaultPriorSuccessRate,
-            SopProcedureRepository sopProcedureRepository) {
+            SopProcedureRepository sopProcedureRepository,
+            AiConfigService aiConfig,
+            SkillService skills) {
         this.hitlThresholdConfig = hitlThresholdConfig;
         this.defaultPriorSuccessRate = defaultPriorSuccessRate;
         this.sopProcedureRepository = sopProcedureRepository;
+        this.aiConfig = aiConfig;
+        this.skills = skills;
     }
 
     /**
@@ -42,11 +51,18 @@ public class AgentAssessmentService {
     /**
      * The score a plan must reach to be offered to a reviewer, as a percentage.
      *
+     * Taken from the {@code hitl_threshold} config row the AI configuration page writes, so
+     * the band an admin sets is the band the planner uses. The constructor value is only the
+     * deployed default, used until somebody decides otherwise.
+     *
      * Exposed so an escalation can tell the operator the actual number instead of a bare
      * "blocked": a P1 or P2 carries a risk penalty that keeps it below this band by design,
      * and an operator is owed that sentence rather than left guessing which gate closed.
      */
-    public double hitlBandPercent() { return hitlThresholdConfig * 100.0; }
+    public double hitlBandPercent() {
+        return aiConfig == null ? hitlThresholdConfig * 100.0
+                : AiConfigService.asPercent(aiConfig.getHitlThreshold(), hitlThresholdConfig * 100.0);
+    }
 
     /**
      * @param historicalSuccess observed success rate for this remediation, in [0,1].
@@ -75,7 +91,7 @@ public class AgentAssessmentService {
         double score = clamp(100.0 * ((0.35 * patternSimilarity) + (0.25 * historicalSuccess) +
                 (0.20 * sopReliability) + (0.15 * systemHealth) - riskPenalty));
 
-        double threshold = hitlThresholdConfig * 100.0;
+        double threshold = hitlBandPercent();
         String route = evidence.approvedEvidencePresent() && !classification.action().isBlank() && score >= threshold ? "HITL_REQUIRED" : "ESCALATE";
         return new Assessment(classification.category(), classification.action(), target(incident), patternSimilarity,
                 historicalSuccess, sopReliability, systemHealth, riskPenalty, score, route,
@@ -110,7 +126,28 @@ public class AgentAssessmentService {
             }
         }
 
-        // 2. Foundational vocabulary fallback
+        // 2. Admin-authored categorisation skills, before the shipped vocabulary — a workspace
+        //    that calls its tills "lanes" says so on the Skills page instead of waiting for a
+        //    release. Shipped terms still run after, so adding a skill never removes a match.
+        if (skills != null) {
+            try {
+                for (com.company.mcp.model.Skill skill : skills.enabled(tenantId, SkillService.CATEGORIZATION)) {
+                    List<String> terms = SkillService.keywords(skill);
+                    if (!terms.isEmpty() && containsAny(text, terms.toArray(new String[0]))) {
+                        return new Classification(skill.getSkillKey().toUpperCase(Locale.ROOT),
+                                skill.getActionKey() == null ? "" : skill.getActionKey(),
+                                terms.toArray(new String[0]));
+                    }
+                }
+            } catch (Exception e) {
+                // Classification is on the path that decides whether a ticket is worth an
+                // analyst opening first. An unreadable skills table degrades it to the shipped
+                // vocabulary; it does not fail the assessment.
+                log.warn("[SKILL] Categorisation skills unreadable, using built-in vocabulary: {}", e.getMessage());
+            }
+        }
+
+        // 3. Foundational vocabulary fallback
         if (containsAny(text, new String[]{"printer", "print queue", "print job"})) {
             return new Classification("PRINTING", "clear-printer-queue", new String[]{"printer", "print", "queue"});
         }

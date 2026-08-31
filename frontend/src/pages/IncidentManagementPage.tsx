@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import './IncidentManagementPage.css';
-import { Plus, RefreshCw, Search, Calendar, ShieldAlert, Clock, Edit, Save, Loader } from 'lucide-react';
+import { RefreshCw, Search, Calendar, ShieldAlert, Clock, Edit, Save, Loader } from 'lucide-react';
 import { authFetch, getStoredUser } from '../services/api';
 import SearchableSelect from '../components/SearchableSelect';
 
@@ -67,12 +67,6 @@ export interface Team {
   employees: Employee[];
 }
 
-interface Props {
-  onCreateClick?: () => void;
-  showCreateModal?: boolean;
-  setShowCreateModal?: (show: boolean) => void;
-}
-
 /**
  * Guarantees a <select> can display the value the record actually holds.
  *
@@ -101,7 +95,7 @@ const SOURCE_TONE: Record<string, string> = {
 };
 
 
-const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setShowCreateModal }) => {
+const IncidentManagementPage: React.FC = () => {
   const currentUser = getStoredUser();
   const currentUsername = currentUser?.username || 'User';
   // A viewer's plan request is refused by the API, so the button says so instead of failing.
@@ -149,25 +143,6 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
   const [targetSaving, setTargetSaving] = useState(false);
   const [updateLoading, setUpdateLoading] = useState(false);
 
-  // Create Incident Form state
-  const [newSubject, setNewSubject] = useState('');
-  const [newDescription, setNewDescription] = useState('');
-  const [newPriority, setNewPriority] = useState('P3');
-  const [newAssignee, setNewAssignee] = useState('Unassigned');
-  const [newGteam, setNewGteam] = useState('IT Ops');
-  // Only for a ticket logged on someone else's behalf. Left empty, the server uses the
-  // signed-in user's address — it already knows who created the ticket.
-  const [newReporterEmail, setNewReporterEmail] = useState('');
-  // Which store, and which machine. Asked here because the answer is cheapest to get from
-  // the person filing the ticket; the backend re-derives and re-validates both.
-  const [newStoreNumber, setNewStoreNumber] = useState('');
-  const [newTargetHost, setNewTargetHost] = useState('');
-  const [newTargetPlatform, setNewTargetPlatform] = useState('');
-  const [serverNudged, setServerNudged] = useState(false);
-  const [createLoading, setCreateLoading] = useState(false);
-  const [initialComment, setInitialComment] = useState('');
-  const [errorMsg, setErrorMsg] = useState('');
-
   // Teams & AI Suggestion states
   const [teams, setTeams] = useState<Team[]>([]);
   const [statuses, setStatuses] = useState<string[]>(['New', 'In Progress', 'Resolved', 'Closed']);
@@ -180,7 +155,6 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
     sourceDetail?: string;
   } | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
-  const [modalAiLoading, setModalAiLoading] = useState(false);
 
   // Guarded remediation-plan creation. The backend owns all execution decisions.
   const [planCreating, setPlanCreating] = useState(false);
@@ -263,34 +237,6 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
       setPlanOutcome({ route: 'ERROR', message: err instanceof Error ? err.message : 'The guarded plan could not be created.' });
     } finally {
       setPlanCreating(false);
-    }
-  };
-
-  const handleModalAiSuggest = async () => {
-    if (!newSubject.trim()) return;
-    setModalAiLoading(true);
-    try {
-      const res = await authFetch('/api/v1/incidents/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subject: newSubject, description: newDescription }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setNewGteam(data.suggestedTeam);
-        const employees = teams.find(t => t.name === data.suggestedTeam)?.employees || [];
-        setNewAssignee(employees[0]?.username || 'Unassigned');
-        if (data.suggestedResolution) {
-          // The origin is part of the note, not a "(Source: RAG …)" tail: whoever picks this
-          // ticket up needs to know whether the steps are the company's own procedure or a
-          // starting point read off the web.
-          setInitialComment(`Suggested first steps — ${data.sourceLabel || 'from the assistant'}:\n${data.suggestedResolution}`);
-        }
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setModalAiLoading(false);
     }
   };
 
@@ -413,86 +359,6 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
       setImportFile(null); await fetchIncidents();
     } catch (error) { setImportMessage(error instanceof Error ? error.message : 'Import failed'); }
     finally { setImporting(false); }
-  };
-
-  /**
-   * Whether the ticket text already names a machine.
-   *
-   * Deliberately looser than the backend's rule and used only to decide whether to nudge
-   * once. The real gate is IncidentTarget on the server, which is what the plan and the
-   * executor actually obey — this only spares the filer a round trip.
-   */
-  const mentionsServer = (text: string) =>
-    /(?:hostname|servername|server|host|node|machine|device)\s*(?:name)?\s*[:=]?\s*[A-Za-z0-9][A-Za-z0-9._-]{2,}/i.test(text)
-    || /\b[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9][A-Za-z0-9_-]*)+\.[A-Za-z]{2,24}\b/.test(text);
-
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newSubject.trim()) {
-      setErrorMsg('Subject is required');
-      return;
-    }
-    // One nudge, never a block. Plenty of real tickets have no server at all ("laptop
-    // won't charge"), so refusing to file them would be worse than asking late — and the
-    // server is still asked for, unmissably, if a remediation plan needs it.
-    if (!newTargetHost.trim() && !mentionsServer(`${newSubject} ${newDescription}`) && !serverNudged) {
-      setServerNudged(true);
-      setErrorMsg('No server is named in this ticket. Add the server name if this is a machine '
-        + 'problem — a remediation script cannot run without one. Submit again to file it anyway.');
-      return;
-    }
-    setCreateLoading(true);
-    setErrorMsg('');
-    try {
-      const res = await authFetch('/api/v1/incidents', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          subject: newSubject,
-          description: newDescription,
-          priority: newPriority,
-          assignee: newAssignee,
-          assignedGteam: newGteam,
-          reporterEmail: newReporterEmail.trim(),
-          storeNumber: newStoreNumber.trim(),
-          targetHost: newTargetHost.trim(),
-          targetPlatform: newTargetPlatform,
-          status: 'New'
-        })
-      });
-      if (res.ok) {
-        const created = await res.json();
-        if (initialComment.trim()) {
-          await authFetch(`/api/v1/incidents/${created.id}/comments`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              author: currentUsername,
-              commentText: initialComment
-            })
-          });
-        }
-        setNewSubject('');
-        setNewDescription('');
-        setInitialComment('');
-        setNewPriority('P3');
-        setNewAssignee('Unassigned');
-        setNewGteam('IT Ops');
-        setNewReporterEmail('');
-        setNewStoreNumber('');
-        setNewTargetHost('');
-        setNewTargetPlatform('');
-        setServerNudged(false);
-        if (setShowCreateModal) setShowCreateModal(false);
-        fetchIncidents();
-      } else {
-        setErrorMsg('Failed to create incident');
-      }
-    } catch (err) {
-      setErrorMsg('Network error');
-    } finally {
-      setCreateLoading(false);
-    }
   };
 
   const handleAddComment = async (e: React.FormEvent) => {
@@ -716,9 +582,6 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
             </button>
             <button className="btn-sync" onClick={handleSync} disabled={syncing} style={{ height: '34px', padding: '0 12px', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
               <RefreshCw size={12} className={syncing ? 'spin' : ''} /> {syncing ? 'Syncing' : 'Sync'}
-            </button>
-            <button className="btn-primary" onClick={() => setShowCreateModal?.(true)} style={{ height: '34px', padding: '0 12px', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
-              <Plus size={12} /> Create
             </button>
           </div>
         </div>
@@ -1362,165 +1225,6 @@ const IncidentManagementPage: React.FC<Props> = ({ showCreateModal = false, setS
         </div>
 
       </div>
-
-      {/* Creation Modal */}
-      {showCreateModal && (
-        <div className="modal-backdrop">
-          <div className="modal-panel">
-            <div className="modal-header">
-              <h2>New Incident Record</h2>
-              <button className="close-btn" onClick={() => setShowCreateModal?.(false)}>×</button>
-            </div>
-            <form onSubmit={handleCreate} className="modal-form">
-              {errorMsg && <div className="error-alert">{errorMsg}</div>}
-              
-              <div className="form-field">
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <label>Subject *</label>
-                  <button 
-                    type="button" 
-                    className="btn-sync" 
-                    style={{ padding: '2px 8px', fontSize: '11px', height: 'auto', background: 'rgba(255,255,255,0.05)', opacity: modalAiLoading ? 0.55 : 1, cursor: modalAiLoading ? 'progress' : 'pointer' }}
-                    onClick={handleModalAiSuggest}
-                    disabled={modalAiLoading || !newSubject.trim()}
-                    aria-busy={modalAiLoading}
-                  >
-                    {modalAiLoading ? 'Analysing…' : initialComment ? '✨ Regenerate suggestion' : '✨ Suggest team and first steps'}
-                  </button>
-                </div>
-                <input
-                  type="text"
-                  placeholder="Short, summary description of the issue"
-                  value={newSubject}
-                  onChange={e => setNewSubject(e.target.value)}
-                  required
-                />
-              </div>
-
-              <div className="form-field">
-                <label>Description</label>
-                <textarea
-                  rows={4}
-                  placeholder="Provide detailed diagnostic steps, errors, or troubleshooting logs..."
-                  value={newDescription}
-                  onChange={e => setNewDescription(e.target.value)}
-                />
-              </div>
-
-              <div className="form-field">
-                <label>Initial Comment / Suggested Resolution (Optional)</label>
-                <textarea
-                  rows={3}
-                  placeholder="Add a first comment or auto-filled suggestion..."
-                  value={initialComment}
-                  onChange={e => setInitialComment(e.target.value)}
-                  style={{ background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: '6px', color: 'var(--text)', padding: '10px' }}
-                />
-              </div>
-
-              <div className="form-row">
-                <div className="form-field">
-                  <label>Priority</label>
-                  <select value={newPriority} onChange={e => setNewPriority(e.target.value)}>
-                    <option value="P1">P1 - Critical (8 Hours SLA)</option>
-                    <option value="P2">P2 - High (24 Hours SLA)</option>
-                    <option value="P3">P3 - Medium (72 Hours SLA)</option>
-                  </select>
-                </div>
-
-                <div className="form-field">
-                  <label>Assigned Team</label>
-                  <select value={newGteam} onChange={e => {
-                    const teamName = e.target.value;
-                    setNewGteam(teamName);
-                    const employees = teams.find(t => t.name === teamName)?.employees || [];
-                    setNewAssignee(employees[0]?.username || 'Unassigned');
-                  }}>
-                    {teams.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
-                  </select>
-                </div>
-              </div>
-
-              <div className="form-field">
-                <label>Assignee</label>
-                <select value={newAssignee} onChange={e => setNewAssignee(e.target.value)}>
-                  <option value="Unassigned">Unassigned</option>
-                  {(teams.find(t => t.name === newGteam)?.employees || []).map(emp => (
-                    <option key={emp.id} value={emp.username}>{emp.username}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="form-field">
-                <label>Store Number (Optional)</label>
-                <input
-                  type="text"
-                  placeholder="e.g. 0042"
-                  value={newStoreNumber}
-                  onChange={e => setNewStoreNumber(e.target.value)}
-                />
-                <small style={{ color: 'var(--text-muted)', fontSize: '11px' }}>
-                  Automation is proven per store. Once a fix has been approved and has worked at
-                  this store, the same fix can run automatically for the same problem here —
-                  and only here.
-                </small>
-              </div>
-
-              <div className="form-field">
-                <label>Server / Host {newTargetHost.trim() ? '' : '(Optional)'}</label>
-                <input
-                  type="text"
-                  placeholder="e.g. store-0042-pos-01"
-                  value={newTargetHost}
-                  onChange={e => setNewTargetHost(e.target.value)}
-                />
-                <small style={{ color: 'var(--text-muted)', fontSize: '11px' }}>
-                  The machine with the problem. Leave it empty if the description already names
-                  one, or if this is not a server issue — nothing can be restarted until a
-                  server is named, and nothing will be guessed.
-                </small>
-              </div>
-
-              <div className="form-field">
-                <label>Operating system (Optional)</label>
-                <select value={newTargetPlatform} onChange={e => setNewTargetPlatform(e.target.value)}>
-                  <option value="">Auto-detect — ask the machine</option>
-                  <option value="windows">Windows — PowerShell</option>
-                  <option value="linux">Linux — bash</option>
-                  <option value="darwin">macOS — bash</option>
-                </select>
-                <small style={{ color: 'var(--text-muted)', fontSize: '11px' }}>
-                  Only answer this if you know it. Left on auto-detect, the machine is asked what
-                  it is when it is checked for reachability, and the script is written in that
-                  language. Answering here overrules that — useful when the check cannot run, or
-                  when you know the detection is wrong.
-                </small>
-              </div>
-
-              <div className="form-field">
-                <label>Reporter Email (Optional)</label>
-                <input
-                  type="email"
-                  placeholder="Only if you are logging this on someone else's behalf"
-                  value={newReporterEmail}
-                  onChange={e => setNewReporterEmail(e.target.value)}
-                />
-                <small style={{ color: 'var(--text-muted)', fontSize: '11px' }}>
-                  Left empty, updates are emailed to your own address. This person is notified
-                  of every update and of any action the platform takes automatically.
-                </small>
-              </div>
-
-              <div className="modal-footer">
-                <button type="button" className="btn-secondary" onClick={() => setShowCreateModal?.(false)}>Cancel</button>
-                <button type="submit" className="btn-primary" disabled={createLoading}>
-                  {createLoading ? 'Creating...' : 'Create Ticket'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

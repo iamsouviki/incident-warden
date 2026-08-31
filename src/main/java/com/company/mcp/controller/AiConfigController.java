@@ -1,7 +1,7 @@
 package com.company.mcp.controller;
 
 import com.company.mcp.service.AiConfigService;
-import com.company.mcp.service.AutoRemediationService;
+import com.company.mcp.service.HitlWorkflowService;
 import com.company.mcp.service.NotificationService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -23,20 +23,22 @@ public class AiConfigController {
     private final AiConfigService aiConfigService;
     private final ObjectMapper objectMapper;
     private final NotificationService notificationService;
-    private final AutoRemediationService autoRemediation;
+    private final com.company.mcp.service.PublicReadService publicRead;
+    private final HitlWorkflowService hitl;
 
     public AiConfigController(AiConfigService aiConfigService, ObjectMapper objectMapper,
                               NotificationService notificationService,
-                              AutoRemediationService autoRemediation) {
+                              com.company.mcp.service.PublicReadService publicRead,
+                              HitlWorkflowService hitl) {
         this.aiConfigService = aiConfigService;
         this.objectMapper = objectMapper;
         this.notificationService = notificationService;
-        this.autoRemediation = autoRemediation;
+        this.publicRead = publicRead;
+        this.hitl = hitl;
     }
 
     @GetMapping
     public ResponseEntity<?> getConfig() {
-        // Map.ofEntries, not Map.of: the latter stops at ten pairs and this outgrew it.
         return ResponseEntity.ok(Map.ofEntries(
                 // apiKey is deliberately absent. It is an environment variable now, and echoing
                 // a credential back to a browser is how it ends up in a screenshot or a log.
@@ -46,11 +48,7 @@ public class AiConfigController {
                 Map.entry("apiKeyPresent", !aiConfigService.getApiKey().isBlank()),
                 Map.entry("chatModel", aiConfigService.getActiveChatModel()),
                 Map.entry("embeddingModel", aiConfigService.getActiveEmbeddingModel()),
-                Map.entry("autoResolveThreshold", aiConfigService.getAutoResolveThreshold()),
                 Map.entry("hitlThreshold", aiConfigService.getHitlThreshold()),
-                Map.entry("blastRadiusThreshold", aiConfigService.getBlastRadiusThreshold()),
-                Map.entry("servicenowEnabled", aiConfigService.getServicenowEnabled()),
-                Map.entry("freshserviceEnabled", aiConfigService.getFreshserviceEnabled()),
                 Map.entry("webSearchEnabled", aiConfigService.getWebSearchEnabled())));
     }
 
@@ -87,11 +85,7 @@ public class AiConfigController {
         if (embeddingModel == null || embeddingModel.isBlank()) return ResponseEntity.badRequest().body(Map.of("error", "embeddingModel is required"));
         aiConfigService.setProvider(provider); if (baseUrl != null) aiConfigService.setBaseUrl(baseUrl);
         aiConfigService.setActiveChatModel(chatModel); aiConfigService.setActiveEmbeddingModel(embeddingModel);
-        if (body.get("autoResolveThreshold") != null) aiConfigService.setAutoResolveThreshold(body.get("autoResolveThreshold"));
         if (body.get("hitlThreshold") != null) aiConfigService.setHitlThreshold(body.get("hitlThreshold"));
-        if (body.get("blastRadiusThreshold") != null) aiConfigService.setBlastRadiusThreshold(body.get("blastRadiusThreshold"));
-        if (body.get("servicenowEnabled") != null) aiConfigService.setServicenowEnabled(body.get("servicenowEnabled"));
-        if (body.get("freshserviceEnabled") != null) aiConfigService.setFreshserviceEnabled(body.get("freshserviceEnabled"));
         if (body.get("webSearchEnabled") != null) aiConfigService.setWebSearchEnabled(body.get("webSearchEnabled"));
         return ResponseEntity.ok(Map.of("message", "AI & Platform Configuration updated successfully", "provider", provider, "chatModel", chatModel, "embeddingModel", embeddingModel));
     }
@@ -152,22 +146,46 @@ public class AiConfigController {
     }
 
     /**
-     * The unattended-remediation kill switch. Lives here rather than in a properties file
-     * because the person who needs to turn autonomy off at 3am is an admin with a browser,
-     * not someone who can redeploy.
+     * Whether someone with no account can read incident counts and a redacted status search.
+     * Same reasoning as the kill switch above: the person who needs to close the front door is
+     * an admin with a browser.
      */
-    @GetMapping("/autorun")
-    public ResponseEntity<?> getAutoRun() {
-        return ResponseEntity.ok(Map.of("enabled", autoRemediation.enabled()));
+    @GetMapping("/public-read")
+    public ResponseEntity<?> getPublicRead() {
+        return ResponseEntity.ok(Map.of("enabled", publicRead.enabled(), "tenantId", publicRead.tenantId()));
     }
 
-    @PostMapping("/autorun")
-    public ResponseEntity<?> setAutoRun(@RequestBody Map<String, String> body) {
+    @PostMapping("/public-read")
+    public ResponseEntity<?> setPublicRead(@RequestBody Map<String, String> body) {
         boolean enabled = Boolean.parseBoolean(body.getOrDefault("enabled", "false"));
-        autoRemediation.setEnabled(enabled);
+        publicRead.setEnabled(enabled);
         return ResponseEntity.ok(Map.of("enabled", enabled, "message", enabled
-                ? "Unattended remediation is ON. A new incident that closely matches a resolved one may "
-                        + "now repeat that incident's approved read-only or restart tool without waiting for approval."
-                : "Unattended remediation is OFF. Every action now waits for a human approval."));
+                ? "Anonymous read is ON. Visitors with no account can see incident counts, statuses and "
+                        + "ticket subjects — never descriptions, assignees or target hosts."
+                : "Anonymous read is OFF. Every incident question now requires signing in."));
+    }
+
+    /**
+     * Whether the person who raises a plan may also approve it.
+     *
+     * Exposed here because a workspace with one operator has nobody else to be the second
+     * pair of eyes, and leaving it in a properties file means that operator cannot run
+     * anything at all without a redeploy. Turning it off is a real reduction in control, so
+     * the response says so in the words an admin needs rather than a bare boolean.
+     */
+    @GetMapping("/separation-of-duties")
+    public ResponseEntity<?> getSeparationOfDuties() {
+        return ResponseEntity.ok(Map.of("enabled", hitl.separationOfDuties()));
+    }
+
+    @PostMapping("/separation-of-duties")
+    public ResponseEntity<?> setSeparationOfDuties(@RequestBody Map<String, String> body) {
+        boolean enabled = Boolean.parseBoolean(body.getOrDefault("enabled", "true"));
+        hitl.setSeparationOfDuties(enabled);
+        return ResponseEntity.ok(Map.of("enabled", enabled, "message", enabled
+                ? "Separation of duties is ON. The person who raises a plan cannot approve it, so every "
+                        + "action needs two accounts."
+                : "Separation of duties is OFF. One person can now raise, approve and run a plan — including "
+                        + "straight from chat. Every step is still recorded in the audit trail under their name."));
     }
 }

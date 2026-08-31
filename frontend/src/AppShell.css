@@ -35,6 +35,7 @@ body::before {
 /* App Shell Flex Layout */
 .shell {
   min-height: 100vh;
+  min-height: 100dvh; /* dvh so a phone's browser chrome does not clip the composer */
   display: flex;
   background: var(--bg);
   color: var(--text-1);
@@ -56,6 +57,7 @@ body::before {
   position: sticky;
   top: 0;
   height: 100vh;
+  height: 100dvh;
   overflow-y: auto;
   z-index: 40;
   transition: width var(--transition-base), transform var(--transition-base);
@@ -201,6 +203,7 @@ body::before {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   background: var(--bg);
 }
@@ -610,4 +613,124 @@ body::before {
     padding-left: 10px;
     padding-right: 10px;
   }
+}
+
+/* ═════════════════════════════════════════════════════════════════════════════
+   CHAT-FIRST SHELL ADDITIONS
+   The assistant at "/" is the product's front door, so it gets the whole canvas:
+   no page header, no page padding, and no outer scroll — ChatPage.css owns all
+   three. Below 720px the sidebar becomes a drawer, because at 640px it used to
+   simply vanish and a phone had no navigation at all.
+   ═════════════════════════════════════════════════════════════════════════════ */
+
+.page-area-chat {
+  overflow: hidden; /* the message list scrolls, the page does not */
+}
+
+.page-content-chat {
+  padding: 0;
+  height: 100%;
+  min-height: 0;
+}
+
+/* Anonymous topbar: a brand button where the command palette would be, since a
+   visitor with no account has no destinations to jump to. */
+.topbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 6px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.topbar-brand .brand-mark {
+  width: 26px;
+  height: 26px;
+  font-size: 13px;
+}
+
+.topbar-signin {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 7px 14px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: #fff;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.topbar-signin:hover { filter: brightness(1.08); }
+
+/* Hamburger. Hidden above the drawer breakpoint, where the sidebar is always present. */
+.topbar-drawer {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.topbar-drawer:hover { color: var(--text-1); border-color: var(--border-bright); }
+
+.sidebar-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 39;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+@media (max-width: 720px) {
+  .topbar-drawer { display: inline-flex; }
+  .sidebar-backdrop { display: block; }
+
+  /* Off-canvas, and at full width with its labels back: a 68px icon rail sliding
+     over a phone screen costs the same space as the real thing and reads worse. */
+  .app-sidebar {
+    display: flex;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 260px;
+    flex-basis: 260px;
+    height: 100dvh;
+    transform: translateX(-100%);
+    box-shadow: var(--shadow-lg);
+  }
+
+  .app-sidebar.open { transform: translateX(0); }
+
+  .brand-block { justify-content: flex-start; padding: 0 20px; }
+  .brand-name, .workspace-card { display: block; }
+  .sidebar-label { display: block; padding: 0 12px 8px; }
+  .sidebar-link { justify-content: flex-start; padding: 9px 12px; }
+  .sidebar-link span { display: inline; }
+  .sidebar-section { padding: 20px 12px 0; }
+  .sidebar-footer { padding: 16px 12px; }
+}
+
+@media (max-width: 375px) {
+  /* 44px touch targets on the smallest screen the shell supports. */
+  .topbar-drawer { width: 44px; height: 44px; }
+  .topbar-signin { min-height: 44px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-sidebar { transition: none; }
 }

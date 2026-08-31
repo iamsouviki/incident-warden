@@ -8,6 +8,7 @@ import com.company.mcp.repository.ActionExecutionRepository;
 import com.company.mcp.repository.HitlRequestRepository;
 import com.company.mcp.repository.IncidentRepository;
 import com.company.mcp.repository.RemediationPlanRepository;
+import com.company.mcp.repository.SystemConfigRepository;
 import com.company.mcp.repository.TeamEmployeeRepository;
 import com.company.mcp.repository.UserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -48,13 +49,16 @@ class HitlWorkflowServiceTest {
     private HitlWorkflowService workflow(double hitlThreshold, boolean allowUngrounded) {
         RemediationScriptService scripts = new RemediationScriptService(rag, new GuardrailService(), 100);
         HitlWorkflowService workflow = new HitlWorkflowService(incidents, plans, requests, executions, currentUser,
-                rag, new GuardrailService(), new AgentAssessmentService(hitlThreshold, 0.85, null), audit, new ObjectMapper(),
-                new RemediationToolRegistry(new ObjectMapper(), new GuardrailService()),
+                rag, new GuardrailService(), new AgentAssessmentService(hitlThreshold, 0.85, null, null, null), audit, new ObjectMapper(),
+                new RemediationToolRegistry(new ObjectMapper(), new GuardrailService(), null),
                 mock(SopProcedureService.class), scripts, mock(IncidentPrecedentService.class),
                 // Roster lookups, for naming who may approve. Left unstubbed: these tests assert
                 // on the gate's decision, not on who gets told about it, and Mockito's empty
                 // Optional/List is the honest answer for a workspace with no roster loaded.
-                mock(TeamEmployeeRepository.class), mock(UserRepository.class));
+                mock(TeamEmployeeRepository.class), mock(UserRepository.class),
+                // No config rows stubbed, so every UI-managed policy falls back to the
+                // deployed default set below — which is what these tests are asserting on.
+                mock(SystemConfigRepository.class));
         // @Value is not applied outside Spring, so the policy flags are set explicitly
         // rather than left at the Java default, which would silently test the wrong policy.
         ReflectionTestUtils.setField(workflow, "allowUngroundedScripts", allowUngrounded);
@@ -221,5 +225,32 @@ class HitlWorkflowServiceTest {
         assertTrue(String.valueOf(result.get("action")).contains("99%"),
                 "action was " + result.get("action"));
         verify(requests, never()).save(any());
+    }
+
+    /**
+     * A second plan on an incident that already has one awaiting a decision. Two things must
+     * hold and neither did: the refusal has to say which gate closed — it was reported as
+     * GUARDRAIL_BLOCKED, sending an operator to look for a dangerous script that does not
+     * exist — and it must not touch the incident, which was being flipped from
+     * PENDING_APPROVAL to ESCALATED while the first plan still sat in the queue.
+     */
+    @Test
+    void aDuplicatePlanNamesTheOpenOneAndLeavesTheIncidentAlone() {
+        UUID incidentId = stubIncident("Service unavailable", "The tomcat service is not responding");
+        RemediationPlan open = new RemediationPlan();
+        open.setStatus("PENDING_APPROVAL");
+        when(plans.findByIncidentIdOrderByCreatedAtDesc(incidentId)).thenReturn(List.of(open));
+        when(rag.findApprovedSopEvidence(eq("tenant-a"), any())).thenReturn(new SopEvidence(
+                true, true, List.of(UUID.randomUUID()), "SOP: restart the tomcat service", 0.95,
+                "APPROVED_TENANT_SOP_MATCH", "RESTART_SERVICE:tomcat:linux"));
+
+        Map<String, Object> result = workflow(0.70, false).createPlan(incidentId);
+
+        assertEquals("ESCALATE", result.get("route"));
+        assertEquals("PLAN_ALREADY_AWAITING_DECISION", result.get("reason"));
+        assertTrue(String.valueOf(result.get("action")).contains("review queue"),
+                "action was " + result.get("action"));
+        verify(requests, never()).save(any());
+        verify(incidents, never()).save(any(Incident.class));
     }
 }

@@ -13,11 +13,11 @@
     </parent>
 
     <groupId>com.mcp</groupId>
-    <artifactId>incident-automation</artifactId>
+    <artifactId>incident-warden</artifactId>
     <version>1.0.0</version>
-    <name>MCP Incident Automation</name>
+    <name>Incident Warden</name>
     <description>Open-source human-in-the-loop AI incident automation platform</description>
-    <url>https://github.com/iamsouviki/mcp-incident-automation</url>
+    <url>https://github.com/iamsouviki/incident-warden</url>
     <licenses>
         <license>
             <name>Apache License, Version 2.0</name>

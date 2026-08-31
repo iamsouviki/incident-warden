@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { authFetch, getStoredUser } from '../services/api';
 import { Play, CheckCircle, XCircle, Trash2, Plus, Save, Sparkles, AlertTriangle } from 'lucide-react';
+import SkillsPanel from '../components/SkillsPanel';
+
 import './ScriptEditorPage.css'; // Reuse or import editor styles
 
 interface SavedScript {
@@ -41,6 +43,10 @@ const ToolsPage: React.FC = () => {
 
   // Left panel state
   const [leftTab, setLeftTab] = useState<'saved' | 'history'>('saved');
+  // Skills live here rather than behind a seventh menu entry: they are what decides which
+  // scripts this page is allowed to produce, so they belong on the same page as the scripts.
+  const [mode, setMode] = useState<'scripts' | 'skills'>('scripts');
+  const isAdmin = user?.role === 'ADMIN';
   const [savedScripts, setSavedScripts] = useState<SavedScript[]>([]);
   const [executionLogs, setExecutionLogs] = useState<ExecutionLog[]>([]);
   const [loadingList, setLoadingList] = useState(false);
@@ -346,6 +352,29 @@ const ToolsPage: React.FC = () => {
   };
 
   return (
+    <div style={{ display: 'grid', gap: '16px', width: '100%' }}>
+
+    {/* ── Scripts vs Skills. Admin only: skills decide what may run at all. ── */}
+    {isAdmin && (
+      <div style={{ display: 'inline-grid', gridTemplateColumns: '1fr 1fr', gap: '6px', background: 'var(--surface2)', padding: '4px', borderRadius: '6px', maxWidth: '320px' }}>
+        {(['scripts', 'skills'] as const).map(m => (
+          <button
+            key={m}
+            onClick={() => setMode(m)}
+            style={{
+              border: 'none', background: mode === m ? 'var(--surface)' : 'transparent',
+              color: mode === m ? 'var(--text)' : 'var(--text-dim)',
+              minHeight: '36px', padding: '0 14px', borderRadius: '4px', cursor: 'pointer',
+              fontSize: '12px', fontWeight: 600, textTransform: 'capitalize',
+            }}
+          >
+            {m === 'scripts' ? 'Scripts' : 'Skills'}
+          </button>
+        ))}
+      </div>
+    )}
+
+    {isAdmin && mode === 'skills' ? <SkillsPanel /> : (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr)) 1.2fr', gap: '20px', minHeight: 'calc(100vh - 160px)', width: '100%' }}>
       
       {/* ── LEFT PANEL: Saved Tools Directory and execution history ── */}
@@ -689,6 +718,8 @@ const ToolsPage: React.FC = () => {
           )}
         </div>
       </div>
+    </div>
+    )}
     </div>
   );
 };

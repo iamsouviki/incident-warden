@@ -8,6 +8,8 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class AgentAssessmentServiceTest {
     // The production HITL band (0.80) and prior (0.85) are passed explicitly: this
@@ -15,7 +17,7 @@ class AgentAssessmentServiceTest {
     // null repository = this tenant has no authored procedures, so classification falls back
     // to the foundational vocabulary. That is exactly the path these cases assert, and it
     // keeps them a unit test rather than a database test.
-    private final AgentAssessmentService agents = new AgentAssessmentService(0.80, 0.85, null);
+    private final AgentAssessmentService agents = new AgentAssessmentService(0.80, 0.85, null, null, null);
 
     @Test
     void escalatesWhenTrustedSopEvidenceDoesNotReachTheHitlConfidenceBand() {
@@ -114,5 +116,31 @@ class AgentAssessmentServiceTest {
                 .description("Tomcat is not responding on the application server.")
                 .priority("P3").externalId("FS-9002").build();
         assertEquals("HITL_REQUIRED", agents.assess(p3, perfect, 1.0, 1.0).route());
+    }
+
+    /**
+     * The band comes from the config row the AI configuration page writes, not from the
+     * property the planner was constructed with. Before this, an admin lowering the band on
+     * that page changed incident routing and nothing else — the planner kept its own copy and
+     * went on refusing to raise a plan at the old number.
+     */
+    @Test
+    void theBandAnAdminSetsOnTheConfigPageIsTheBandThePlannerUses() {
+        AiConfigService config = mock(AiConfigService.class);
+        when(config.getHitlThreshold()).thenReturn("0.40");
+        AgentAssessmentService tuned = new AgentAssessmentService(0.80, 0.85, null, config, null);
+
+        Incident p2 = Incident.builder().id(UUID.randomUUID()).tenantId("tenant-a")
+                .subject("Tomcat application unresponsive at store 0042")
+                .description("Tomcat is not responding on the application server.")
+                .priority("P2").externalId("FS-9003").build();
+        SopEvidence perfect = new SopEvidence(true, true, List.of(UUID.randomUUID()),
+                "Approved SOP: restart the Tomcat service, then confirm the health endpoint.", 1.0,
+                "APPROVED_TENANT_SOP_MATCH");
+
+        assertEquals(40.0, tuned.hitlBandPercent());
+        // Same inputs the test above proves are stuck at ESCALATE against a 70-80% band.
+        assertEquals("HITL_REQUIRED", tuned.assess(p2, perfect, 1.0, 1.0).route());
+        assertEquals("ESCALATE", agents.assess(p2, perfect, 1.0, 1.0).route());
     }
 }

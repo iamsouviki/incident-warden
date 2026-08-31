@@ -54,6 +54,9 @@ logs/
 .project
 .classpath
 .settings/
+# IDE-generated scratch under .github/ — everything else in .github/ is committed on purpose.
+.github/java-upgrade/
+.github/modernize/
 
 # ── OS ──────────────────────────────────────────────────────────────────────────
 .DS_Store

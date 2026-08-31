@@ -65,6 +65,8 @@ interface ReviewDetail {
     grounded: boolean;
     lineCount: number;
     provenance: string;
+    /** Plain-language summary from ScriptExplainer, so this page and chat say the same thing. */
+    explanation?: { what: string; how: string[] };
   };
   precedent: {
     reference?: string;
@@ -286,6 +288,14 @@ const HitlReviewConsole: React.FC<{ requestId: string; onBack: () => void; onCha
               </div>
             </div>
             <p className="review-provenance">{script.provenance}</p>
+            {/* What it does and how, above the code. A reviewer who cannot read shell still has
+                to be able to reject this, and "it looked fine" is not a review. */}
+            {script.explanation?.what && <p className="review-what">{script.explanation.what}</p>}
+            {script.explanation?.how?.length ? (
+              <ol className="review-how">
+                {script.explanation.how.map((step, i) => <li key={i}>{step}</li>)}
+              </ol>
+            ) : null}
             {script.script
               ? <pre className="review-script"><code>{script.script}</code></pre>
               : <div className="review-empty">No script is attached to this plan, so there is nothing that can execute.</div>}

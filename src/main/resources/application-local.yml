@@ -47,15 +47,9 @@ mcp:
       # request" on login. Loopback only — this is the local profile; every other profile
       # still lists exact origins.
       allowed-origins: http://localhost:*,http://127.0.0.1:*
-  autonomy:
-    enabled: true
-    poll-interval-ms: 5000
-    batch-size: 10
-    allow-p1: false
   telemetry:
     auto-create-incidents: true
   confidence:
-    auto-resolve-threshold: 0.85
     hitl-threshold: 0.70
   hitl:
     # The local demo seeds a single 'admin' account, which must be able to both

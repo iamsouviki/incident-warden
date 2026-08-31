@@ -85,9 +85,11 @@ const TeamsPage: React.FC = () => {
   const [userAccRole, setUserAccRole] = useState<'VIEWER' | 'ANALYST' | 'ADMIN'>('ANALYST');
   const [userAccDepartment, setUserAccDepartment] = useState('');
   const [creatingUser, setCreatingUser] = useState(false);
-  // Shown before the first create, then replaced by whatever the server actually issued.
-  // ponytail: one literal as an opening hint; the server's value wins the moment it answers.
-  const [defaultPassword, setDefaultPassword] = useState('michaels@1');
+  // Empty until the server answers. It used to open on a hard-coded literal, which was a
+  // guess at a credential this page does not own: the backend derives it from
+  // MCP_DEFAULT_PASSWORD or generates one per boot, so any literal here is either stale or
+  // — worse — correct and printed on a screen before anyone has created a user.
+  const [defaultPassword, setDefaultPassword] = useState('');
   const [userModalError, setUserModalError] = useState<string | null>(null);
   const [userModalSuccess, setUserModalSuccess] = useState<string | null>(null);
 
@@ -212,13 +214,15 @@ const TeamsPage: React.FC = () => {
       if (!res.ok) {
         throw new Error(data.error || `Failed to create user (${res.status})`);
       }
-      const issued = data.defaultPassword || defaultPassword;
+      const issued: string = data.defaultPassword || '';
       setDefaultPassword(issued);
       setUserAccUsername('');
       setUserAccFullName('');
       setUserAccEmail('');
       setUserAccDepartment('');
-      setUserModalSuccess(`User created. Their password is ${issued} — they should change it on first sign-in.`);
+      setUserModalSuccess(issued
+        ? `User created. Their password is ${issued} — they should change it on first sign-in.`
+        : 'User created. The server did not return a password, so reset it from the API before handing the account over.');
       await fetchUsers();
       // Left open deliberately. This banner is the only place the issued password is ever
       // shown; it used to auto-close after 1.5s, which is not long enough to read a
@@ -943,8 +947,9 @@ const TeamsPage: React.FC = () => {
                 </div>
               </div>
               <div style={{ padding: '10px 12px', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: '6px', fontSize: '11.5px', color: 'var(--text-2)' }}>
-                <span>Initial default password will be: </span>
-                <code style={{ color: 'var(--accent)', fontWeight: 800 }}>{defaultPassword}</code>
+                {defaultPassword
+                  ? <><span>Initial default password will be: </span><code style={{ color: 'var(--accent)', fontWeight: 800 }}>{defaultPassword}</code></>
+                  : <span>The server issues the initial password when the account is created, and it is shown here once. Copy it then — this is the only time it is displayed.</span>}
               </div>
               {userModalError && <div className="error-alert">{userModalError}</div>}
               {userModalSuccess && <div style={{ padding: '10px 14px', background: 'var(--ok-dim)', color: 'var(--ok)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: '6px', fontSize: '12.5px', fontWeight: 600 }}>{userModalSuccess}</div>}

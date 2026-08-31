@@ -55,7 +55,8 @@ Local development is ready:
   UI:      http://localhost:5173
   API:     http://localhost:8080
   Health:  http://localhost:8080/api/health
-  Login:   admin / michaels@1
+  Login:   admin / \$MCP_DEFAULT_PASSWORD (or the generated password the backend
+           logged at startup — grep logs/backend-local.log for [BOOTSTRAP])
 
 Press Ctrl+C to stop both services.
 EOF

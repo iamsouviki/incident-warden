@@ -6,7 +6,7 @@
       "runtimeExecutable": "sh",
       "runtimeArgs": [
         "-c",
-        "set -a; [ -f .env.local ] && . ./.env.local; set +a; exec mvn -o spring-boot:run -Dspring-boot.run.profiles=local -Dmaven.test.skip=true \"-Dspring-boot.run.jvmArguments=-Dmcp.autonomy.execution-enabled=true -Dmcp.autonomy.executor-url=http://localhost:9099\""
+        "set -a; [ -f .env.local ] && . ./.env.local; set +a; exec mvn -o spring-boot:run -Dspring-boot.run.profiles=local -Dmaven.test.skip=true \"-Dspring-boot.run.jvmArguments=-Dmcp.executor.enabled=true -Dmcp.executor.url=http://localhost:9099\""
       ],
       "port": 8080
     },
@@ -27,6 +27,24 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--prefix", "frontend"],
       "port": 5173
+    },
+    {
+      "name": "frontend-preview",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "VITE_API_TARGET=${VITE_API_TARGET:-http://127.0.0.1:8081} exec npm run dev --prefix frontend -- --port 5199 --strictPort"
+      ],
+      "port": 5199
+    },
+    {
+      "name": "backend-preview",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "set -a; [ -f .env.local ] && . ./.env.local; set +a; exec mvn -o spring-boot:run -Dspring-boot.run.profiles=local -Dmaven.test.skip=true \"-Dspring-boot.run.jvmArguments=-Dserver.port=8081 -Dmcp.executor.enabled=true -Dmcp.executor.url=http://localhost:9099\""
+      ],
+      "port": 8081
     }
   ]
 }

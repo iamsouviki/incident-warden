@@ -39,13 +39,8 @@ public class AiConfigService {
 
     private String activeChatModel = "qwen2.5-coder:3b";
     private String activeEmbeddingModel = "nomic-embed-text:latest";
-    @org.springframework.beans.factory.annotation.Value("${mcp.confidence.auto-resolve-threshold:1.00}")
-    private String autoResolveThreshold = "1.00";
     @org.springframework.beans.factory.annotation.Value("${mcp.confidence.hitl-threshold:0.80}")
     private String hitlThreshold = "0.80";
-    private String blastRadiusThreshold = "0.40";
-    private String servicenowEnabled = "false";
-    private String freshserviceEnabled = "false";
 
     /**
      * Whether ticket analysis may consult public web results when no approved SOP matches.
@@ -82,20 +77,8 @@ public class AiConfigService {
                     case "active_embedding_model":
                         this.activeEmbeddingModel = val;
                         break;
-                    case "auto_resolve_threshold":
-                        this.autoResolveThreshold = val;
-                        break;
                     case "hitl_threshold":
                         this.hitlThreshold = val;
-                        break;
-                    case "blast_radius_threshold":
-                        this.blastRadiusThreshold = val;
-                        break;
-                    case "servicenow_enabled":
-                        this.servicenowEnabled = val;
-                        break;
-                    case "freshservice_enabled":
-                        this.freshserviceEnabled = val;
                         break;
                     case "web_search_enabled":
                         this.webSearchEnabled = val;
@@ -158,44 +141,33 @@ public class AiConfigService {
         updateConfig("active_embedding_model", activeEmbeddingModel);
     }
 
-    public String getAutoResolveThreshold() {
-        return autoResolveThreshold;
-    }
-
-    public void setAutoResolveThreshold(String autoResolveThreshold) {
-        this.autoResolveThreshold = autoResolveThreshold;
-        updateConfig("auto_resolve_threshold", autoResolveThreshold);
-    }
-
     public String getHitlThreshold() {
         return hitlThreshold;
+    }
+
+    /**
+     * A stored threshold as a 0-100 percentage, or {@code fallback} when it is unset or junk.
+     *
+     * One parser, shared, because there were two: this page writes "0.80", scores are
+     * percentages, and every reader had to know that. The second copy lived in
+     * {@link AgentAssessmentService}, which did not read this row at all — so moving the band
+     * on the AI configuration page changed how an incident was routed but not whether a plan
+     * could be raised for it. A threshold with two homes is a setting that appears to work.
+     */
+    public static double asPercent(String value, double fallback) {
+        try {
+            double parsed = Double.parseDouble(value);
+            // The UI stores thresholds as 0.80 / 1.00 while scores are 0-100.
+            if (parsed > 0 && parsed <= 1.0) parsed *= 100.0;
+            return Math.min(100.0, Math.max(0.0, parsed));
+        } catch (Exception ignored) {
+            return fallback;
+        }
     }
 
     public void setHitlThreshold(String hitlThreshold) {
         this.hitlThreshold = hitlThreshold;
         updateConfig("hitl_threshold", hitlThreshold);
-    }
-
-    public String getBlastRadiusThreshold() {
-        return blastRadiusThreshold;
-    }
-
-    public void setBlastRadiusThreshold(String blastRadiusThreshold) {
-        this.blastRadiusThreshold = blastRadiusThreshold;
-        updateConfig("blast_radius_threshold", blastRadiusThreshold);
-    }
-
-    public String getServicenowEnabled() {
-        return servicenowEnabled;
-    }
-
-    public void setServicenowEnabled(String servicenowEnabled) {
-        this.servicenowEnabled = servicenowEnabled;
-        updateConfig("servicenow_enabled", servicenowEnabled);
-    }
-
-    public String getFreshserviceEnabled() {
-        return freshserviceEnabled;
     }
 
     public String getWebSearchEnabled() {
@@ -205,10 +177,5 @@ public class AiConfigService {
     public void setWebSearchEnabled(String webSearchEnabled) {
         this.webSearchEnabled = webSearchEnabled;
         updateConfig("web_search_enabled", webSearchEnabled);
-    }
-
-    public void setFreshserviceEnabled(String freshserviceEnabled) {
-        this.freshserviceEnabled = freshserviceEnabled;
-        updateConfig("freshservice_enabled", freshserviceEnabled);
     }
 }

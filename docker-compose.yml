@@ -84,6 +84,9 @@ services:
       VAULT_TOKEN: dev-token
       VAULT_ENABLED: "false"
       SPRING_PROFILES_ACTIVE: docker
+      # Blank means the container generates a new admin password on every start and logs it
+      # once. Set it in .env if you want to be able to sign in after a restart.
+      MCP_DEFAULT_PASSWORD: ${MCP_DEFAULT_PASSWORD:-}
       # ── LLM API credentials (secrets only — provider/model config lives in application.yml) ──
       # Populate only the key matching the provider set in application.yml → mcp.llm.provider
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}           # needed when provider=openai

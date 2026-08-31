@@ -24,7 +24,7 @@ import static org.mockito.Mockito.when;
  */
 class RemediationScriptServiceTest {
 
-    private final RemediationToolRegistry registry = new RemediationToolRegistry(new ObjectMapper(), new GuardrailService());
+    private final RemediationToolRegistry registry = new RemediationToolRegistry(new ObjectMapper(), new GuardrailService(), null);
 
     /** What the host itself reported, which is the rung that outranks the action key. */
     private IncidentTarget.Platform host(String name) {

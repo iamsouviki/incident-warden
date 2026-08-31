@@ -27,6 +27,8 @@ export interface AuthUser {
   expiresIn: number;
   refreshToken?: string;
   refreshExpiresIn?: number;
+  /** Set by the server when the account still carries a password an admin handed over. */
+  mustChangePassword?: boolean;
 }
 
 export interface LoginResponse {
@@ -41,6 +43,7 @@ export interface LoginResponse {
   tenantName?: string;
   expiresIn: number;
   refreshExpiresIn?: number;
+  mustChangePassword?: boolean;
 }
 
 // ─── Token storage ───────────────────────────────────────────────────────────

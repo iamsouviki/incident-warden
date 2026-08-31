@@ -666,7 +666,7 @@ public class RagService {
             case "who are you":
             case "what is your name":
             case "whats your name":
-                return "I am the MCP Incident Automation SOP Assistant, here to answer your SOP queries.";
+                return "I am the Incident Warden SOP Assistant, here to answer your SOP queries.";
             
             case "what can you do":
             case "help":

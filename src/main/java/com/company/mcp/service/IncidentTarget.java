@@ -2,6 +2,7 @@ package com.company.mcp.service;
 
 import com.company.mcp.model.Incident;
 
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -73,7 +74,34 @@ public final class IncidentTarget {
     private static final Pattern STORE = Pattern.compile(
             "\\bstore\\s*(?:number|no\\.?|#)?\\s*[:=#-]?\\s*(\\d{1,6})\\b", Pattern.CASE_INSENSITIVE);
 
+    /**
+     * Host shapes an admin authored on the Skills page, tried after the built-in patterns.
+     *
+     * Additive on purpose. The estate this was written against uses store-0042-pos-01 and
+     * pos01.store42.local, but a workspace whose tills are named 0042-TILL-03 has no label
+     * word and no second dot, so neither built-in pattern can see it. An authored row makes
+     * that host extractable without a redeploy — and because the built-ins run first, a bad
+     * row can only fail to add a host, never stop one being found.
+     *
+     * Every candidate from an authored pattern still goes through {@link #usable} and
+     * {@link #HOST}, so the trust boundary is unchanged: this widens what is looked for, not
+     * what is accepted.
+     *
+     * ponytail: static and process-global, published once at boot by {@code SkillService}
+     * and refreshed when an extraction skill is saved. This class is a static utility with
+     * ~15 call sites, several with no request context (intake, external sync), so per-tenant
+     * patterns would mean threading a tenant through all of them. The ceiling is one
+     * estate's host conventions. Make this an injected bean when a second estate needs
+     * different ones.
+     */
+    private static volatile List<Pattern> authoredHostPatterns = List.of();
+
     private IncidentTarget() {}
+
+    /** Replaces the authored patterns. Called by {@code SkillService}; a copy is stored. */
+    public static void authoredHostPatterns(List<Pattern> patterns) {
+        authoredHostPatterns = patterns == null ? List.of() : List.copyOf(patterns);
+    }
 
     /**
      * The host named in the ticket text, or "" when it names none.
@@ -249,6 +277,16 @@ public final class IncidentTarget {
         while (bare.find()) {
             String candidate = strip(bare.group(1));
             if (usable(candidate)) return candidate;
+        }
+        // Authored last: an admin's pattern adds host shapes the built-ins cannot see, and
+        // must not be able to shadow the ones they can.
+        for (Pattern pattern : authoredHostPatterns) {
+            Matcher authored = pattern.matcher(text);
+            while (authored.find()) {
+                if (authored.groupCount() < 1) break;
+                String candidate = strip(authored.group(1));
+                if (usable(candidate)) return candidate;
+            }
         }
         return "";
     }

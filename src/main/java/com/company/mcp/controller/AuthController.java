@@ -11,6 +11,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.OffsetDateTime;
 import java.util.*;
 
 @RestController
@@ -23,27 +24,21 @@ public class AuthController {
 
     private static final Set<String> ALLOWED_ROLES = Set.of("VIEWER", "ANALYST", "ADMIN");
 
-    /**
-     * The one password a new account starts with — including the seeded admin, whose hash
-     * is set to this same value by changelog 1.20.
-     *
-     * There used to be two defaults: admin123 for the seed and michaels@1 here. An operator
-     * who read the create-user dialog and then tried to sign in as admin got 401 and
-     * reported the login as broken. Returned in the create response too, so the UI states
-     * whatever this constant is rather than repeating the literal.
-     */
-    public static final String DEFAULT_PASSWORD = "michaels@1";
+    /** Short, because a length rule people route around with "Password1" buys nothing. */
+    private static final int MIN_PASSWORD_LENGTH = 8;
 
     private final UserRepository users;
     private final JwtService jwtService;
     private final PasswordEncoder encoder;
     private final OidcTokenValidator oidc;
     private final RateLimiterService rateLimiter;
+    private final com.company.mcp.config.BootstrapPassword bootstrapPassword;
     private final Set<String> ssoAllowedDomains;
     private final String ssoDefaultTenant;
 
     public AuthController(UserRepository users, JwtService jwtService, PasswordEncoder encoder, OidcTokenValidator oidc,
                           RateLimiterService rateLimiter,
+                          com.company.mcp.config.BootstrapPassword bootstrapPassword,
                           @Value("${mcp.sso.allowed-email-domains:}") String ssoAllowedDomains,
                           @Value("${mcp.sso.default-tenant-id:tenant-1}") String ssoDefaultTenant) {
         this.users      = users;
@@ -51,6 +46,7 @@ public class AuthController {
         this.encoder    = encoder;
         this.oidc       = oidc;
         this.rateLimiter = rateLimiter;
+        this.bootstrapPassword = bootstrapPassword;
         this.ssoAllowedDomains = java.util.Arrays.stream(ssoAllowedDomains.split(","))
                 .map(String::trim).map(String::toLowerCase).filter(d -> !d.isBlank())
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
@@ -89,17 +85,21 @@ public class AuthController {
         String refreshToken = jwtService.generate(user.getUsername(),
                 Map.of("role", role, "tenantId", user.getTenantId(), "tokenType", "refresh", "rememberMe", remember), refreshTtl);
 
-        return ResponseEntity.ok(Map.of(
-                "token",           token,
-                "refreshToken",    refreshToken,
-                "username",        user.getUsername(),
-                "fullName",        user.getFullName() != null ? user.getFullName() : user.getUsername(),
-                "role",            role,
-                "department",      user.getDepartment() != null ? user.getDepartment() : "",
-                "tenantId",        user.getTenantId(),
-                "tenantName",      user.getTenantName() != null ? user.getTenantName() : "Primary Workspace",
-                "expiresIn",       ACCESS_TTL,
-                "refreshExpiresIn", refreshTtl
+        return ResponseEntity.ok(Map.ofEntries(
+                Map.entry("token",           token),
+                Map.entry("refreshToken",    refreshToken),
+                Map.entry("username",        user.getUsername()),
+                Map.entry("fullName",        user.getFullName() != null ? user.getFullName() : user.getUsername()),
+                Map.entry("role",            role),
+                Map.entry("department",      user.getDepartment() != null ? user.getDepartment() : ""),
+                Map.entry("tenantId",        user.getTenantId()),
+                Map.entry("tenantName",      user.getTenantName() != null ? user.getTenantName() : "Primary Workspace"),
+                Map.entry("expiresIn",       ACCESS_TTL),
+                Map.entry("refreshExpiresIn", refreshTtl),
+                // The client blocks on this until POST /api/auth/password succeeds. Reported at
+                // sign-in rather than discovered later, because the whole point of the flag is
+                // that the password an admin read out loud does not survive first use.
+                Map.entry("mustChangePassword", user.isMustChangePassword())
         ));
     }
 
@@ -254,13 +254,18 @@ public class AuthController {
                     "email", u.getEmail() != null ? u.getEmail() : "",
                     "role", u.getRole(),
                     "department", u.getDepartment() != null ? u.getDepartment() : "",
-                    "enabled", u.isEnabled()
+                    "enabled", u.isEnabled(),
+                    "mustChangePassword", u.isMustChangePassword()
             ));
         }
         return ResponseEntity.ok(result);
     }
 
-    /** POST /api/auth/users — Admin creation of a new user with {@link #DEFAULT_PASSWORD}. */
+    /**
+     * POST /api/auth/users — Admin creation of a new user. An omitted password falls back to
+     * {@link com.company.mcp.config.BootstrapPassword#starter()}, and the response states which
+     * password was actually set so the admin has something to hand over.
+     */
     @PostMapping("/users")
     public ResponseEntity<?> createUser(@RequestHeader("Authorization") String authHeader, @RequestBody Map<String, String> body) {
         String token = authHeader.startsWith("Bearer ") ? authHeader.substring(7) : authHeader;
@@ -276,8 +281,11 @@ public class AuthController {
         String email = body.getOrDefault("email", "").trim();
         String role = body.getOrDefault("role", "VIEWER").trim().toUpperCase();
         String department = body.getOrDefault("department", "").trim();
-        String password = body.getOrDefault("password", DEFAULT_PASSWORD).trim();
-        if (password.isBlank()) password = DEFAULT_PASSWORD;
+        String password = body.getOrDefault("password", "").trim();
+        // Handed over, not chosen — so the account is flagged and the first sign-in has to
+        // replace it. An admin who types a password in is doing the same thing by hand, so
+        // that case is flagged too: neither of them is a password its owner picked.
+        if (password.isBlank()) password = bootstrapPassword.starter();
 
         if (username.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Username is required"));
@@ -308,17 +316,145 @@ public class AuthController {
         u.setRole(role);
         u.setDepartment(department);
         u.setPasswordHash(encoder.encode(password));
+        u.setMustChangePassword(true);
         u.setTenantId(tenantId);
         u.setTenantName("Primary Workspace");
         u.setEnabled(true);
         AppUser saved = users.save(u);
 
         return ResponseEntity.ok(Map.of(
-                "message", "User created successfully with default password",
-                "defaultPassword", DEFAULT_PASSWORD,
+                "message", "User created. Give them this password — they will be asked to replace it "
+                        + "the first time they sign in.",
+                "defaultPassword", password,
                 "username", saved.getUsername(),
                 "role", saved.getRole(),
                 "fullName", saved.getFullName()
         ));
     }
+
+    /**
+     * PUT /api/auth/users/{username} — change a role, or switch an account off.
+     *
+     * Disabling rather than deleting: an incident, a plan and an approval all reference the
+     * username that raised them, so removing the row would leave an audit trail pointing at
+     * nobody. A disabled account cannot sign in, which is the part that matters.
+     */
+    @PutMapping("/users/{username}")
+    public ResponseEntity<?> updateUser(@RequestHeader("Authorization") String authHeader,
+                                        @PathVariable String username,
+                                        @RequestBody Map<String, Object> body) {
+        var caller = requireAdmin(authHeader);
+        if (caller.error() != null) return caller.error();
+
+        AppUser u = users.findByUsername(username).orElse(null);
+        if (u == null || !u.getTenantId().equals(caller.tenantId()))
+            return ResponseEntity.status(404).body(Map.of("error", "No such user in this workspace"));
+
+        if (body.get("role") != null) {
+            String role = String.valueOf(body.get("role")).trim().toUpperCase();
+            if (!ALLOWED_ROLES.contains(role))
+                return ResponseEntity.badRequest().body(Map.of("error",
+                        "Unknown role '" + role + "'. Choose one of " + ALLOWED_ROLES));
+            // Checked before anything is written: an admin who demotes their own account has
+            // locked the workspace out of its own settings page with no way back but the
+            // database. Same reason the disable below refuses.
+            if (!"ADMIN".equals(role) && u.getUsername().equals(caller.username()))
+                return ResponseEntity.badRequest().body(Map.of("error",
+                        "You cannot remove your own admin role — ask another admin to do it."));
+            u.setRole(role);
+        }
+        if (body.get("enabled") != null) {
+            boolean enabled = Boolean.parseBoolean(String.valueOf(body.get("enabled")));
+            if (!enabled && u.getUsername().equals(caller.username()))
+                return ResponseEntity.badRequest().body(Map.of("error",
+                        "You cannot disable the account you are signed in with."));
+            u.setEnabled(enabled);
+        }
+
+        u.setUpdatedAt(OffsetDateTime.now());
+        users.save(u);
+        return ResponseEntity.ok(Map.of("message", u.getUsername() + " updated.",
+                "role", u.getRole(), "enabled", u.isEnabled()));
+    }
+
+    /** POST /api/auth/users/{username}/reset-password — back to the starter, and flagged again. */
+    @PostMapping("/users/{username}/reset-password")
+    public ResponseEntity<?> resetPassword(@RequestHeader("Authorization") String authHeader,
+                                           @PathVariable String username) {
+        var caller = requireAdmin(authHeader);
+        if (caller.error() != null) return caller.error();
+
+        AppUser u = users.findByUsername(username).orElse(null);
+        if (u == null || !u.getTenantId().equals(caller.tenantId()))
+            return ResponseEntity.status(404).body(Map.of("error", "No such user in this workspace"));
+
+        u.setPasswordHash(encoder.encode(bootstrapPassword.starter()));
+        u.setMustChangePassword(true);
+        u.setUpdatedAt(OffsetDateTime.now());
+        users.save(u);
+        return ResponseEntity.ok(Map.of(
+                "message", "Password reset. " + u.getUsername() + " signs in with this and is asked "
+                        + "to replace it immediately.",
+                "defaultPassword", bootstrapPassword.starter()));
+    }
+
+    /**
+     * POST /api/auth/password — the signed-in user replaces their own password.
+     *
+     * Open to every role, including VIEWER, on purpose: this is the one write a read-only
+     * account must be able to make, and it is also the only way out of the forced-reset state.
+     * The current password is required even though the caller already holds a valid token, so a
+     * stolen token cannot be turned into a permanent takeover of the account.
+     */
+    @PostMapping("/password")
+    public ResponseEntity<?> changePassword(@RequestHeader("Authorization") String authHeader,
+                                            @RequestBody Map<String, String> body) {
+        String token = authHeader.startsWith("Bearer ") ? authHeader.substring(7) : authHeader;
+        if (!jwtService.isValid(token)) return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+
+        AppUser u = users.findByUsername(jwtService.parse(token).getSubject()).orElse(null);
+        if (u == null || !u.isEnabled())
+            return ResponseEntity.status(401).body(Map.of("error", "Account is no longer active"));
+        if (u.getPasswordHash() == null)
+            return ResponseEntity.badRequest().body(Map.of("error",
+                    "This account signs in through your identity provider and has no password here."));
+
+        String current = body.getOrDefault("currentPassword", "");
+        String next = body.getOrDefault("newPassword", "");
+        // 400, not 401. The token is valid — it is the typed password that is wrong. The client's
+        // authFetch treats every 401 as an expired session and signs the user out, so answering
+        // 401 here would throw somebody out of the app for a typo, and out of a forced reset they
+        // cannot then complete.
+        if (!encoder.matches(current, u.getPasswordHash()))
+            return ResponseEntity.badRequest().body(Map.of("error", "Current password is incorrect"));
+        if (next.length() < MIN_PASSWORD_LENGTH)
+            return ResponseEntity.badRequest().body(Map.of("error",
+                    "Choose a password of at least " + MIN_PASSWORD_LENGTH + " characters."));
+        // Rejecting the starter explicitly, not just "same as current": an account being reset
+        // could otherwise set the published value back and satisfy the flag while changing
+        // nothing an attacker would have to guess.
+        if (next.equals(bootstrapPassword.starter()) || encoder.matches(next, u.getPasswordHash()))
+            return ResponseEntity.badRequest().body(Map.of("error",
+                    "Choose a password that is not the one you were given."));
+
+        u.setPasswordHash(encoder.encode(next));
+        u.setMustChangePassword(false);
+        u.setUpdatedAt(OffsetDateTime.now());
+        users.save(u);
+        return ResponseEntity.ok(Map.of("message", "Password updated.", "mustChangePassword", false));
+    }
+
+    /** Token parsed once, with the two things every admin-only route above needs off it. */
+    private Caller requireAdmin(String authHeader) {
+        String token = authHeader.startsWith("Bearer ") ? authHeader.substring(7) : authHeader;
+        if (!jwtService.isValid(token))
+            return new Caller(null, null, ResponseEntity.status(401).body(Map.of("error", "Unauthorized")));
+        var claims = jwtService.parse(token);
+        if (!"ADMIN".equalsIgnoreCase((String) claims.getOrDefault("role", "")))
+            return new Caller(null, null, ResponseEntity.status(403)
+                    .body(Map.of("error", "Only administrators can manage users")));
+        return new Caller(claims.getSubject(), (String) claims.getOrDefault("tenantId", "tenant-1"), null);
+    }
+
+    private record Caller(String username, String tenantId, ResponseEntity<?> error) {}
 }

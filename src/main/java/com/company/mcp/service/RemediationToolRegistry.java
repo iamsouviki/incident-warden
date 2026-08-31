@@ -62,12 +62,18 @@ public class RemediationToolRegistry {
             "platform\\s*[=:]\\s*\"?([A-Za-z0-9_-]{1,32})", Pattern.CASE_INSENSITIVE);
 
     /**
-     * The tool table. A key not listed here cannot execute, whatever an approved
-     * procedure or an LLM claims. {@code segments} is the exact count expected after
-     * the tool name, so a malformed key is rejected before dispatch rather than being
-     * padded with defaults.
+     * The tool table of last resort. A key not listed in the effective table cannot execute,
+     * whatever an approved procedure or an LLM claims. {@code segments} is the exact count
+     * expected after the tool name, so a malformed key is rejected before dispatch rather
+     * than being padded with defaults.
+     *
+     * These four now live in {@code tools.skills} as editable rows, seeded identically. This
+     * constant remains as the fallback for a database that has not been migrated yet, or one
+     * whose skills table has been emptied: remediation must keep working exactly as it did
+     * before the table existed rather than silently allowlisting nothing, which would read to
+     * an operator as "every tool is suddenly unknown".
      */
-    private static final Map<String, Tool> TOOLS = Map.of(
+    private static final Map<String, Tool> BUILT_IN = Map.of(
             "CHECK_URL",      new Tool("CHECK_URL", 2, false, "Probe an HTTP endpoint and compare the status code."),
             "RESTART_SERVICE", new Tool("RESTART_SERVICE", 2, true, "Restart a named OS service on one host."),
             "CLEAR_CACHE",    new Tool("CLEAR_CACHE", 3, true, "Flush one cache tier."),
@@ -80,37 +86,71 @@ public class RemediationToolRegistry {
 
     private final ObjectMapper json;
     private final GuardrailService guardrails;
+    /** Null in unit tests, which assert the parser against the built-in table. */
+    private final SkillService skills;
 
-    @Value("${mcp.autonomy.execution-enabled:false}")
+    @Value("${mcp.executor.enabled:false}")
     private boolean executionEnabled;
 
     /** Executor agent base URL. Empty means mutating actions simulate instead of running. */
-    @Value("${mcp.autonomy.executor-url:}")
+    @Value("${mcp.executor.url:}")
     private String executorUrl;
 
-    @Value("${mcp.autonomy.executor-token:}")
+    @Value("${mcp.executor.token:}")
     private String executorToken;
 
-    @Value("${mcp.autonomy.executor-timeout-seconds:30}")
+    @Value("${mcp.executor.timeout-seconds:30}")
     private int executorTimeoutSeconds;
 
-    public RemediationToolRegistry(ObjectMapper json, GuardrailService guardrails) {
+    public RemediationToolRegistry(ObjectMapper json, GuardrailService guardrails, SkillService skills) {
         this.json = json;
         this.guardrails = guardrails;
+        this.skills = skills;
+    }
+
+    /**
+     * The tool table in force right now: the admin-editable rows, or the built-in four when
+     * there are none.
+     *
+     * Read per call rather than cached, and read again at dispatch by the same {@link #parse}
+     * every other caller uses. That is deliberate: disabling a tool on the Skills page has to
+     * stop a plan that was approved while it was still enabled, and a cached table would let
+     * that plan through.
+     *
+     * ponytail: default tenant only. {@link #parse} is called from paths with no request
+     * context (external sync, intake), so there is no tenant to key on there without
+     * threading one through every caller. Same ceiling as the extraction patterns, and the
+     * same upgrade: pass a tenant in when a second workspace needs a different tool set.
+     */
+    private Map<String, Tool> table() {
+        if (skills == null) return BUILT_IN;
+        try {
+            Map<String, SkillService.ToolRow> rows = skills.executionTools(null);
+            if (rows.isEmpty()) return BUILT_IN;
+            Map<String, Tool> effective = new java.util.LinkedHashMap<>();
+            rows.forEach((key, row) ->
+                    effective.put(key, new Tool(row.name(), row.segments(), row.mutating(), row.description())));
+            return effective;
+        } catch (Exception e) {
+            // A database that cannot be read must not become a database that allows nothing
+            // and explains nothing. Fall back to the shipped table and say so once.
+            log.warn("[EXEC] Skills table unreadable, using built-in tools: {}", e.getMessage());
+            return BUILT_IN;
+        }
     }
 
     /** The catalogue, for the UI and for MCP {@code tools/list}. */
     public List<Tool> tools() {
-        return TOOLS.values().stream().sorted((a, b) -> a.name().compareTo(b.name())).toList();
+        return table().values().stream().sorted((a, b) -> a.name().compareTo(b.name())).toList();
     }
 
     /**
      * LIVE or SIMULATED — what a mutating action would actually do right now.
      *
-     * Reported from here rather than from a separate {@code mcp.autonomy.execution-mode}
-     * property, because a second property describing the same thing drifts: the Autonomy
-     * page said SIMULATED while this class was dispatching real scripts. These are the same
-     * two conditions {@link #reachable} and the execute path check, read once.
+     * Derived from the two flags that decide it rather than declared in a property of its
+     * own, because a second property describing the same thing drifts: the page that used to
+     * display execution mode read SIMULATED while this class was dispatching real scripts.
+     * These are the same two conditions {@link #reachable} and the execute path check.
      */
     public String dispatchMode() {
         return executionEnabled && executorUrl != null && !executorUrl.isBlank() ? "LIVE" : "SIMULATED";
@@ -124,13 +164,18 @@ public class RemediationToolRegistry {
     public ParsedAction parse(String actionKey) {
         if (actionKey == null || actionKey.isBlank()) return ParsedAction.invalid("ACTION_KEY_MISSING");
         String[] parts = actionKey.trim().split(":", -1);
-        Tool tool = TOOLS.get(parts[0].toUpperCase(Locale.ROOT));
+        Tool tool = table().get(parts[0].toUpperCase(Locale.ROOT));
         if (tool == null) return ParsedAction.invalid("TOOL_NOT_ALLOWLISTED:" + parts[0]);
 
         // CHECK_URL's first argument is itself a URL containing colons, so the tail is
         // rejoined rather than split blindly: everything between the tool name and the
         // final segment is the URL. RERUN_JOB has the same problem from the other end —
         // C:\batch\nightly.ps1 contains the delimiter — so its tail is rejoined too.
+        //
+        // Matched by name, so an admin-authored tool gets plain segment splitting. That is
+        // the safe default: a key whose argument contains a colon simply fails the segment
+        // count and is refused, rather than being silently reassembled a way the author did
+        // not intend.
         List<String> args;
         if ("CHECK_URL".equals(tool.name())) {
             if (parts.length < 3) return ParsedAction.invalid("MALFORMED_ACTION_KEY");
@@ -275,12 +320,12 @@ public class RemediationToolRegistry {
         }
         if (!executionEnabled) {
             return new Outcome("SIMULATED", "SIMULATED",
-                    "Real execution is disabled (mcp.autonomy.execution-enabled=false). Nothing was changed.",
+                    "Real execution is disabled (mcp.executor.enabled=false). Nothing was changed.",
                     "EXECUTION_DISABLED");
         }
         if (executorUrl == null || executorUrl.isBlank()) {
             return new Outcome("SIMULATED", "SIMULATED",
-                    "No executor agent is configured (mcp.autonomy.executor-url). Nothing was changed.",
+                    "No executor agent is configured (mcp.executor.url). Nothing was changed.",
                     "EXECUTOR_NOT_CONFIGURED");
         }
         return dispatchToExecutor(script, language, target, connection);

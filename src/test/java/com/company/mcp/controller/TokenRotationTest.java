@@ -30,12 +30,21 @@ class TokenRotationTest {
     private static final long ONE_DAY = 24 * 60 * 60 * 1000L;
     private static final long SEVEN_DAYS = 7 * ONE_DAY;
 
+    /**
+     * Any string at all: the encoder below is a mock whose {@code matches} always returns
+     * true, so this never has to be a real password — and must not be one. A literal that
+     * looked like a credential here was one of three findings a secret scanner raised on this
+     * repository, all of them the same compiled-in default password.
+     */
+    private static final String IRRELEVANT_PASSWORD = "any-string-the-mock-encoder-accepts";
+
     private final UserRepository users = mock(UserRepository.class);
     private final JwtService jwt = new JwtService("test-secret-that-is-comfortably-over-32-bytes");
     private final PasswordEncoder encoder = mock(PasswordEncoder.class);
     private final RateLimiterService rateLimiter = mock(RateLimiterService.class);
     private final AuthController controller = new AuthController(
-            users, jwt, encoder, mock(OidcTokenValidator.class), rateLimiter, "", "tenant-1");
+            users, jwt, encoder, mock(OidcTokenValidator.class), rateLimiter,
+            mock(com.company.mcp.config.BootstrapPassword.class), "", "tenant-1");
 
     TokenRotationTest() {
         AppUser user = new AppUser();
@@ -95,7 +104,7 @@ class TokenRotationTest {
     private Map<String, Object> login(boolean remember) {
         var http = new org.springframework.mock.web.MockHttpServletRequest();
         ResponseEntity<?> res = controller.login(
-                Map.of("username", "admin", "password", "michaels@1", "rememberMe", remember), http);
+                Map.of("username", "admin", "password", IRRELEVANT_PASSWORD, "rememberMe", remember), http);
         assertThat(res.getStatusCode().value()).isEqualTo(200);
         return asMap(res);
     }

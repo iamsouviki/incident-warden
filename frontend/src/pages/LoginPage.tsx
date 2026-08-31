@@ -1,11 +1,15 @@
 import React, { useState } from 'react';
-import { ArrowRight, CheckCircle2, KeyRound, LockKeyhole, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CheckCircle2, KeyRound, LockKeyhole, ShieldCheck } from 'lucide-react';
 import { login, AuthUser } from '../services/api';
 import './LoginPage.css';
 
-interface Props { onLogin: (user: AuthUser) => void; }
+interface Props {
+  onLogin: (user: AuthUser) => void;
+  /** Back to the assistant without an account. Absent when there is nowhere to go back to. */
+  onSkip?: () => void;
+}
 
-export default function LoginPage({ onLogin }: Props) {
+export default function LoginPage({ onLogin, onSkip }: Props) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
@@ -30,7 +34,7 @@ export default function LoginPage({ onLogin }: Props) {
       <div className="login-grid" />
       <section className="login-shell">
         <div className="login-intro">
-          <div className="login-brand"><span className="login-brand-mark">I</span><span>incident<span>.ai</span></span></div>
+          <div className="login-brand"><span className="login-brand-mark">I</span><span>incident<span> warden</span></span></div>
           <div className="login-eyebrow">Enterprise incident operations</div>
           <h1>Move from signal to safe action.</h1>
           <p>Monitor store systems, coordinate agents, and keep a human decision-maker in control of every high-impact remediation.</p>
@@ -52,9 +56,14 @@ export default function LoginPage({ onLogin }: Props) {
             <button className="login-submit" type="submit" disabled={loading}>{loading ? <><span className="login-spinner" /> Signing in…</> : <>Open workspace <ArrowRight size={15} /></>}</button>
           </form>
           <div className="login-token-note"><LockKeyhole size={13} /><span>Session uses a short-lived access token with verified signature.</span></div>
+          {onSkip && (
+            <button type="button" className="login-skip" onClick={onSkip}>
+              <ArrowLeft size={13} /> Continue without signing in
+            </button>
+          )}
         </div>
       </section>
-      <footer className="login-footer">incident.ai · Operations control plane · Enterprise environment</footer>
+      <footer className="login-footer">Incident Warden · Operations control plane · Enterprise environment</footer>
     </main>
   );
 }

@@ -19,7 +19,9 @@ mvn -o spring-boot:run -Dspring-boot.run.profiles=local -Dmaven.test.skip=true
 npm run dev --prefix frontend
 ```
 
-Then <http://localhost:5173>, sign in as `admin` / `michaels@1`. The two dev stand-ins
+Then <http://localhost:5173>, sign in as `admin`. Set `MCP_DEFAULT_PASSWORD` before you start the
+backend, or read the password it generated out of its own startup log (`grep BOOTSTRAP
+logs/backend-local.log`). The two dev stand-ins
 (`scripts/dev-executor.mjs`, `scripts/dev-smtp.mjs`) make the execution and notification legs
 observable without anything leaving your machine — see [Quick start](README.md#quick-start).
 

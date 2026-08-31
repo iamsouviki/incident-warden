@@ -1,9 +1,9 @@
-<h1 align="center">MCP Incident Automation</h1>
+<h1 align="center">Incident Warden</h1>
 
 <p align="center">
   <b>The open-source human-in-the-loop AI incident automation platform.</b><br>
-  It reads your approved SOPs <i>and your own incident history</i>, writes the actual fix, and asks a
-  human before running it — then repeats proven-safe fixes on its own.
+  It reads your approved SOPs <i>and your own incident history</i>, writes the actual fix, explains it
+  in plain language, and will not run it until a human says yes.
 </p>
 
 <p align="center">
@@ -38,9 +38,14 @@ Approving it pins a SHA-256 hash of the script. Dispatch re-scans the guardrails
 runs a shell itself — approved scripts go to a separate executor agent on the target network, which
 is the only thing holding a credential.
 
-Then the part most tools stop before: once a human has approved and successfully run a given tool for
-a given store, the platform may run *that exact tool* by itself the next time the same fault appears
-at the same store — restart-or-read-only actions only — and email everyone involved that it did.
+There is no second path. **Every run is a person reading a specific script for a specific host and
+approving it — every time, including the hundredth time.** The platform used to inherit a past
+approval and re-run a proven fix by itself; that path is deleted, not disabled. A platform whose
+answer to "can this run without me?" is "only if a config row says so" has to be re-audited every
+time that row changes. This one has to be audited once.
+
+What the score does instead is decide *presentation*: whether a plan is complete enough to be worth
+a human's attention, or whether it escalates with the reason named.
 
 Most AI SRE tooling is advisory: it investigates, it suggests, a person does the work. The tools that
 do act tend to put the approval workflow behind an enterprise licence. Here the approval gate **is**
@@ -52,7 +57,8 @@ the product, and it is in this repository.
 |---|---|
 | **Dual-evidence analysis** | Every ticket is matched against approved SOP procedures *and* the closed-incident history — pgvector similarity plus a keyword classifier that learns its vocabulary from approved procedures — not a bare prompt. |
 | **HITL review console** | A queue showing SOP evidence, matching precedent, the resolved target host and OS, the generated script, and approve/reject with a reason. Separation of duties is enforced outside the demo profile. |
-| **Guarded unattended run** | Lane B executes without a human only when the same store already had a human-approved, successful run of the same tool, the action is restart or read-only, the guardrail scan is clean, and the incident is not P1. Anything else falls back to Lane A. |
+| **Every script explained in words** | Above the code, one sentence naming the effect (read from the *authorised* action) and the steps in order (read from the *script text*). Two sources on purpose: if they disagree, the reviewer sees the disagreement. An unrecognised line is quoted verbatim rather than dropped, so the explanation can never claim a script is smaller than it is. |
+| **Admin-editable agent skills** | The three agent stages — which words mean which category, how a host is named in your estate, which tools may run — are rows in `tools.skills`, edited in the browser. A workspace that calls its tills "lanes" edits a row instead of waiting for a release. |
 | **Platform-aware script generation** | Probes the target to learn its operating system, then emits PowerShell or Bash. Three tiers: deterministic SOP template → model-assisted → refuse. |
 | **Deterministic guardrails** | Allowlisted action keys, blocked terms, hash pinning at approval, re-scan at dispatch, and `dryRun:false` refused on the public execute endpoint. |
 | **AI guardrails** | A scope gate before any model call, a 4 000-character input cap, prompt-injection refusal, a per-user LLM rate limit, and provider failures excluded from the answer cache so one bad minute cannot break a question permanently. |
@@ -61,22 +67,17 @@ the product, and it is in this repository.
 | **JWT access control** | A role matrix over every endpoint, fail-closed on unmapped writes, refresh tokens, and a rate-limited login. |
 | **Runs fully offline** | Postgres + pgvector + Ollama, plus two dev stand-ins (executor, SMTP) that make the whole loop observable with nothing leaving the machine. |
 
-Two lanes, one rule set:
+One path, no exceptions:
 
 ```
-                                   ┌─ Lane A ── HITL ──────────────────────────────────┐
-ticket ─► saved in Postgres ─►  analysis  ─► plan ─► guardrails ─► review queue ─► APPROVE
-              (store, host)     ├ SOP evidence          │                            │ hash pinned
-                                └ precedent (history)   └ BLOCK ─► escalate          ▼ dry run
-                                        │                                        execute ─► RESOLVED
-                                        │                                            (executor agent)
-                                        │
-                                   ┌─ Lane B ── auto-run on proven precedent ──────────┐
-                                   │ same store + human-approved + SOP-backed +        │
-                                   │ read-only/restart tool + clean scan + not P1      │
-                                   └──────────► execute ─► RESOLVED ─► email ──────────┘
-                                                  anything else falls back to Lane A
+ticket ─► saved in Postgres ─► analysis ─► plan ─► guardrails ─► review queue ─► APPROVE
+              (store, host)    ├ SOP evidence        │                            │ hash pinned
+                               ├ precedent (history) └ BLOCK ─► escalate,          ▼ dry run
+                               └ skills (DB rows)             reason named     execute ─► RESOLVED
+                                                                                (executor agent)
 ```
+
+Precedent and confidence raise or lower how a plan is *presented* — never whether a human is asked.
 
 **Demo script for a client walkthrough: [docs/client_poc_demo.md](docs/client_poc_demo.md).**
 It is a run sheet with the exact pages, buttons and expected log lines.
@@ -89,7 +90,7 @@ Read this section before changing anything in the remediation path.
 
 1. **This process never runs a shell.** There is no `ProcessBuilder`, `Runtime.exec` or SSH client
    in the control plane. Approved scripts are POSTed to a separate executor agent
-   (`mcp.autonomy.executor-url`). With that URL unset, "execute" records a simulation and changes
+   (`mcp.executor.url`). With that URL unset, "execute" records a simulation and changes
    nothing.
 2. **Approval pins a SHA-256 hash** covering the script text. Edit one character and dispatch is
    refused — you cannot approve version A and run version B.
@@ -99,9 +100,10 @@ Read this section before changing anything in the remediation path.
    endpoint.
 5. **No integration credential is stored in the database.** `connection_method` names *how* to
    connect (`SSH`/`WINRM`/`AGENT`); the secret for that method lives with the executor on the
-   target network. User login passwords are BCrypt(12) hashes.
-6. **Unattended remediation is a narrow, per-store inheritance of a human approval** — never a
-   confidence score deciding on its own. See [Lane B](#lane-b--unattended-remediation-on-proven-precedent).
+   target network. User login passwords are BCrypt hashes.
+6. **Nothing runs unattended. There is no switch that makes it.** No scheduler scans for work, no
+   confidence score dispatches, and no past approval is inherited by a later incident. Every
+   execution is recorded against the name of a person who read that script.
 7. **A mutating plan with no named host is refused.** Nothing is ever run on a guessed machine.
 
 ---
@@ -116,7 +118,7 @@ while proving nothing.
 Four processes. The last two are dev stand-ins that make the demo observable offline.
 
 ```bash
-mvn -o spring-boot:run -Dspring-boot.run.profiles=local -Dmaven.test.skip=true -Dspring-boot.run.jvmArguments="-Dmcp.autonomy.execution-enabled=true -Dmcp.autonomy.executor-url=http://localhost:9099"
+mvn -o spring-boot:run -Dspring-boot.run.profiles=local -Dmaven.test.skip=true -Dspring-boot.run.jvmArguments="-Dmcp.executor.enabled=true -Dmcp.executor.url=http://localhost:9099"
 ```
 
 ```bash
@@ -131,7 +133,10 @@ node scripts/dev-executor.mjs store-0042-pos-01,store-0042-app-01,store-0099-pos
 node scripts/dev-smtp.mjs
 ```
 
-Open <http://localhost:5173>, sign in as **`admin` / `michaels@1`**.
+Open <http://localhost:5173> and sign in as **`admin`**. The password is whatever you set
+`MCP_DEFAULT_PASSWORD` to; if you left it unset, the backend generated one and logged it once at
+startup — `grep BOOTSTRAP logs/backend-local.log`. Nothing in this repository contains a working
+password, by design.
 All four are also entries in [.claude/launch.json](.claude/launch.json) (`backend`, `frontend`,
 `executor`, `smtp`).
 
@@ -180,14 +185,15 @@ Spring Boot 3.2 control plane (8080)
 | [IncidentIntakeService](src/main/java/com/company/mcp/service/IncidentIntakeService.java) | ticket in, row in Postgres, external id assigned |
 | [SopProcedureService](src/main/java/com/company/mcp/service/SopProcedureService.java) | is there an **APPROVED** procedure covering this, and what action key does it declare? |
 | [IncidentPrecedentService](src/main/java/com/company/mcp/service/IncidentPrecedentService.java) | have *we* fixed this before — same tenant, human-approved, execution `SUCCEEDED`, parseable action key? |
-| [TextSimilarity](src/main/java/com/company/mcp/service/TextSimilarity.java) | term coverage between two tickets, reproducible and quotable (not embeddings — an unattended decision must be explainable) |
+| [TextSimilarity](src/main/java/com/company/mcp/service/TextSimilarity.java) | term coverage between two tickets, reproducible and quotable (not embeddings — a score a reviewer is asked to trust must be explainable) |
 | [AgentAssessmentService](src/main/java/com/company/mcp/service/AgentAssessmentService.java) | category, action key, target, and a confidence score from bounded inputs |
+| [SkillService](src/main/java/com/company/mcp/service/SkillService.java) | the three agent stages' vocabulary as admin-editable rows: categorisation words, host patterns, allowed tools |
 | [IncidentTarget](src/main/java/com/company/mcp/service/IncidentTarget.java) | **which machine** — typed field first, then host extraction from the text, else stop and ask |
 | [GuardrailService](src/main/java/com/company/mcp/service/GuardrailService.java) | may this action/target/script exist at all? one class, every surface |
 | [RemediationScriptService](src/main/java/com/company/mcp/service/RemediationScriptService.java) | produce the script and label its provenance tier |
-| [HitlWorkflowService](src/main/java/com/company/mcp/service/HitlWorkflowService.java) | Lane A: plan → queue → decision → dry run → execute, with the hash pin |
+| [ScriptExplainer](src/main/java/com/company/mcp/service/ScriptExplainer.java) | what the script does and how, in plain language, for the person approving it |
+| [HitlWorkflowService](src/main/java/com/company/mcp/service/HitlWorkflowService.java) | the only remediation path: plan → queue → decision → dry run → execute, with the hash pin |
 | [RemediationToolRegistry](src/main/java/com/company/mcp/service/RemediationToolRegistry.java) | the executor contract: probe reachability, then dispatch |
-| [AutoRemediationService](src/main/java/com/company/mcp/service/AutoRemediationService.java) | Lane B: may this ticket inherit a past approval, or does it go to a human? |
 | [NotificationService](src/main/java/com/company/mcp/service/NotificationService.java) | who gets told, and did the relay actually accept it? |
 
 ### Database schemas
@@ -197,7 +203,7 @@ Six: `incident` · `sop` · `tools` · `teams` · `auth` · `config`. The hash-c
 pgvector table is `sop.vector_store` (`spring.ai.vectorstore.pgvector.schema-name: sop`,
 `initialize-schema: false` — Liquibase owns it, not Spring AI).
 
-Liquibase owns the schema: **23 changesets**, `1.0-ddl` → `1.21-target-platform`
+Liquibase owns the schema: **26 changesets**, `1.0-ddl` → `1.23-retire-autorun`
 ([db.changelog-master.xml](src/main/resources/db/changelog/db.changelog-master.xml)). The recent
 ones matter for the flow:
 
@@ -206,12 +212,14 @@ ones matter for the flow:
 | `1.12-universal-hitl-foundation` | remediation plans, HITL requests, action executions |
 | `1.13-sop-procedure` | `sop.sop_procedure` — the approved procedures with action keys |
 | `1.14-plan-script` | script text + provenance + plan hash on the plan |
-| `1.16-notifications` | `config.notification_recipient` (tenant-scoped), `reporter_email`, transport keys in `config.system_config`, autorun kill switch. **No credential column.** |
+| `1.16-notifications` | `config.notification_recipient` (tenant-scoped), `reporter_email`, transport keys in `config.system_config`. **No credential column.** |
 | `1.17-team-email` | team distribution address |
 | `1.18-target-host` | `store_number`, `target_host`, `connection_method` on the incident |
 | `1.19-user-meta` | `full_name`, `department` on users; `full_name`, `role`, `department` on team employees |
 | `1.20-default-password` | BCrypt of the shared starting password onto the seeded admin |
 | `1.21-target-platform` | `target_platform` on the incident — the operator's answer to "which OS", overriding detection |
+| `1.22-skills` | `tools.skills` — the categorisation, extraction and execution rules as editable rows |
+| `1.23-retire-autorun` | **deletes** the `autorun_enabled` and `auto_resolve_threshold` config rows. An inert switch is worse than a missing one: setting it would have done nothing while looking like it had done something. |
 
 ### Two different SOP stores — do not confuse them
 
@@ -229,14 +237,15 @@ platform still works — that is the state the demo runs in.
 
 ### Intake
 
-`POST /api/v1/intake/incidents`, `POST /api/v1/incidents`, a ServiceNow/FreshService import, or
-the UI's **New incident** form. The row lands in `incident.incidents` with a tenant, a priority,
-and — new — a **store number** and a **server/host**.
+`POST /api/v1/intake/incidents`, `POST /api/v1/incidents`, or a ServiceNow/FreshService import. The
+row lands in `incident.incidents` with a tenant, a priority, and a **store number** and
+**server/host**.
 
-The UI refuses the first submit if neither the description nor the host field names a machine
-(`IncidentManagementPage.tsx`, `mentionsServer`). Submitting again files it anyway; the host can be
-set later from the incident's **🖥 Remediation target** panel (`PUT /api/v1/incidents/{id}` with
-`storeNumber` / `targetHost` / `connectionMethod`).
+There is no "New incident" form. A ticket that a person types into this platform is a ticket that
+does not exist in the system of record everyone else is watching, and the moment those two disagree
+the audit trail is worth nothing. Incidents come from intake; the host can be set later from the
+incident's **🖥 Remediation target** panel (`PUT /api/v1/incidents/{id}` with `storeNumber` /
+`targetHost` / `connectionMethod`).
 
 That panel does not start empty. `Incident.getDetectedTargetHost()` / `getDetectedStoreNumber()`
 are `@Transient` `READ_ONLY` fields on every incident JSON, computed by
@@ -249,13 +258,13 @@ prefill is a suggestion for a person to confirm, never a saved answer. The OS is
 ladder, and a keyword guess sitting in that box would outrank the machine's own probe reply the
 moment somebody pressed Save.
 
-Bulk imports never trigger Lane B. An import of a thousand historical tickets must not fire a
-thousand restarts.
+Bulk imports run nothing. An import of a thousand historical tickets creates a thousand rows and
+zero plans — planning is something a person asks for, per incident.
 
 ### Suggestions — `POST /api/v1/incidents/analyze` (advisory only)
 
-The **✨ AI Incident Copilot** card on an incident, and the same button in the New-incident form.
-This lane changes nothing: it names a likely team and suggests steps.
+The **✨ AI Incident Copilot** card on an incident.
+This endpoint changes nothing: it names a likely team and suggests steps.
 
 Which source it uses is a database question, asked once, before any model call:
 `RagService.findApprovedSopEvidence(tenantId, subject + description).approvedEvidencePresent()`.
@@ -340,7 +349,7 @@ explained in one clause, and never a hostname or path the ticket did not supply.
    prompt injection, loop detection, length cap. `BLOCK` never reaches a reviewer — the incident is
    escalated with the reason attached.
 
-### Lane A — the human-approved path
+### The approval path — the only one there is
 
 | Step | Endpoint | Role | What is recorded |
 |---|---|---|---|
@@ -351,57 +360,39 @@ explained in one clause, and never a hostname or path the ticket did not supply.
 | execute | `POST /api/v1/hitl/requests/{id}/execute` | **ADMIN** | executor status code, verbatim output (8 000 char cap), `LIVE`/`SIMULATED` |
 
 The queue has **no approve button** on purpose: approving from a table row is approving a script
-you have not read. Approval lives in the review console, next to the script text.
+you have not read. Approval lives in the review console, next to the script text and the plain-language
+explanation of it.
 
 Dry run is mandatory before a real run. Every step appends to the hash-chained audit log.
 
-### Lane B — unattended remediation on proven precedent
+### Why a plan escalates instead of reaching a reviewer
 
-`AutoRemediationService.considerNewIncident` runs **inline at incident creation** (no scheduler, no
-poller). It refuses in this order, and every refusal is a reason string written to the audit trail:
+A blocked plan is still saved, still scored and still readable — what changes is that no approval
+request is created. The reason is one of these, and the console prints the sentence an operator can
+act on rather than the code:
 
-| Gate | Meaning |
+| Reason | Meaning |
 |---|---|
-| `AUTORUN_DISABLED` | master switch off (DB key `autorun_enabled`, seeded `false`) |
-| `INCIDENT_NOT_PERSISTED` | nothing to attach a run to |
-| `P1_ALWAYS_NEEDS_A_HUMAN` | P1 never runs unattended, regardless of precedent |
-| `PLAN_ALREADY_IN_FLIGHT` | something is already awaiting approval |
-| `NO_COMPARABLE_RESOLVED_INCIDENT` | no qualifying precedent |
-| `STORE_MISMATCH:x!=y` | the proof came from a different store |
-| `PRECEDENT_TOO_WEAK:0.xx<0.60` | under 60 % term coverage |
-| `PRECEDENT_TOO_THIN` | fewer than 3 distinct matched terms |
-| `SCRIPT_SOURCE_NOT_TRUSTED` | the past script came from the model, not an SOP template |
-| `PRECEDENT_NOT_SOP_BACKED` | the past plan cited no approved procedure |
-| `PRECEDENT_ACTION_UNRUNNABLE` | the pinned action key no longer parses |
-| `TOOL_NOT_AUTO_RUNNABLE` | not read-only or restart — cache flushes and job reruns always wait |
-| `SCRIPT_SCAN_NOT_CLEAN` | fresh guardrail scan found anything |
-| `GUARDRAIL_BLOCKED` | action/target boundary refused it again |
+| `PLAN_ALREADY_AWAITING_DECISION` | this incident already has a plan in the queue; open that one |
 | `TARGET_HOST_UNKNOWN` / probe reason | mutating action with no confirmed, reachable machine |
-| `PLATFORM_MISMATCH:bash!=powershell` | the saved script's interpreter is not the one this host needs |
+| `SCRIPT_GENERATION_UNAVAILABLE` | no SOP template matched and no model was reachable |
+| `TOOL_NOT_ALLOWLISTED:x` | the procedure declares an action key no tool answers to |
+| `NO_APPROVED_TENANT_SOP_MATCH` | no approved procedure, with ungrounded scripts switched off |
+| `CONFIDENCE_BELOW_HITL_BAND:nn` | the guardrails passed; the score did not reach the band |
+| `GUARDRAIL_BLOCKED` | the action/target/script boundary refused it |
 
-When every gate passes it runs the **saved tool from the precedent** against **this** incident's
-host — never the precedent's host — then resolves the incident and emails. Log line:
-
-```
-[AUTORUN] INC000000009 handled without approval via RESTART_SERVICE:tomcat:linux (precedent INC000000008)
-[AUTORUN] INC000000010 left for human approval: STORE_MISMATCH:0099!=0042
-```
-
-Autonomy is therefore earned **per store**: store 0042 proves a fix, store 0099 still gets a human
-the first time.
-
-Switch: **AI configuration → Unattended Remediation** (`GET|POST /api/v1/ai/config/autorun`).
-Stored in the database, effective on the next incident, no redeploy.
+`CONFIDENCE_BELOW_HITL_BAND` is named separately from `GUARDRAIL_BLOCKED` deliberately. It used to
+be reported as the latter, which sent operators looking for a dangerous script that did not exist.
 
 ---
 
 ## Which machine, at which store, over which connection, running which OS
 
-Three columns on the incident, added in `1.18`, and one resolver so the answer cannot differ
-between lanes:
+Three columns on the incident, added in `1.18`, and one resolver so every caller gets the same
+answer:
 
-* `store_number` — a **permission boundary**, not a label. Lane B inherits a past approval only
-  when the store matches.
+* `store_number` — a **permission boundary**, not a label. A precedent from another store is
+  evidence, never permission: it is shown to the reviewer, and the reviewer still approves.
 * `target_host` — where an approved script runs. `IncidentTarget.hostOrTicket()` reads the typed
   field first, then extracts a labelled host (`server: pos-01`, `hostname=store-0042-app-01`) or a
   bare FQDN (two dots minimum, so `node.js` and `web.config` are not promoted to hostnames) from
@@ -417,7 +408,7 @@ between lanes:
 
 ### When the agent needs an answer, it asks on the screen
 
-Every Lane A refusal an operator can actually fix is prefixed `TARGET_`, and both consoles match on
+Every refusal an operator can actually fix is prefixed `TARGET_`, and both consoles match on
 that prefix to render the question inline — with the fields to answer it, and one button that saves
 the answer *and* re-plans:
 
@@ -471,8 +462,8 @@ The platform selects two separate things, because they are not the same constrai
 
 Both `targetPlatform` and `targetPlatformSource` are written into the plan's `parameters_json`,
 which is inside the SHA-256 approval hash: the reviewer approves a platform as well as a script.
-Lane B compares the interpreter of the saved script against the freshly resolved one and refuses
-`PLATFORM_MISMATCH` rather than dispatching bash at a Windows till.
+Re-plan an incident whose host has changed OS and the hash changes with it, so the old approval no
+longer authorises the new script.
 
 ---
 
@@ -485,7 +476,7 @@ Lane B compares the interpreter of the saved script against the freshly resolved
 | `LLM_KNOWLEDGE` | model, general knowledge, no approved procedure exists | yes | scan must be `PASS`; labelled `UNGROUNDED_LLM_SCRIPT` |
 
 `SOP_TEMPLATE` is preferred whenever the procedure declares a runnable action key — reproducible
-and unsteerable by incident content. **Lane B only ever repeats `SOP_TEMPLATE` scripts.**
+and unsteerable by incident content.
 
 `LLM_KNOWLEDGE` answers "what if there is no SOP?". Allowed by default
 (`mcp.hitl.allow-ungrounded-scripts: true`), held to a stricter bar (a `WARN` is fatal), shown with
@@ -548,8 +539,8 @@ ordinary, and flagging them trains reviewers to click through warnings.
 - The model has escape hatches: `# NO_APPLICABLE_PROCEDURE` and `# NO_SAFE_AUTOMATED_REMEDY` are
   treated as "no script". Not answering is a valid answer.
 - Temperature 0.0 everywhere. LLM calls rate-limited per user.
-- **Confidence never grants autonomy.** It changes presentation. Only a past human approval, via
-  Lane B's gates, can remove an approval click.
+- **Confidence never removes the approval click.** A score changes how a plan is presented and
+  whether it is offered at all. Nothing in the system can turn it into permission.
 
 ### Access control
 
@@ -579,7 +570,7 @@ an unattended workstation signed in.
 | Create incidents, ingest SOPs, request a plan | | ✅ | ✅ |
 | Approve / reject, dry run | | ✅ | ✅ |
 | **Execute for real** | | | ✅ |
-| AI config, autonomy, actuator, any DELETE | | | ✅ |
+| AI config, skills, actuator, any DELETE | | | ✅ |
 
 Route-based in [SecurityConfig.java](src/main/java/com/company/mcp/config/SecurityConfig.java) —
 one file holds the whole matrix. Method security is deliberately off so a stray `@PreAuthorize`
@@ -704,21 +695,23 @@ procedures and their action keys) · `PUT|DELETE /api/v1/rag/sops/{id}` (ADMIN)
 
 **AI config** (ADMIN) — `GET|POST /api/v1/ai/config` · `GET /api/v1/ai/config/ollama-models` ·
 `GET|POST /api/v1/ai/config/notifications` · `POST /api/v1/ai/config/notifications/test` ·
-`GET|POST /api/v1/ai/config/autorun`
+`GET|POST /api/v1/ai/config/public-read` · `GET|POST /api/v1/ai/config/separation-of-duties`
+
+**Skills** — `GET /api/v1/skills` (any signed-in user) · `POST` (upsert) · `DELETE /{id}` — both ADMIN
 
 **Scripts** — `GET|POST /api/v1/scripts` · `/{id}` · `POST /api/v1/scripts/generate` · `/validate` ·
 `/execute` (dry-run only — `409` otherwise)
 
 **Other** — `/api/v1/telemetry/events` · `/api/v1/teams` (roster add/remove) · `/api/v1/statuses` ·
-`/api/v1/autonomy/*` (ADMIN) · `/api/v1/mcp/*` · `/api/health`
+`/api/v1/mcp/*` · `/api/health`
 
 ---
 
 ## Configuration
 
 **Everything an operator needs is in the UI and stored in the database**, not in a properties file:
-the LLM provider and models, notification transport and recipients, teams and rosters, and the
-unattended-remediation switch.
+the LLM provider and models, notification transport and recipients, teams and rosters, the public
+read toggle, separation of duties, and the agent skills for all three stages.
 
 YAML holds only deployment facts:
 
@@ -728,12 +721,12 @@ YAML holds only deployment facts:
 | `mcp.hitl.separation-of-duties` | `true` | Requester cannot approve their own plan. |
 | `mcp.hitl.allow-ungrounded-scripts` | `true` | Let `LLM_KNOWLEDGE` scripts reach review. |
 | `mcp.script-gen.max-lines` | `100` | Longer scripts blocked. |
-| `mcp.autonomy.execution-enabled` | `false` | Master enable for real dispatch. |
-| `mcp.autonomy.executor-url` | *(empty)* | Empty ⇒ simulate only. |
-| `mcp.autonomy.executor-token` | *(empty)* | Bearer token for the executor. |
-| `mcp.autonomy.executor-timeout-seconds` | `30` | Probe and dispatch timeout. |
-| `mcp.confidence.hitl-threshold` | `0.80` (`0.70` local) | Route band. Never grants autonomy. |
-| `mcp.confidence.auto-resolve-threshold` | `1.00` (`0.85` local) | Presentation only. |
+| `mcp.executor.enabled` | `false` | The only switch that lets a script leave this process. |
+| `mcp.executor.url` | *(empty)* | Empty ⇒ approved scripts simulate and change nothing. |
+| `mcp.executor.token` | *(empty)* | Bearer token for the executor. |
+| `mcp.executor.timeout-seconds` | `30` | Probe and dispatch timeout. |
+| `mcp.confidence.hitl-threshold` | `0.80` (`0.70` local) | The band a plan must reach to be offered for approval at all. Reaching it grants nothing. |
+| `mcp.confidence.default-prior-success-rate` | `0.85` | Assumed success rate with no execution history yet. |
 | `mcp.security.rate-limit.login-per-minute` | `10` | Per username **and** per IP. |
 | `mcp.security.rate-limit.llm-per-minute` | `20` | Per authenticated user. |
 | `mcp.security.cors.allowed-origins` | localhost | Explicit list, never `*`. |
@@ -758,14 +751,18 @@ Redux because the refresh token has to survive a page reload — in-memory state
 
 | Route | Page | Notes |
 |---|---|---|
-| `/autonomy` | Autonomous ops | read-only view of the lanes |
+| `/` | Chat | the product. Anonymous read, then plan → review → approve → run, inline |
+| `/tools` | Tools & scripts | saved tools with a plain-language explanation of each, run logs, and the **Skills** tab (ADMIN) — the categorise/extract/execute rules as editable rows |
+| `/sops` | SOP library | uploads, drafts/approvals, **Approved procedures** with action keys |
+| `/settings/ai` | AI configuration | provider/models, notifications + test send, public-read and separation-of-duties toggles |
 | `/incidents` | Incidents | list, detail, comments, history, **remediation target** panel, **Create guarded remediation plan** |
-| `/hitl` | HITL queue | queue + review console (script text, provenance, guardrails, plan hash, SOP evidence, precedent, timeline) |
-| `/tools` | Tools & scripts | saved tools and run logs |
-| `/sops` | SOP library | uploads, drafts/approvals, **Approved procedures (6)** with action keys |
+| `/hitl` | HITL queue | queue + review console (script text, explanation, provenance, guardrails, plan hash, SOP evidence, precedent, timeline) |
 | `/teams` | Teams | roster add/remove, team distribution address |
-| `/settings/ai` | AI configuration | provider/models, notifications + test send, **Unattended Remediation** switch |
 | `/account` | Account | profile |
+
+The sidebar lists **SOP, Tools and AI configuration only**. Incidents, HITL and Teams stay mounted
+as routes — chat drives the whole HITL flow inline, so a second menu entry to the same three
+endpoints was menu for menu's sake. Anything unmatched redirects to `/`.
 
 ```bash
 npm run build --prefix frontend
@@ -781,23 +778,28 @@ npm run build --prefix frontend
 MCP_JWT_SECRET=local-development-only-key-min-32-bytes mvn -o test
 ```
 
-**92 tests, 0 failures.**
+**123 tests, 0 failures.**
 
 | Suite | Tests | Covers |
 |---|---:|---|
-| `AutoRemediationServiceTest` | 16 | every Lane B gate, including store mismatch and P1 |
-| `RemediationToolRegistryTest` | 11 | action key parsing, probe/dispatch outcomes |
-| `IncidentTargetTest` | 9 | typed field precedence, host extraction, rejected shapes |
+| `IncidentTargetTest` | 18 | typed field precedence, host extraction, rejected shapes |
+| `RemediationToolRegistryTest` | 17 | action key parsing, probe/dispatch outcomes |
+| `RemediationScriptServiceTest` | 8 | provenance tiers |
 | `TeamMembershipTest` | 8 | roster add/remove |
-| `GuardrailServiceTest` | 7 | allow-lists, destructive signatures, injection |
 | `SopProcedureServiceTest` | 7 | approval state and action keys |
-| `IncidentPrecedentServiceTest` | 7 | what qualifies as a precedent |
 | `NotificationServiceRecipientsTest` | 7 | recipient resolution and dedup |
-| `RemediationScriptServiceTest` | 5 | provenance tiers |
-| `HitlWorkflowServiceTest` | 5 | plan/approve/dispatch gating |
+| `IncidentPrecedentServiceTest` | 7 | what qualifies as a precedent |
+| `HitlWorkflowServiceTest` | 7 | plan/approve/dispatch gating, and that a duplicate plan names the open one instead of escalating the incident |
+| `GuardrailServiceTest` | 7 | allow-lists, destructive signatures, injection |
+| `ScriptExplainerTest` | 6 | every script line is explained or reported verbatim — never silently dropped |
+| `BootstrapPasswordTest` | 6 | the seeded admin credential and its rotation |
+| `RagServiceScopeTest` | 5 | out-of-scope questions are refused, not answered |
+| `AgentAssessmentServiceTest` | 5 | routing arithmetic, classifier vocabulary |
+| `PublicReadServiceTest` | 4 | the anonymous projection carries no description or assignee |
 | `IncidentUpdateTest` | 4 | field updates incl. target |
-| `AgentAssessmentServiceTest` | 3 | routing arithmetic, classifier vocabulary |
-| `IncidentIntakeBulkTest` | 2 | bulk import never auto-runs |
+| `TokenRotationTest` | 3 | refresh rotation keeps the original session deadline |
+| `IncidentIntakeBulkTest` | 2 | a bulk import creates rows and runs nothing |
+| `RagServiceBaseUrlTest` | 1 | provider base URL resolution |
 | `ApplicationContextSmokeTest` | 1 | beans, `@Value`s, migrations — fails in ~3 s |
 
 The context smoke test is the cheap check that catches most breakage.
@@ -819,16 +821,16 @@ builds offline with `-o`)
 - **MCP tool access.** The registry and `/api/v1/mcp/*` exist; wiring the agent to call MCP servers
   is not done.
 - **No background poller.** Nothing is `@Scheduled`; incidents arrive by explicit intake, import or
-  UI. Lane B runs inline at creation. A poller would need a distributed lock before running on more
-  than one instance.
+  UI, and nothing acts on them until a person asks. This is a property, not a gap — a poller is what
+  a platform needs when it intends to work on its own.
 - **A team member is not a login.** `teams.team_employees` (the roster, who gets notified) and
   `auth.users` (who can sign in) are separate tables on purpose. Only an `auth.users` row can be
   handed a HITL review; the review console lists an incident's existing assignee as
   `· current, no login` when it is roster-only, so nobody "fixes" an assignment that was never wrong.
-- **No self-service password change.** Every account starts on the one default password
-  (`michaels@1`, `AuthController.DEFAULT_PASSWORD`, applied to the seeded admin by changeset `1.20`)
-  and an admin resets it via the API. A change-password screen is the next thing a real deployment
-  needs.
+- **No self-service password change.** New accounts start on the password the server issues at
+  creation time (`MCP_DEFAULT_PASSWORD` if set, otherwise a value generated per boot by
+  `BootstrapPassword` and shown once in the Teams page banner) and an admin resets it via the API.
+  A change-password screen is the next thing a real deployment needs.
 
 ### Closed since the last review
 
@@ -837,8 +839,14 @@ builds offline with `-o`)
 - The classifier reads its vocabulary from approved `sop.sop_procedure` rows (`match_keywords` +
   title), so approving a procedure teaches it. The built-in list is a fallback, not the source.
 - **Tools & scripts → Run Logs** reads `incident.action_executions`, so HITL runs appear there.
-- `/api/v1/autonomy/status` derives `executionMode` from `RemediationToolRegistry.dispatchMode()` —
-  one source of truth. The second `mcp.autonomy.execution-mode` property is gone.
+- **Execution mode has one source of truth**: `RemediationToolRegistry.dispatchMode()`, derived from
+  the two flags that decide it. The page that used to display it read `SIMULATED` from a second
+  property while this class was dispatching real scripts; both the page and the property are gone,
+  and the review console shows `LIVE`/`SIMULATED` at the moment of approval instead — which is the
+  only moment it matters.
+- **The autonomy surface is deleted, not disabled**: `AutonomousRemediationService`,
+  `AutonomyController`, the ops page, the `autorun_enabled` config row, and the `mcp.autonomy.*`
+  namespace (now `mcp.executor.*`, which is what those keys always were).
 
 ---
 

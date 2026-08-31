@@ -48,12 +48,19 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/sso", "/api/auth/refresh").permitAll()
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 .requestMatchers("/api/health", "/actuator/health", "/actuator/health/**", "/actuator/info").permitAll()
+                // Redacted incident counts and a 20-row status search, so someone can find out
+                // whether their problem is already known before being asked to create an
+                // account. Read-only and GET-only by construction: see PublicReadService.
+                .requestMatchers(HttpMethod.GET, "/api/v1/public/**").permitAll()
 
                 // ── Operator surface: read for everyone signed in ───────────────────
                 .requestMatchers(HttpMethod.GET, "/api/auth/me", "/api/auth/users", "/api/v1/teams/**", "/api/v1/statuses/**",
                         "/api/v1/incidents/**", "/api/v1/scripts/**", "/api/v1/rag/sops/**", "/api/v1/rag/procedures/**",
                         "/api/v1/hitl/**", "/api/v1/telemetry/**", "/api/v1/mcp/servers").authenticated()
                 .requestMatchers(HttpMethod.POST, "/api/v1/rag/chat").authenticated()
+                // Changing your own password is the one write a VIEWER must be able to make:
+                // it is also the only way out of the forced reset a new account starts in.
+                .requestMatchers(HttpMethod.POST, "/api/auth/password").authenticated()
 
                 // ── Analyst surface: create and triage work ─────────────────────────
                 .requestMatchers(HttpMethod.POST, "/api/v1/intake/**").hasAnyRole("ANALYST", "ADMIN")
@@ -70,9 +77,18 @@ public class SecurityConfig {
                         "/api/v1/hitl/requests/*/dry-run").hasAnyRole("ANALYST", "ADMIN")
 
                 // ── Admin surface: execution, config, deletion, user & team creation ──
-                .requestMatchers(HttpMethod.POST, "/api/auth/users").hasRole("ADMIN")
+                // Both patterns, because the exact path alone leaves /users/{u}/reset-password
+                // to the fail-closed POST default — which lets an ANALYST reset an admin's
+                // password to a published value. The controller checks the role too; this is
+                // the rule that stops the request before it reaches it.
+                .requestMatchers(HttpMethod.POST, "/api/auth/users", "/api/auth/users/**").hasRole("ADMIN")
+                .requestMatchers(HttpMethod.PUT, "/api/auth/users/**").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.POST, "/api/v1/hitl/requests/*/execute").hasRole("ADMIN")
-                .requestMatchers("/api/v1/ai/config/**", "/api/v1/autonomy/**", "/actuator/**").hasRole("ADMIN")
+                .requestMatchers("/api/v1/ai/config/**", "/actuator/**").hasRole("ADMIN")
+                // Skills widen what the agent recognises, and one field of them (mutating)
+                // decides whether a plan counts as a mutation at all. GET stays open to any
+                // signed-in user: an analyst reading a plan is owed the tool's definition.
+                .requestMatchers(HttpMethod.POST, "/api/v1/skills/**").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.PUT, "/api/v1/rag/sops/**").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.POST, "/api/v1/rag/procedures/**").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.PUT, "/api/v1/rag/procedures/**").hasRole("ADMIN")
