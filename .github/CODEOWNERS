@@ -1,0 +1,14 @@
+# Every change needs the maintainer's review. Combined with "Require review from Code Owners"
+# in the main branch ruleset, this is what makes the protection meaningful rather than advisory.
+* @iamsouviki
+
+# The paths where a bad merge ends with a script running on someone's production server.
+# Listed separately so the requirement survives any future widening of the catch-all above.
+/src/main/java/com/company/mcp/service/GuardrailService.java        @iamsouviki
+/src/main/java/com/company/mcp/service/HitlWorkflowService.java     @iamsouviki
+/src/main/java/com/company/mcp/service/AutoRemediationService.java  @iamsouviki
+/src/main/java/com/company/mcp/service/RemediationToolRegistry.java @iamsouviki
+/src/main/java/com/company/mcp/config/SecurityConfig.java           @iamsouviki
+/src/main/resources/db/changelog/                                   @iamsouviki
+/.github/workflows/                                                 @iamsouviki
+/SECURITY.md                                                        @iamsouviki
