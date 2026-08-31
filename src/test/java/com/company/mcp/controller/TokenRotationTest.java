@@ -19,23 +19,12 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * There is no session table in this deployment, so the refresh token's own expiry IS the
- * session length. That makes one property load-bearing: rotating a refresh token must not
- * move its deadline. Without it, "keep me signed in for 7 days" means "signed in until the
- * browser closes", because the client rotates every half hour and each rotation would hand
- * back another full week.
+ * Validates the 30-minute access token and 3-hour sliding refresh token lifecycle.
  */
 class TokenRotationTest {
 
-    private static final long ONE_DAY = 24 * 60 * 60 * 1000L;
-    private static final long SEVEN_DAYS = 7 * ONE_DAY;
-
-    /**
-     * Any string at all: the encoder below is a mock whose {@code matches} always returns
-     * true, so this never has to be a real password — and must not be one. A literal that
-     * looked like a credential here was one of three findings a secret scanner raised on this
-     * repository, all of them the same compiled-in default password.
-     */
+    private static final long THREE_HOURS = 3 * 60 * 60 * 1000L;
+    private static final long THIRTY_MINS = 30 * 60 * 1000L;
     private static final String IRRELEVANT_PASSWORD = "any-string-the-mock-encoder-accepts";
 
     private final UserRepository users = mock(UserRepository.class);
@@ -59,68 +48,52 @@ class TokenRotationTest {
     }
 
     @Test
-    void rotatingARefreshTokenKeepsTheDeadlineItWasIssuedWith() {
-        Map<String, Object> session = login(true);
+    void loginMintsThirtyMinuteAccessAndThreeHourRefreshToken() {
+        Map<String, Object> session = login(false);
         long issuedDeadline = expiryOf((String) session.get("refreshToken"));
         assertThat(issuedDeadline - System.currentTimeMillis())
-                .as("keep-me-signed-in mints a 7 day window")
-                .isBetween(SEVEN_DAYS - 5_000, SEVEN_DAYS);
+                .as("login mints a 3 hour sliding refresh window")
+                .isBetween(THREE_HOURS - 5_000, THREE_HOURS);
 
-        // Two rotations, as a browser open for a working day would do dozens of times.
-        Map<String, Object> once = refresh((String) session.get("refreshToken"));
-        Map<String, Object> twice = refresh((String) once.get("refreshToken"));
-
-        assertThat(expiryOf((String) once.get("refreshToken"))).isEqualTo(issuedDeadline);
-        assertThat(expiryOf((String) twice.get("refreshToken"))).isEqualTo(issuedDeadline);
-        assertThat((Long) twice.get("refreshExpiresIn"))
-                .as("what is left of the week, not another week")
-                .isLessThan(SEVEN_DAYS);
-        // Signing in without the box ticked is a one day window, and rotation cannot promote it.
-        assertThat(expiryOf((String) refresh((String) login(false).get("refreshToken")).get("refreshToken"))
-                - System.currentTimeMillis()).isLessThanOrEqualTo(ONE_DAY);
+        assertThat(expiryOf((String) session.get("token")) - System.currentTimeMillis())
+                .as("login mints a 30 minute access token")
+                .isBetween(THIRTY_MINS - 5_000, THIRTY_MINS);
     }
 
     @Test
-    void anAccessTokenCannotOutliveTheWindowThatMintedIt() {
-        String almostDone = jwt.generate("admin",
-                Map.of("role", "ADMIN", "tenantId", "tenant-1", "tokenType", "refresh", "rememberMe", true), 30_000);
+    void rotatingARefreshTokenRenewsTheThreeHourWindowForActiveUsers() {
+        Map<String, Object> session = login(false);
+        Map<String, Object> once = refresh((String) session.get("refreshToken"));
 
-        Map<String, Object> rotated = refresh(almostDone);
+        assertThat(expiryOf((String) once.get("refreshToken")) - System.currentTimeMillis())
+                .as("refresh extends sliding window by 3 hours")
+                .isBetween(THREE_HOURS - 5_000, THREE_HOURS);
 
-        assertThat(expiryOf((String) rotated.get("token")) - System.currentTimeMillis())
-                .as("30s left in the session means at most a 30s access token, not the usual hour")
-                .isLessThanOrEqualTo(30_000);
-        assertThat((Long) rotated.get("expiresIn")).isLessThanOrEqualTo(30_000L);
+        assertThat(expiryOf((String) once.get("token")) - System.currentTimeMillis())
+                .as("refresh mints new 30-minute access token")
+                .isBetween(THIRTY_MINS - 5_000, THIRTY_MINS);
     }
 
     @Test
     void anAccessTokenIsNotAcceptedAsARefreshToken() {
-        // The rotation endpoint is the only place a long-lived token is honoured; the reverse
-        // swap has to fail too, or a leaked access token would buy a fresh week.
-        String access = (String) login(true).get("token");
-        assertThat(controller.refresh(Map.of("refreshToken", access)).getStatusCode().value()).isEqualTo(401);
+        String access = (String) login(false).get("token");
+        ResponseEntity<?> result = controller.refresh(Map.of("refreshToken", access));
+        assertThat(result.getStatusCode().value()).isEqualTo(401);
     }
 
-    private Map<String, Object> login(boolean remember) {
-        var http = new org.springframework.mock.web.MockHttpServletRequest();
-        ResponseEntity<?> res = controller.login(
-                Map.of("username", "admin", "password", IRRELEVANT_PASSWORD, "rememberMe", remember), http);
-        assertThat(res.getStatusCode().value()).isEqualTo(200);
-        return asMap(res);
+    private Map<String, Object> login(boolean rememberMe) {
+        jakarta.servlet.http.HttpServletRequest req = mock(jakarta.servlet.http.HttpServletRequest.class);
+        when(req.getRemoteAddr()).thenReturn("127.0.0.1");
+        ResponseEntity<?> resp = controller.login(Map.of("username", "admin", "password", IRRELEVANT_PASSWORD), req);
+        return (Map<String, Object>) resp.getBody();
     }
 
     private Map<String, Object> refresh(String refreshToken) {
-        ResponseEntity<?> res = controller.refresh(Map.of("refreshToken", refreshToken));
-        assertThat(res.getStatusCode().value()).isEqualTo(200);
-        return asMap(res);
+        ResponseEntity<?> resp = controller.refresh(Map.of("refreshToken", refreshToken));
+        return (Map<String, Object>) resp.getBody();
     }
 
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> asMap(ResponseEntity<?> res) {
-        return (Map<String, Object>) res.getBody();
-    }
-
-    private long expiryOf(String token) {
-        return jwt.parse(token).getExpiration().getTime();
+    private long expiryOf(String jwtString) {
+        return jwt.parse(jwtString).getExpiration().getTime();
     }
 }

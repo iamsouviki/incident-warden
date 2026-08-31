@@ -103,6 +103,12 @@ public class Incident {
     @Column(name = "target_platform")
     private String targetPlatform;
 
+    @Column(name = "external_service_name")
+    private String externalServiceName = "ServiceNow";
+
+    @Column(name = "attachments", columnDefinition = "TEXT")
+    private String attachments;
+
     public Incident() {}
 
     public Incident(UUID id, String subject, String description, String assignee, String assignedGteam, 
@@ -202,6 +208,12 @@ public class Incident {
 
     public String getTargetPlatform() { return targetPlatform; }
     public void setTargetPlatform(String targetPlatform) { this.targetPlatform = targetPlatform; }
+
+    public String getExternalServiceName() { return externalServiceName; }
+    public void setExternalServiceName(String externalServiceName) { this.externalServiceName = externalServiceName; }
+
+    public String getAttachments() { return attachments; }
+    public void setAttachments(String attachments) { this.attachments = attachments; }
 
     /**
      * The host and store this ticket's own words point at — read from subject and

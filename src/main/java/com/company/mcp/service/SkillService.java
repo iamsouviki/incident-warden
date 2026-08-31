@@ -91,8 +91,10 @@ public class SkillService {
 
     /** Enabled skills of one kind, in key order. */
     public List<Skill> enabled(String tenantId, String kind) {
+        String normalizedKind = upper(kind);
+        if ("CATEGORISATION".equals(normalizedKind)) normalizedKind = CATEGORIZATION;
         return skills.findByTenantIdAndKindAndEnabledTrueOrderBySkillKeyAsc(
-                tenantId == null || tenantId.isBlank() ? "tenant-1" : tenantId, kind);
+                tenantId == null || tenantId.isBlank() ? "tenant-1" : tenantId, normalizedKind);
     }
 
     /** Everything for the admin page, all kinds together. */
@@ -127,16 +129,13 @@ public class SkillService {
     public List<Pattern> compiledHostPatterns(String tenantId) {
         List<Pattern> compiled = new ArrayList<>();
         for (Skill skill : enabled(tenantId, EXTRACTION)) {
-            if (!"targetHost".equalsIgnoreCase(skill.getSkillKey())) continue;
+            String raw = skill.getPattern();
+            if (raw == null || raw.isBlank()) continue;
             try {
-                Pattern pattern = Pattern.compile(skill.getPattern(), Pattern.CASE_INSENSITIVE);
-                if (pattern.matcher("").groupCount() < 1) {
-                    log.warn("[SKILL] Extraction skill '{}' has no capturing group; ignored.", skill.getSkillKey());
-                    continue;
-                }
-                compiled.add(pattern);
-            } catch (PatternSyntaxException | NullPointerException e) {
-                log.warn("[SKILL] Extraction skill '{}' does not compile; ignored: {}",
+                Pattern p = Pattern.compile(raw, Pattern.CASE_INSENSITIVE);
+                if (p.matcher("").groupCount() >= 1) compiled.add(p);
+            } catch (PatternSyntaxException e) {
+                log.warn("[SKILL] Extraction pattern for '{}' does not compile: {}",
                         skill.getSkillKey(), e.getMessage());
             }
         }
@@ -152,6 +151,7 @@ public class SkillService {
     public Skill save(Skill submitted) {
         String tenant = currentUser.tenantId();
         String kind = upper(submitted.getKind());
+        if ("CATEGORISATION".equals(kind)) kind = CATEGORIZATION;
         if (!KINDS.contains(kind)) throw new IllegalArgumentException("kind must be one of " + KINDS);
         String key = trim(submitted.getSkillKey());
         if (key.isBlank()) throw new IllegalArgumentException("skillKey is required");

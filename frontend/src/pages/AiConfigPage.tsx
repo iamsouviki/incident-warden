@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Cpu } from 'lucide-react';
 import { authFetch } from '../services/api';
 import UserAdminPanel from '../components/UserAdminPanel';
+import IntegrationAdminPanel from '../components/IntegrationAdminPanel';
 
 const PROVIDERS = [
   { id: 'ollama', name: 'Ollama (Local)', defaultUrl: 'http://localhost:11434' },
@@ -240,6 +241,9 @@ const AiConfigPage: React.FC = () => {
 
       {/* ACCOUNTS & ACCESS */}
       <UserAdminPanel />
+
+      {/* EXTERNAL ITSM & BUG TRACKER INTEGRATIONS */}
+      <IntegrationAdminPanel />
 
     </div>
   );

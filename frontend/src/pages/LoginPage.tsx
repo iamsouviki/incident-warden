@@ -83,16 +83,7 @@ export default function LoginPage({ onLogin, onSkip }: Props) {
             </div>
           </div>
 
-          <div className="login-options-row">
-            <label className="login-remember-label">
-              <input
-                type="checkbox"
-                checked={rememberMe}
-                onChange={e => setRememberMe(e.target.checked)}
-              />
-              <span>Remember me</span>
-            </label>
-          </div>
+
 
           <button className="login-submit-btn" type="submit" disabled={loading}>
             {loading ? (

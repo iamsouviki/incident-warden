@@ -525,7 +525,8 @@ public class RagService {
                     "<<<QUESTION\n" + question + "\nQUESTION>>>\n\n" +
                     "Instructions for generating customer-centric responses:\n" +
                     "- Adopt a warm, professional, helpful, and thorough operational tone.\n" +
-                    "- When explaining incidents, provide complete elaboration: cite ticket IDs, exact fault description, severity/priority level, impacted stores or infrastructure, current status, assigned engineers/teams, and recommended next steps.\n" +
+                    "- When explaining incidents, provide complete elaboration: cite ticket IDs, exact fault description, severity/priority level, impacted systems or infrastructure, current status, and recommended next steps.\n" +
+                    "- DO NOT mention, show, or invent assigned team names, agent names, or internal technician names in this public preview.\n" +
                     "- When explaining technical procedures or SOPs, elaborate on the technical background, safety checks, and step-by-step diagnostic procedures.\n" +
                     "- If the question asks how to solve, fix, or remediate an incident, explain the high-level remediation procedure but clearly remind the user that viewing step-by-step scripts and executing fixes on servers requires signing in.\n" +
                     "- Keep IP addresses, credentials, and sensitive tokens redacted as '****'.\n" +
@@ -549,12 +550,10 @@ public class RagService {
         List<String> rows = new ArrayList<>();
         try {
             for (com.company.mcp.model.Incident inc : incidentRepository.findTop50ByTenantIdOrderByUpdatedAtDesc(tenantId)) {
-                rows.add(String.format("- Ticket: %s, Subject: '%s', Description: '%s', Status: %s, Priority: %s, Assignee: %s, Assigned Team: %s, Updated: %s",
+                rows.add(String.format("- Ticket: %s, Subject: '%s', Description: '%s', Status: %s, Priority: %s, Updated: %s",
                     inc.getExternalId(), inc.getSubject(),
                     PublicReadService.maskSensitive(inc.getDescription()),
                     inc.getStatus(), inc.getPriority(),
-                    inc.getAssignee() == null ? "Unassigned" : PublicReadService.maskSensitive(inc.getAssignee()),
-                    inc.getAssignedGteam() == null ? "Unassigned" : inc.getAssignedGteam(),
                     inc.getUpdatedAt()));
             }
         } catch (Exception e) {

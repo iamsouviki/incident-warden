@@ -67,14 +67,15 @@ SET password_hash = EXCLUDED.password_hash,
 
 -- 5. SOP: Vector Store & Procedures
 CREATE TABLE IF NOT EXISTS sop.vector_store (
-    id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    content   TEXT NOT NULL,
-    metadata  JSONB,
-    embedding vector(768)
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    content    TEXT NOT NULL,
+    metadata   JSONB,
+    embedding  vector(768),
+    fts_vector tsvector GENERATED ALWAYS AS (to_tsvector('english', content)) STORED
 );
 
 CREATE INDEX IF NOT EXISTS idx_vector_store_embedding ON sop.vector_store USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
-CREATE INDEX IF NOT EXISTS idx_vector_store_content_fts ON sop.vector_store USING gin (to_tsvector('english', content));
+CREATE INDEX IF NOT EXISTS idx_vector_store_fts ON sop.vector_store USING gin (fts_vector);
 
 CREATE TABLE IF NOT EXISTS sop.sop_procedure (
     id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -117,7 +118,9 @@ CREATE TABLE IF NOT EXISTS incident.incidents (
     store_number       VARCHAR(50),
     target_host        VARCHAR(255),
     connection_method  VARCHAR(50),
-    target_platform    VARCHAR(50)
+    target_platform    VARCHAR(50),
+    external_service_name VARCHAR(100) DEFAULT 'ServiceNow',
+    attachments        TEXT
 );
 
 CREATE TABLE IF NOT EXISTS incident.incident_comments (
@@ -188,10 +191,16 @@ CREATE TABLE IF NOT EXISTS incident.action_executions (
 );
 
 CREATE TABLE IF NOT EXISTS incident.audit_events (
-    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    event_type VARCHAR(100) NOT NULL,
-    details    JSONB,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id      VARCHAR(64) NOT NULL DEFAULT 'tenant-1',
+    aggregate_type VARCHAR(64) NOT NULL,
+    aggregate_id   UUID NOT NULL,
+    event_type     VARCHAR(100) NOT NULL,
+    actor          VARCHAR(120) NOT NULL,
+    payload        TEXT NOT NULL,
+    previous_hash  VARCHAR(64),
+    event_hash     VARCHAR(64) NOT NULL,
+    created_at     TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS incident.telemetry_events (
