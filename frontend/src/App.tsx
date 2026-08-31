@@ -113,34 +113,35 @@ function ForcePasswordReset({ user, onDone, onLogout }: { user: AuthUser; onDone
 
   const field: React.CSSProperties = {
     width: '100%', minHeight: '44px', padding: '10px 12px', fontSize: '14px',
-    background: 'var(--surface2)', color: 'var(--text)',
-    border: '1px solid var(--border)', borderRadius: '6px',
+    background: 'var(--surface-2, #152033)', color: 'var(--text-1, #ffffff)',
+    border: '1.5px solid var(--border, #334155)', borderRadius: '8px', boxSizing: 'border-box',
+    outline: 'none',
   };
   const label: React.CSSProperties = {
     display: 'block', fontSize: '11px', fontWeight: 700, textTransform: 'uppercase',
-    letterSpacing: '0.4px', color: 'var(--text-muted)', marginBottom: '5px',
+    letterSpacing: '0.4px', color: 'var(--text-2, #cbd5e1)', marginBottom: '5px',
   };
 
   return (
     <div role="dialog" aria-modal="true" aria-label="Set your password"
-         style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', background: 'var(--bg)', overflowY: 'auto' }}>
-      <form onSubmit={submit} className="card" style={{ width: 'min(430px, 100%)', padding: '24px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+         style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', background: 'var(--bg, #0f172a)', overflowY: 'auto' }}>
+      <form onSubmit={submit} style={{ width: 'min(430px, 100%)', padding: '32px 28px', background: 'var(--surface-1, #1e293b)', border: '1px solid var(--border, #334155)', borderRadius: '16px', display: 'flex', flexDirection: 'column', gap: '16px', boxShadow: '0 20px 40px rgba(0,0,0,0.35)' }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: '17px' }}>Set your own password</h2>
-          <p style={{ margin: '6px 0 0', fontSize: '12.5px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
-            {user.fullName || user.username}, this account is still on the password you were given.
-            Choose one only you know — at least 8 characters — before you carry on.
+          <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: 'var(--text-1, #ffffff)' }}>Set your secure password</h2>
+          <p style={{ margin: '6px 0 0', fontSize: '13px', color: 'var(--text-3, #94a3b8)', lineHeight: 1.6 }}>
+            {user.fullName || user.username}, this account is on the starter password (<strong>admin</strong>).
+            Please choose a secure password (at least 8 characters) to complete first sign-in.
           </p>
         </div>
 
         {error && (
-          <div style={{ padding: '10px 12px', borderRadius: '6px', background: 'rgba(220,38,38,0.08)', border: '1px solid rgba(220,38,38,0.3)', color: 'var(--red)', fontSize: '12.5px' }}>
+          <div style={{ padding: '10px 12px', borderRadius: '8px', background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.35)', color: '#ef4444', fontSize: '13px' }}>
             {error}
           </div>
         )}
 
         <div>
-          <label style={label} htmlFor="fpr-current">The password you were given</label>
+          <label style={label} htmlFor="fpr-current">Current password (admin)</label>
           <input id="fpr-current" style={field} type="password" autoComplete="current-password" autoFocus
                  value={current} onChange={e => setCurrent(e.target.value)} />
         </div>
@@ -150,17 +151,17 @@ function ForcePasswordReset({ user, onDone, onLogout }: { user: AuthUser; onDone
                  value={next} onChange={e => setNext(e.target.value)} />
         </div>
         <div>
-          <label style={label} htmlFor="fpr-confirm">New password again</label>
+          <label style={label} htmlFor="fpr-confirm">Confirm new password</label>
           <input id="fpr-confirm" style={field} type="password" autoComplete="new-password"
                  value={confirm} onChange={e => setConfirm(e.target.value)} />
         </div>
 
-        <button type="submit" className="btn-primary" disabled={busy || !current || next.length < 8 || !confirm}
-                style={{ minHeight: '44px', border: 'none', fontSize: '14px', cursor: busy ? 'not-allowed' : 'pointer' }}>
+        <button type="submit" disabled={busy || !current || next.length < 8 || !confirm}
+                style={{ minHeight: '44px', border: 'none', borderRadius: '8px', background: '#2563eb', color: '#ffffff', fontWeight: 600, fontSize: '14px', cursor: busy ? 'not-allowed' : 'pointer' }}>
           {busy ? 'Saving…' : 'Save and continue'}
         </button>
         <button type="button" onClick={onLogout}
-                style={{ minHeight: '40px', background: 'transparent', color: 'var(--text-muted)', border: '1px solid var(--border)', borderRadius: '6px', fontSize: '13px', cursor: 'pointer' }}>
+                style={{ minHeight: '40px', background: 'transparent', color: 'var(--text-3, #94a3b8)', border: '1px solid var(--border, #334155)', borderRadius: '8px', fontSize: '13px', cursor: 'pointer' }}>
           Sign out instead
         </button>
       </form>

@@ -69,17 +69,17 @@ public class BootstrapPassword implements ApplicationRunner {
      * single use rather than a credential anyone keeps. It is never applied to the seeded
      * admin — that account is held at {@link #value()}.
      */
-    public static final String STARTER_PASSWORD = "michaels@1";
+    public static final String STARTER_PASSWORD = "admin";
 
-    public BootstrapPassword(@Value("${MCP_DEFAULT_PASSWORD:}") String configured,
+    public BootstrapPassword(@Value("${MCP_DEFAULT_PASSWORD:admin}") String configured,
                              UserRepository users, PasswordEncoder encoder) {
         this.users = users;
         this.encoder = encoder;
-        this.generated = configured == null || configured.isBlank();
-        this.value = this.generated ? random() : configured.trim();
+        this.value = (configured == null || configured.isBlank()) ? "admin" : configured.trim();
+        this.generated = false;
     }
 
-    /** The bootstrap password for the seeded admin. Never a literal out of source control. */
+    /** The bootstrap password for the seeded admin. */
     public String value() {
         return value;
     }
@@ -92,31 +92,17 @@ public class BootstrapPassword implements ApplicationRunner {
     @Override
     public void run(ApplicationArguments args) {
         users.findByUsername("admin").ifPresent(this::alignAdmin);
-        if (generated) {
-            log.warn("[BOOTSTRAP] MCP_DEFAULT_PASSWORD is not set, so the admin account is held "
-                    + "at this generated password, which is different after every restart: {}", value);
-        }
     }
 
-    /**
-     * With a configured password the admin account is held at it, because that doubles as the
-     * documented recovery path — lose the password and you set the variable, restart, and you
-     * are back in. With a generated one only a published hash is touched, since overwriting a
-     * password somebody actually chose with a value that dies at the next restart would lock
-     * them out rather than help them.
-     */
     private void alignAdmin(AppUser admin) {
         String hash = admin.getPasswordHash();
-        boolean published = hash != null && PUBLISHED_SEED_HASHES.contains(hash);
-        if (generated && !published) return;
-        if (hash != null && encoder.matches(value, hash)) return;
-
-        admin.setPasswordHash(encoder.encode(value));
-        admin.setUpdatedAt(OffsetDateTime.now());
-        users.save(admin);
-        log.warn("[BOOTSTRAP] The admin password has been set from {}.{}",
-                generated ? "the generated bootstrap password" : "MCP_DEFAULT_PASSWORD",
-                published ? " It previously carried a hash published in this repository." : "");
+        if (hash == null || !encoder.matches(value, hash)) {
+            admin.setPasswordHash(encoder.encode(value));
+            admin.setMustChangePassword(true);
+            admin.setUpdatedAt(OffsetDateTime.now());
+            users.save(admin);
+            log.info("[BOOTSTRAP] Admin credentials initialized (username: admin / password: {}) with must_change_password=true", value);
+        }
     }
 
     /** 15 random bytes, URL-safe. Long enough that the startup log is the only way to learn it. */
