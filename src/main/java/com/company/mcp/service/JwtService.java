@@ -9,6 +9,7 @@ import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Signs and validates JWTs.
@@ -31,10 +32,11 @@ public class JwtService {
         this.key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
     }
 
-    /** Issue a JWT with the given expiry (ms). */
+    /** Issue a JWT with the given expiry (ms) and unique jti. */
     public String generate(String subject, Map<String, Object> claims, long expiryMs) {
         Date now = new Date();
         return Jwts.builder()
+                .id(UUID.randomUUID().toString())
                 .subject(subject)
                 .claims(claims)
                 .issuedAt(now)

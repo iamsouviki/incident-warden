@@ -398,7 +398,7 @@ const App: React.FC = () => {
       sessionStorage.removeItem('iw_chat_history');
       sessionStorage.removeItem('iw_active_session_id');
     } catch {}
-    clearAuth();
+    logoutUser();
     setUser(null);
   };
 

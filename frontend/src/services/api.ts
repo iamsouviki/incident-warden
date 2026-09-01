@@ -60,6 +60,26 @@ export function clearAuth(): void {
   localStorage.removeItem(USER_KEY);
 }
 
+export async function logoutUser(): Promise<void> {
+  const token = getToken();
+  const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
+  if (token) {
+    try {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ refreshToken: refreshToken || undefined }),
+      });
+    } catch {
+      // Best effort server notification
+    }
+  }
+  clearAuth();
+}
+
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }

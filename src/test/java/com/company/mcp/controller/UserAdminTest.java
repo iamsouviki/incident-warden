@@ -40,8 +40,9 @@ class UserAdminTest {
     private final PasswordEncoder encoder = new BCryptPasswordEncoder(4);   // 4 rounds: a test, not a login
     private final RateLimiterService rateLimiter = mock(RateLimiterService.class);
     private final BootstrapPassword bootstrap = mock(BootstrapPassword.class);
+    private final com.company.mcp.service.TokenRevocationService tokenRevocationService = new com.company.mcp.service.TokenRevocationService(null);
     private final AuthController controller = new AuthController(
-            users, jwt, encoder, mock(OidcTokenValidator.class), rateLimiter, bootstrap, "", "tenant-1");
+            users, jwt, encoder, mock(OidcTokenValidator.class), rateLimiter, bootstrap, tokenRevocationService, "", "tenant-1");
 
     UserAdminTest() {
         AppUser owner = new AppUser();

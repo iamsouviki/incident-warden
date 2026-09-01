@@ -21,6 +21,7 @@ public class IntegrationManagerService {
     private final ServiceNowIntegrationService serviceNowService;
     private final FreshserviceIntegrationService freshserviceService;
     private final JiraIntegrationService jiraService;
+    private final com.company.mcp.service.DistributedLockService distributedLockService;
 
     private OffsetDateTime lastSyncTime;
     private String lastSyncStatus = "Idle";
@@ -29,12 +30,14 @@ public class IntegrationManagerService {
                                      IncidentRepository incidentRepository,
                                      ServiceNowIntegrationService serviceNowService,
                                      FreshserviceIntegrationService freshserviceService,
-                                     JiraIntegrationService jiraService) {
+                                     JiraIntegrationService jiraService,
+                                     com.company.mcp.service.DistributedLockService distributedLockService) {
         this.configRepository = configRepository;
         this.incidentRepository = incidentRepository;
         this.serviceNowService = serviceNowService;
         this.freshserviceService = freshserviceService;
         this.jiraService = jiraService;
+        this.distributedLockService = distributedLockService;
     }
 
     public Map<String, Object> getAllIntegrationSettings() {
@@ -122,7 +125,9 @@ public class IntegrationManagerService {
         if (lastSyncTime != null && OffsetDateTime.now().isBefore(lastSyncTime.plusHours(intervalHours))) {
             return;
         }
-        syncAllEnabled("tenant-1");
+        distributedLockService.executeWithLock("itsm-scheduled-sync", java.time.Duration.ofMinutes(15), () -> {
+            syncAllEnabled("tenant-1");
+        });
     }
 
     public Map<String, Object> syncAllEnabled(String tenantId) {

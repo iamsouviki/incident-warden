@@ -27,9 +27,11 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     private static final java.util.Set<String> ROLES = java.util.Set.of("VIEWER", "ANALYST", "ADMIN", "OWNER");
 
     private final JwtService jwtService;
+    private final com.company.mcp.service.TokenRevocationService tokenRevocationService;
 
-    public JwtAuthFilter(JwtService jwtService) {
+    public JwtAuthFilter(JwtService jwtService, com.company.mcp.service.TokenRevocationService tokenRevocationService) {
         this.jwtService = jwtService;
+        this.tokenRevocationService = tokenRevocationService;
     }
 
     @Override
@@ -56,6 +58,14 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 if (!ROLES.contains(role)) {
                     throw new JwtException("JWT carries an unknown role claim");
                 }
+
+                // Verify token is not in revocation denylist
+                if (tokenRevocationService != null && tokenRevocationService.isRevoked(
+                        claims.getId(), username,
+                        claims.getIssuedAt() != null ? claims.getIssuedAt().toInstant() : null)) {
+                    throw new JwtException("Token has been revoked");
+                }
+
                 var principal = new AuthenticatedUser(username, tenantId, role);
                 var auth = new UsernamePasswordAuthenticationToken(
                         principal, null,

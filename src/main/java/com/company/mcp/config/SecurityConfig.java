@@ -28,12 +28,16 @@ import java.util.Map;
 @EnableWebSecurity
 public class SecurityConfig {
     private final JwtService jwtService;
+    private final com.company.mcp.service.TokenRevocationService tokenRevocationService;
     private final ObjectMapper json;
     private final List<String> allowedOrigins;
 
-    public SecurityConfig(JwtService jwtService, ObjectMapper json,
+    public SecurityConfig(JwtService jwtService,
+            com.company.mcp.service.TokenRevocationService tokenRevocationService,
+            ObjectMapper json,
             @Value("${mcp.security.cors.allowed-origins:http://localhost:5173,http://localhost:5174,http://localhost:8080}") String allowedOrigins) {
         this.jwtService = jwtService;
+        this.tokenRevocationService = tokenRevocationService;
         this.json = json;
         this.allowedOrigins = Arrays.stream(allowedOrigins.split(",")).map(String::trim)
                 .filter(origin -> !origin.isBlank()).toList();
@@ -46,10 +50,16 @@ public class SecurityConfig {
                 .exceptionHandling(e -> e.authenticationEntryPoint(unauthorizedEntryPoint()).accessDeniedHandler(
                         forbiddenHandler()))
                 .authorizeHttpRequests(auth -> auth
-                        // ── Public: token issuance and liveness only ────────────────────────
-                        .requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/sso", "/api/auth/refresh")
+                        // ── Public: token issuance, static SPA files and liveness ───────────
+                        .requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/sso", "/api/auth/refresh", "/api/auth/logout")
                         .permitAll()
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                        .requestMatchers("/", "/index.html", "/assets/**", "/favicon.ico", "/*.svg", "/*.png", "/*.ico", "/*.js", "/*.css")
+                        .permitAll()
+                        .requestMatchers(HttpMethod.GET, "/incidents", "/incidents/**", "/settings", "/settings/**", "/chat", "/chat/**", "/sops", "/sops/**", "/tools", "/tools/**", "/teams", "/teams/**", "/account", "/account/**", "/login")
+                        .permitAll()
+                        .requestMatchers(HttpMethod.HEAD, "/", "/index.html", "/incidents", "/incidents/**", "/settings", "/settings/**", "/chat", "/chat/**", "/sops", "/sops/**", "/tools", "/tools/**", "/teams", "/teams/**", "/account", "/account/**", "/login")
+                        .permitAll()
                         .requestMatchers("/api/health", "/actuator/health", "/actuator/health/**", "/actuator/info")
                         .permitAll()
                         // Redacted incident counts, search, and guarded public chat assistant.
@@ -115,7 +125,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.PUT, "/**").hasAnyRole("ANALYST", "ADMIN", "OWNER")
                         .requestMatchers(HttpMethod.PATCH, "/**").hasAnyRole("ANALYST", "ADMIN", "OWNER")
                         .anyRequest().authenticated())
-                .addFilterBefore(new JwtAuthFilter(jwtService), UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(new JwtAuthFilter(jwtService, tokenRevocationService), UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }
 

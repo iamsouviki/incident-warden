@@ -31,9 +31,10 @@ class TokenRotationTest {
     private final JwtService jwt = new JwtService("test-secret-that-is-comfortably-over-32-bytes");
     private final PasswordEncoder encoder = mock(PasswordEncoder.class);
     private final RateLimiterService rateLimiter = mock(RateLimiterService.class);
+    private final com.company.mcp.service.TokenRevocationService tokenRevocationService = new com.company.mcp.service.TokenRevocationService(null);
     private final AuthController controller = new AuthController(
             users, jwt, encoder, mock(OidcTokenValidator.class), rateLimiter,
-            mock(com.company.mcp.config.BootstrapPassword.class), "", "tenant-1");
+            mock(com.company.mcp.config.BootstrapPassword.class), tokenRevocationService, "", "tenant-1");
 
     TokenRotationTest() {
         AppUser user = new AppUser();
@@ -79,6 +80,21 @@ class TokenRotationTest {
         String access = (String) login(false).get("token");
         ResponseEntity<?> result = controller.refresh(Map.of("refreshToken", access));
         assertThat(result.getStatusCode().value()).isEqualTo(401);
+    }
+
+    @Test
+    void logoutRevokesTokens() {
+        Map<String, Object> session = login(false);
+        String access = (String) session.get("token");
+        String refresh = (String) session.get("refreshToken");
+
+        io.jsonwebtoken.Claims claims = jwt.parse(access);
+        assertThat(tokenRevocationService.isRevoked(claims.getId(), "admin", claims.getIssuedAt().toInstant())).isFalse();
+
+        ResponseEntity<?> response = controller.logout("Bearer " + access, Map.of("refreshToken", refresh));
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+
+        assertThat(tokenRevocationService.isRevoked(claims.getId(), "admin", claims.getIssuedAt().toInstant())).isTrue();
     }
 
     private Map<String, Object> login(boolean rememberMe) {

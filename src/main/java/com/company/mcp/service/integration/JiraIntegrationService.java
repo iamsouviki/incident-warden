@@ -16,10 +16,17 @@ public class JiraIntegrationService {
     private static final Logger log = LoggerFactory.getLogger(JiraIntegrationService.class);
 
     private final IncidentRepository incidentRepository;
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate;
 
     public JiraIntegrationService(IncidentRepository incidentRepository) {
+        this(incidentRepository, new RestTemplate());
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public JiraIntegrationService(IncidentRepository incidentRepository,
+                                  @org.springframework.beans.factory.annotation.Qualifier("integrationRestTemplate") RestTemplate restTemplate) {
         this.incidentRepository = incidentRepository;
+        this.restTemplate = restTemplate != null ? restTemplate : new RestTemplate();
     }
 
     public boolean testConnection(String jiraUrl, String email, String apiToken) {

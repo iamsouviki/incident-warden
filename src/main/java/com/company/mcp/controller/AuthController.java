@@ -6,6 +6,7 @@ import com.company.mcp.service.JwtService;
 import com.company.mcp.service.NotificationService;
 import com.company.mcp.service.OidcTokenValidator;
 import com.company.mcp.service.RateLimiterService;
+import io.jsonwebtoken.Claims;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -36,12 +37,14 @@ public class AuthController {
     private final OidcTokenValidator oidc;
     private final RateLimiterService rateLimiter;
     private final com.company.mcp.config.BootstrapPassword bootstrapPassword;
+    private final com.company.mcp.service.TokenRevocationService tokenRevocationService;
     private final Set<String> ssoAllowedDomains;
     private final String ssoDefaultTenant;
 
     public AuthController(UserRepository users, JwtService jwtService, PasswordEncoder encoder, OidcTokenValidator oidc,
             RateLimiterService rateLimiter,
             com.company.mcp.config.BootstrapPassword bootstrapPassword,
+            com.company.mcp.service.TokenRevocationService tokenRevocationService,
             @Value("${mcp.sso.allowed-email-domains:}") String ssoAllowedDomains,
             @Value("${mcp.sso.default-tenant-id:tenant-1}") String ssoDefaultTenant) {
         this.users = users;
@@ -50,6 +53,7 @@ public class AuthController {
         this.oidc = oidc;
         this.rateLimiter = rateLimiter;
         this.bootstrapPassword = bootstrapPassword;
+        this.tokenRevocationService = tokenRevocationService;
         this.ssoAllowedDomains = java.util.Arrays.stream(ssoAllowedDomains.split(","))
                 .map(String::trim).map(String::toLowerCase).filter(d -> !d.isBlank())
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
@@ -201,6 +205,35 @@ public class AuthController {
                 "tenantId", user.getTenantId(),
                 "expiresIn", ACCESS_TTL,
                 "refreshExpiresIn", REFRESH_TTL));
+    }
+
+    /** POST /api/auth/logout — Revoke current access token and session */
+    @PostMapping("/logout")
+    public ResponseEntity<?> logout(@RequestHeader(value = "Authorization", required = false) String authHeader,
+                                    @RequestBody(required = false) Map<String, String> body) {
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            String token = authHeader.substring(7);
+            if (jwtService.isValid(token)) {
+                try {
+                    Claims claims = jwtService.parse(token);
+                    tokenRevocationService.revokeToken(
+                            claims.getId(),
+                            claims.getExpiration() != null ? claims.getExpiration().toInstant() : null);
+                } catch (Exception ignored) {}
+            }
+        }
+        if (body != null && body.containsKey("refreshToken")) {
+            String rToken = body.get("refreshToken");
+            if (jwtService.isValid(rToken)) {
+                try {
+                    Claims rClaims = jwtService.parse(rToken);
+                    tokenRevocationService.revokeToken(
+                            rClaims.getId(),
+                            rClaims.getExpiration() != null ? rClaims.getExpiration().toInstant() : null);
+                } catch (Exception ignored) {}
+            }
+        }
+        return ResponseEntity.ok(Map.of("message", "Logged out successfully"));
     }
 
     /** GET /api/auth/me */
@@ -371,6 +404,9 @@ public class AuthController {
                 return ResponseEntity.badRequest().body(Map.of("error",
                         "You cannot disable the account you are signed in with."));
             u.setEnabled(enabled);
+            if (!enabled) {
+                tokenRevocationService.revokeAllUserTokens(username);
+            }
         }
 
         u.setUpdatedAt(OffsetDateTime.now());
@@ -398,6 +434,7 @@ public class AuthController {
         u.setMustChangePassword(true);
         u.setUpdatedAt(OffsetDateTime.now());
         users.save(u);
+        tokenRevocationService.revokeAllUserTokens(username);
         return ResponseEntity.ok(Map.of(
                 "message", "Password reset. " + u.getUsername() + " signs in with this and is asked "
                         + "to replace it immediately.",
@@ -431,23 +468,11 @@ public class AuthController {
 
         String current = body.getOrDefault("currentPassword", "");
         String next = body.getOrDefault("newPassword", "");
-        // 400, not 401. The token is valid — it is the typed password that is wrong.
-        // The client's
-        // authFetch treats every 401 as an expired session and signs the user out, so
-        // answering
-        // 401 here would throw somebody out of the app for a typo, and out of a forced
-        // reset they
-        // cannot then complete.
         if (!encoder.matches(current, u.getPasswordHash()))
             return ResponseEntity.badRequest().body(Map.of("error", "Current password is incorrect"));
         if (next.length() < MIN_PASSWORD_LENGTH)
             return ResponseEntity.badRequest().body(Map.of("error",
                     "Choose a password of at least " + MIN_PASSWORD_LENGTH + " characters."));
-        // Rejecting the starter explicitly, not just "same as current": an account
-        // being reset
-        // could otherwise set the published value back and satisfy the flag while
-        // changing
-        // nothing an attacker would have to guess.
         if (next.equals(bootstrapPassword.starter()) || encoder.matches(next, u.getPasswordHash()))
             return ResponseEntity.badRequest().body(Map.of("error",
                     "Choose a password that is not the one you were given."));
@@ -456,6 +481,7 @@ public class AuthController {
         u.setMustChangePassword(false);
         u.setUpdatedAt(OffsetDateTime.now());
         users.save(u);
+        tokenRevocationService.revokeAllUserTokens(u.getUsername());
         return ResponseEntity.ok(Map.of("message", "Password updated.", "mustChangePassword", false));
     }
 
