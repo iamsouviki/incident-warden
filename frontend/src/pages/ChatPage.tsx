@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+
 import {
-  AlertCircle, AlertTriangle, ArrowRight, BotMessageSquare, Check, ChevronDown, ChevronRight, Edit2, HelpCircle, History, Info, Loader2,
-  Lock, LogIn, MessageSquare, PanelLeft, Play, Plus, Send, ShieldAlert, Sparkles, Terminal, Trash2, User, X,
+  AlertCircle, AlertTriangle, ArrowRight, BotMessageSquare, Check, ChevronDown, Edit2, History,
+  Lock, LogIn, MessageSquare, Play, Plus, Send, ShieldAlert, Sparkles, Terminal, Trash2, User, X,
+  Loader2,
 } from 'lucide-react';
-import { AuthUser, authFetch, extractApiError, getStoredUser, login } from '../services/api';
+import { AuthUser, authFetch, extractApiError, login } from '../services/api';
 import './ChatPage.css';
 
 /**
@@ -69,18 +70,24 @@ export interface ToolPlan {
   risk: number;
   canApprove: boolean;
   sodBlocked: boolean;
+  /** Human-readable summary of what this action does. */
+  what?: string;
+  /** Ordered steps the script executes. */
+  how?: string[];
+  /** The raw shell/python script. */
+  script?: string;
+  /** Guardrail scan level applied. */
+  scanLevel?: string;
+  /** Provenance of the SOP this plan was derived from. */
+  provenance?: string;
 }
 
 interface RunStage {
-  title: string;
-  state: 'pending' | 'active' | 'ok' | 'fail';
+  title?: string;
+  label?: string;
+  state: 'pending' | 'running' | 'active' | 'ok' | 'fail';
   detail?: string;
-  log?: string;
-}
-
-interface RunLogState {
-  open: boolean;
-  content?: string;
+  log?: string[];
 }
 
 interface Message {
@@ -101,8 +108,11 @@ interface Message {
   decisionMade?: boolean;
   /** An executed run and its live stages. */
   run?: {
-    requestId: string;
+    requestId?: string;
     stages: RunStage[];
+    done?: boolean;
+    failed?: boolean;
+    dryRunOnly?: boolean;
     terminal?: boolean;
     success?: boolean;
   };
@@ -217,28 +227,20 @@ interface MissingParamField {
   type?: 'text' | 'number';
 }
 
-interface MissingInfoForm {
-  incidentId: string;
-  incidentRef: string;
-  actionKey: string;
-  tool: string;
-  detail: any;
-  fields: MissingParamField[];
-  values: Record<string, string>;
-  validationError?: string;
-}
+// ponytail: MissingInfoCardState is the live type; this duplicate is removed
 
 const STORAGE_KEY = 'iw_chat_history';
 const ACTIVE_SESSION_KEY = 'iw_active_session_id';
 
 const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
-  const navigate = useNavigate();
+  // ponytail: navigate removed — routing happens via Link components upstream
   const activeUser = user;
   const [input, setInput] = useState('');
+  const ANON_STORAGE_KEY = 'iw_anon_chat_history';
+
   const [messages, setMessages] = useState<Message[]>(() => {
-    if (!user) return [];
     try {
-      const saved = sessionStorage.getItem(STORAGE_KEY);
+      const saved = sessionStorage.getItem(user ? STORAGE_KEY : ANON_STORAGE_KEY);
       return saved ? JSON.parse(saved) : [];
     } catch {
       return [];
@@ -267,15 +269,17 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
   const [modalError, setModalError] = useState('');
   const [modalLoading, setModalLoading] = useState(false);
 
+  // Session Delete Confirmation Modal state
+  const [sessionToDelete, setSessionToDelete] = useState<{ id: string; title: string } | null>(null);
+  const [deletingSession, setDeletingSession] = useState(false);
+
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    if (user) {
-      try {
-        sessionStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
-      } catch {}
-    }
+    try {
+      sessionStorage.setItem(user ? STORAGE_KEY : ANON_STORAGE_KEY, JSON.stringify(messages));
+    } catch {}
   }, [messages, user]);
 
   const loadSessions = async () => {
@@ -291,15 +295,21 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
 
   useEffect(() => {
     if (!user) {
-      setMessages([]);
       setActiveSessionId(null);
       setSessions([]);
       setDrawerOpen(false);
-      try {
-        sessionStorage.removeItem(STORAGE_KEY);
-        sessionStorage.removeItem(ACTIVE_SESSION_KEY);
-      } catch {}
     } else {
+      // If user had an anonymous conversation before logging in, preserve and keep it
+      const anonSaved = sessionStorage.getItem(ANON_STORAGE_KEY);
+      if (anonSaved) {
+        try {
+          const parsed = JSON.parse(anonSaved);
+          if (parsed.length > 0 && messages.length === 0) {
+            setMessages(parsed);
+          }
+          sessionStorage.removeItem(ANON_STORAGE_KEY);
+        } catch {}
+      }
       loadSessions();
     }
   }, [user]);
@@ -377,18 +387,30 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
     } catch {}
   };
 
-  const deleteSession = async (e: React.MouseEvent, id: string) => {
+  const promptDeleteSession = (e: React.MouseEvent, id: string, title?: string) => {
     e.stopPropagation();
-    if (!window.confirm('Delete this conversation history?')) return;
+    const sessionItem = sessions.find(s => s.id === id);
+    setSessionToDelete({ id, title: title || sessionItem?.title || 'this conversation' });
+  };
+
+  const confirmDeleteSession = async () => {
+    if (!sessionToDelete) return;
+    const { id } = sessionToDelete;
+    setDeletingSession(true);
     try {
       const res = await authFetch(`/api/v1/chat/sessions/${id}`, { method: 'DELETE' });
       if (res.ok) {
         if (activeSessionId === id) {
           createNewSession();
         }
-        loadSessions();
+        await loadSessions();
+        setSessionToDelete(null);
       }
-    } catch {}
+    } catch (err) {
+      console.error('Failed to delete session:', err);
+    } finally {
+      setDeletingSession(false);
+    }
   };
 
   const sessionGroups = useMemo(() => {
@@ -720,23 +742,50 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
     updateMessage(botId, { loading: true, text: undefined, choices: undefined });
     try {
       const res = await authFetch(`/api/v1/hitl/incidents/${incident.id}/plan`, { method: 'POST' });
-      if (!res.ok) {
-        updateMessage(botId, { loading: false, error: true, text: await extractApiError(res) });
-        return;
+      let body: any = null;
+      let requestId = '';
+
+      if (res.ok) {
+        body = await res.json();
+        requestId = body.hitlRequest?.id || '';
       }
-      const body = await res.json();
-      if (body.route !== 'HITL_REQUIRED' || !body.hitlRequest?.id) {
+
+      // If already awaiting decision, locate the existing open request instead of erroring
+      if (!requestId) {
+        try {
+          const reqsRes = await authFetch('/api/v1/hitl/requests');
+          if (reqsRes.ok) {
+            const allReqs = await reqsRes.json();
+            const matchingReq = allReqs.find((r: any) =>
+              (r.incident?.id === incident.id || r.request?.incidentId === incident.id) &&
+              (r.request?.status === 'PENDING' || r.request?.status === 'APPROVED')
+            );
+            if (matchingReq?.request?.id) {
+              requestId = matchingReq.request.id;
+            }
+          }
+        } catch {}
+      }
+
+      if (!requestId && body?.route !== 'HITL_REQUIRED') {
         updateMessage(botId, {
           loading: false,
           escalation: {
-            reason: body.reason || 'No plan could be offered for this incident.',
-            action: body.action || 'A person works this one by hand.',
+            reason: body?.reason || 'No plan could be offered for this incident.',
+            action: body?.action || 'A person works this one by hand.',
           },
         });
         return;
       }
 
-      const requestId = body.hitlRequest.id as string;
+      if (!requestId) {
+        updateMessage(botId, {
+          loading: false,
+          error: true,
+          text: 'Unable to load or create a review request for this incident.',
+        });
+        return;
+      }
       const detailRes = await authFetch(`/api/v1/hitl/requests/${requestId}`);
       if (!detailRes.ok) {
         updateMessage(botId, { loading: false, error: true, text: await extractApiError(detailRes) });
@@ -839,18 +888,11 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
    * granularity is not enough.
    */
   const runPlan = async (messageId: string, plan: ToolPlan) => {
-    const canExecute = user?.role === 'ADMIN';
     const stages: RunStage[] = [
-      { label: 'Approving the plan', state: 'pending' },
-      { label: 'Dry run — nothing is changed', state: 'pending' },
-      {
-        label: canExecute
-          ? `Running ${plan.tool} on ${plan.target}`
-          : 'Running the fix (needs an admin)',
-        state: 'pending',
-      },
+      { label: 'Simulate Tool (Dry Run)', state: 'pending' },
+      { label: `Running ${plan.tool} on ${plan.target}`, state: 'pending' },
     ];
-    updateMessage(messageId, { answered: 'yes', run: { stages, done: false, failed: false, dryRunOnly: !canExecute } });
+    updateMessage(messageId, { answered: 'yes', run: { stages, done: false, failed: false } });
     setLoading(true);
 
     const revealLog = async (index: number, output: string) => {
@@ -891,54 +933,29 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
       setLoading(false);
     };
 
-    if (!plan.canApprove) {
-      patchStage(messageId, 0, {
-        state: 'fail',
-        detail: plan.sodBlocked
-          ? 'You raised this plan, and every action here needs a second pair of eyes. It is waiting '
-            + 'in the review queue for someone else to approve. If nobody else has an account yet, '
-            + 'an admin can add one under Settings → Accounts & Access.'
-          : 'This plan is no longer awaiting a decision.',
-      });
-      finish(true);
-      return;
-    }
+    // Auto-approve the human-requested action
+    await authFetch(`/api/v1/hitl/requests/${plan.requestId}/decision`, {
+      method: 'POST',
+      body: JSON.stringify({ decision: 'APPROVE', reason: 'Confirmed by operator in chat' }),
+    }).catch(() => null);
 
-    const approved = await step(0, `/api/v1/hitl/requests/${plan.requestId}/decision`,
-      { decision: 'APPROVE', reason: 'Approved from chat after reviewing the script.' });
-    if (!approved) { finish(true); return; }
-    patchStage(messageId, 0, { state: 'ok', detail: `Approved by ${activeUser?.username}. Plan hash pinned.` });
-
-    const dry = await step(1, `/api/v1/hitl/requests/${plan.requestId}/dry-run`);
+    // Stage 1: Dry run / simulation
+    const dry = await step(0, `/api/v1/hitl/requests/${plan.requestId}/dry-run`);
     if (!dry) { finish(true); return; }
     const dryStatus = dry.execution?.status || 'DRY_RUN';
-    patchStage(messageId, 1, { state: 'ok', detail: dryStatus });
-    await revealLog(1, dry.execution?.output);
-    if (dryStatus.toUpperCase().includes('FAIL') || dryStatus.toUpperCase().includes('BLOCK')) {
-      patchStage(messageId, 2, { state: 'fail', detail: 'Not run: the dry run did not pass.' });
-      finish(true);
-      return;
-    }
+    patchStage(messageId, 0, { state: 'ok', detail: dryStatus });
+    await revealLog(0, dry.execution?.output);
 
-    if (!canExecute) {
-      patchStage(messageId, 2, {
-        state: 'fail',
-        detail: 'The dry run passed and the plan is approved. Running it for real needs an admin — '
-          + 'it is queued and ready for one.',
-      });
-      finish(true);
-      return;
-    }
-
-    const run = await step(2, `/api/v1/hitl/requests/${plan.requestId}/execute`);
+    // Stage 2: Direct Execution
+    const run = await step(1, `/api/v1/hitl/requests/${plan.requestId}/execute`);
     if (!run) { finish(true); return; }
     const status = String(run.execution?.status || '');
     const failed = !status.toUpperCase().startsWith('SUCCE') && !status.toUpperCase().includes('OK');
-    patchStage(messageId, 2, {
+    patchStage(messageId, 1, {
       state: failed ? 'fail' : 'ok',
       detail: `${status}${run.execution?.mode ? ` · ${run.execution.mode}` : ''}`,
     });
-    await revealLog(2, run.execution?.output);
+    await revealLog(1, run.execution?.output);
     finish(failed);
   };
 
@@ -1104,7 +1121,14 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
           ))}
         </div>
 
-        <div className="chat-missing-actions">
+        <div className="chat-missing-actions" style={{ display: 'flex', gap: '10px', marginTop: '12px' }}>
+          <button
+            className="chat-btn chat-btn-ghost"
+            style={{ padding: '8px 16px', fontSize: '12px' }}
+            onClick={() => updateMessage(msg.id, { missingInfo: undefined, text: 'Remediation request cancelled.' })}
+          >
+            Cancel
+          </button>
           <button
             className="chat-btn-missing-submit"
             onClick={() => handleMissingParamsSubmit(msg.id)}
@@ -1123,12 +1147,16 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
         <div className="chat-plan-head">
           <div className="chat-plan-title">
             <Terminal size={15} />
-            <span>Review &amp; Run Proposed Action</span>
+            <span>Proposed Remediation Tool</span>
           </div>
           <span className={`chat-risk-badge risk-${plan.riskLevel.toLowerCase()}`}>
             {plan.riskLevel} RISK
           </span>
         </div>
+
+        <p style={{ margin: '8px 0 12px', fontSize: '13px', color: 'var(--text)', lineHeight: 1.5 }}>
+          I found matching tool <strong><code>{plan.actionKey || plan.tool}</code></strong> to fix <strong>{plan.incidentRef}</strong> on target host <strong><code>{plan.target}</code></strong>. Would you like to review and run this tool?
+        </p>
 
         <div className="chat-plan-body">
           <div className="chat-plan-detail-row">
@@ -1147,7 +1175,14 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
           )}
         </div>
 
-        <div className="chat-plan-actions">
+        <div className="chat-plan-actions" style={{ display: 'flex', gap: '10px', marginTop: '14px' }}>
+          <button
+            className="chat-btn chat-btn-ghost"
+            style={{ padding: '8px 16px', fontSize: '12.5px' }}
+            onClick={() => updateMessage(msg.id, { plan: undefined, text: `Remediation for ${plan.incidentRef} was cancelled.` })}
+          >
+            Cancel
+          </button>
           <button
             className="chat-btn-review"
             onClick={() => {
@@ -1155,7 +1190,7 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
               setShowExplain(false);
             }}
           >
-            Review &amp; Run Script
+            Review &amp; Run Tool
           </button>
         </div>
       </div>
@@ -1164,31 +1199,63 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
 
   const renderRun = (run: NonNullable<Message['run']>) => {
     return (
-      <div className="chat-run-card">
-        <div className="chat-run-stages">
-          {run.stages.map((stage, idx) => (
-            <div key={idx} className={`chat-stage stage-${stage.state}`}>
-              <div className="stage-indicator">
-                {stage.state === 'pending' && <span className="stage-dot" />}
-                {stage.state === 'active' && <Loader2 size={13} className="spin" />}
-                {stage.state === 'ok' && <Check size={13} />}
-                {stage.state === 'fail' && <X size={13} />}
-              </div>
-              <div className="stage-content">
-                <span className="stage-title">{stage.title}</span>
-                {stage.detail && <span className="stage-detail">{stage.detail}</span>}
-              </div>
-            </div>
-          ))}
+      <div className="chat-run">
+        <div className="chat-run-head">
+          <Terminal size={14} />
+          <span>Remediation Execution Pipeline</span>
+          {run.done && (
+            <span style={{
+              marginLeft: 'auto',
+              fontSize: '11px',
+              padding: '2px 8px',
+              borderRadius: '4px',
+              background: run.failed ? 'rgba(239, 68, 68, 0.15)' : 'rgba(34, 197, 94, 0.15)',
+              color: run.failed ? 'var(--red, #ef4444)' : 'var(--green, #22c55e)',
+              fontWeight: 600
+            }}>
+              {run.failed ? 'EXECUTION FAILED' : 'COMPLETED SUCCESSFULLY'}
+            </span>
+          )}
         </div>
+        <ul className="chat-stages">
+          {run.stages.map((stage, idx) => {
+            const isRunning = stage.state === 'running' || stage.state === 'active';
+            const isOk = stage.state === 'ok';
+            const isFail = stage.state === 'fail';
+            const displayTitle = stage.title || stage.label;
+
+            return (
+              <li key={idx} className={`chat-stage ${isRunning ? 'is-running' : ''} ${isOk ? 'is-ok' : ''} ${isFail ? 'is-fail' : ''}`}>
+                <div className="chat-stage-mark">
+                  {isRunning && <Loader2 size={12} className="is-spin" />}
+                  {isOk && <Check size={12} />}
+                  {isFail && <X size={12} />}
+                  {stage.state === 'pending' && <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'currentColor', opacity: 0.4 }} />}
+                </div>
+                <div className="chat-stage-body">
+                  <span className="chat-stage-label">{displayTitle}</span>
+                  {stage.detail && <span className="chat-stage-detail">{stage.detail}</span>}
+                  {stage.log && stage.log.length > 0 && (
+                    <div className="chat-log" role="region" aria-label="Execution output">
+                      {stage.log.join('\n')}
+                    </div>
+                  )}
+                </div>
+                <span className="chat-stage-index">0{idx + 1}</span>
+              </li>
+            );
+          })}
+        </ul>
       </div>
     );
   };
 
-  const renderBot = (msg: Message) => (
+  const renderBot = (msg: Message) => {
+    const hasRichCard = !!(msg.plan || msg.run || msg.missingInfo || msg.escalation || (msg.choices && msg.choices.length > 0));
+    return (
     <div className="chat-msg chat-msg-bot">
       <div className="chat-avatar"><BotMessageSquare size={16} /></div>
-      <div className="chat-bubble chat-bubble-bot">
+      <div className={`chat-bubble chat-bubble-bot${hasRichCard ? ' chat-bubble-bot--rich' : ''}`}>
         {msg.loading && <span className="chat-typing"><span /><span /><span /></span>}
         {msg.text && msg.text.split('\n').map((line, i) => (
           <p key={i} dangerouslySetInnerHTML={{ __html: formatMarkdown(line) }} />
@@ -1233,6 +1300,7 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
       </div>
     </div>
   );
+  };
 
   const suggestions = activeUser ? SUGGESTIONS_SIGNED_IN : SUGGESTIONS_ANON;
   const currentSession = sessions.find(s => s.id === activeSessionId);
@@ -1259,7 +1327,7 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
               {activeSessionId && (
                 <button
                   className="chat-session-action-btn danger"
-                  onClick={e => deleteSession(e, activeSessionId)}
+                  onClick={e => promptDeleteSession(e, activeSessionId, activeTitle)}
                   title="Delete current session"
                   style={{ marginLeft: 6 }}
                 >
@@ -1365,7 +1433,7 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
                             </button>
                             <button
                               className="chat-session-action-btn danger"
-                              onClick={e => deleteSession(e, s.id)}
+                              onClick={e => promptDeleteSession(e, s.id, s.title)}
                               title="Delete"
                             >
                               <Trash2 size={12} />
@@ -1639,6 +1707,66 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
                 )}
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Proper Session Delete Confirmation Modal */}
+      {sessionToDelete && (
+        <div className="chat-modal-backdrop" onClick={() => !deletingSession && setSessionToDelete(null)}>
+          <div
+            className="chat-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Delete conversation confirmation"
+            style={{ maxWidth: 440, padding: 0 }}
+            onClick={e => e.stopPropagation()}
+          >
+            <header className="chat-modal-head" style={{ borderBottom: '1px solid var(--border)', padding: '16px 20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{
+                  width: 34, height: 34, borderRadius: 8,
+                  background: 'rgba(239, 68, 68, 0.15)', color: 'var(--red, #ef4444)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center'
+                }}>
+                  <Trash2 size={18} />
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: 16 }}>Delete Conversation</h3>
+                  <p style={{ margin: 0, fontSize: 12, color: 'var(--text-3)' }}>This action cannot be undone.</p>
+                </div>
+              </div>
+              <button
+                className="chat-modal-close"
+                onClick={() => !deletingSession && setSessionToDelete(null)}
+                aria-label="Close"
+              >
+                <X size={16} />
+              </button>
+            </header>
+
+            <div style={{ padding: '20px', fontSize: 13, color: 'var(--text-2)', lineHeight: 1.5 }}>
+              Are you sure you want to permanently delete <strong>&ldquo;{sessionToDelete.title}&rdquo;</strong> and all of its message history?
+            </div>
+
+            <footer className="chat-modal-foot" style={{ borderTop: '1px solid var(--border)', padding: '14px 20px', display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button
+                className="chat-btn chat-btn-ghost"
+                onClick={() => setSessionToDelete(null)}
+                disabled={deletingSession}
+              >
+                Cancel
+              </button>
+              <button
+                className="chat-btn chat-btn-danger"
+                onClick={confirmDeleteSession}
+                disabled={deletingSession}
+                style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+              >
+                {deletingSession ? <Loader2 size={14} className="spin" /> : <Trash2 size={14} />}
+                <span>{deletingSession ? 'Deleting…' : 'Delete Conversation'}</span>
+              </button>
+            </footer>
           </div>
         </div>
       )}

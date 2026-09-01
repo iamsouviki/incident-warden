@@ -152,6 +152,14 @@
   flex: 1;
 }
 
+/* When the bubble wraps a tool/run/choice card, the card carries its own
+   border — suppress the outer one so nothing appears double-framed. */
+.chat-bubble-bot--rich {
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
 .chat-bubble-error {
   border-color: var(--crit);
   background: var(--crit-dim);
@@ -904,15 +912,56 @@
 
 .chat-missing-card {
   margin-top: 10px;
-  padding: 18px 20px;
-  border-radius: var(--radius-lg, 12px);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
+  padding: 14px 16px;
+  border-radius: var(--radius-md, 8px);
+  background: var(--surface2, var(--bg));
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
   animation: fadeIn 0.2s ease-out;
+}
+
+.chat-missing-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chat-missing-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chat-missing-field label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2, var(--text));
+}
+
+.chat-missing-field input {
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface, #fff);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.chat-missing-field input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
+
+.chat-missing-sub {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  line-height: 1.45;
 }
 
 .chat-missing-head {

@@ -56,10 +56,8 @@ const PAGE_META: Record<string, { title: string; subtitle: string }> = {
   '/account': { title: 'My account', subtitle: 'Manage your profile and session.' },
 };
 
-function WorkflowRail({ active }: { active: number }) {
-  const steps = ['Intake', 'Understand', 'Decide', 'Act', 'Verify'];
-  return <div className="workflow-rail" aria-label="Incident operations workflow">{steps.map((step, index) => <React.Fragment key={step}><div className={`workflow-step ${index === active ? 'active' : ''} ${index < active ? 'complete' : ''}`}><span>{index + 1}</span>{step}</div>{index < steps.length - 1 && <div className={`workflow-connector ${index < active ? 'complete' : ''}`} />}</React.Fragment>)}</div>;
-}
+// ponytail: WorkflowRail removed per UX simplification
+
 
 /** Signs in, then lands on the assistant rather than leaving the URL on /login. */
 function LoginRoute({ onLogin }: { onLogin: (user: AuthUser) => void }) {
@@ -350,7 +348,7 @@ function AppContent({ user, onLogin, onLogout, theme, toggleTheme }: { user: Aut
               <div><h1>{meta.title}</h1><p>{meta.subtitle}</p></div>
             </div>
           )}
-          {(activePath === '/incidents' || activePath === '/hitl' || activePath === '/tools') && <WorkflowRail active={activePath === '/incidents' ? 0 : activePath === '/hitl' ? 2 : 3} />}
+
           <div className={`page-content ${isChat ? 'page-content-chat' : ''}`}>
             <Routes>
               <Route path="/" element={<ChatPage user={user} onLogin={onLogin} />} />

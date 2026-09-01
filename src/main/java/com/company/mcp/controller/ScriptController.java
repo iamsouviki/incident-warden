@@ -63,25 +63,7 @@ public class ScriptController {
         return ResponseEntity.ok(saved);
     }
 
-    @GetMapping("/logs")
-    public ResponseEntity<?> getExecutionLogs() {
-        // Point run logs at unified action_executions table
-        List<ActionExecution> list = actionExecutionRepository.findByTenantIdOrderByStartedAtDesc(currentUser.tenantId());
-        List<Map<String, Object>> mapped = new ArrayList<>();
-        for (ActionExecution ae : list) {
-            mapped.add(Map.of(
-                    "id", ae.getId().toString(),
-                    "name", "Incident Remediation (" + ae.getMode() + ")",
-                    "timestamp", ae.getStartedAt() != null ? ae.getStartedAt().toString() : OffsetDateTime.now().toString(),
-                    "scriptContent", ae.getOutput() != null ? ae.getOutput() : "# Execution output",
-                    "status", ae.getStatus(),
-                    "exitCode", "EXECUTED".equalsIgnoreCase(ae.getStatus()) || "SIMULATED".equalsIgnoreCase(ae.getStatus()) ? 0 : 1,
-                    "stdout", ae.getOutput() != null ? ae.getOutput() : "",
-                    "stderr", ae.getValidationResult() != null ? ae.getValidationResult() : ""
-            ));
-        }
-        return ResponseEntity.ok(Map.of("logs", mapped));
-    }
+
 
     @GetMapping("/{id}")
     public ResponseEntity<?> getScript(@PathVariable UUID id) {
