@@ -11,9 +11,9 @@ spring:
       file-size-threshold: 2MB
 
   datasource:
-    url: jdbc:postgresql://localhost:5432/mcp_db
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:incident_warden_db}
     driver-class-name: org.postgresql.Driver
-    username: mcp_user
+    username: ${DB_USER:warden_user}
     password: ${DB_PASSWORD:changeme}
     hikari:
       maximum-pool-size: 20

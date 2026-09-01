@@ -18,15 +18,19 @@ import java.util.Locale;
 import java.util.regex.Pattern;
 
 /**
- * Outbound notification. Two callers: any update to an incident, and the auto-run lane
- * that acts without waiting for a human — so the people affected find out from the system
- * rather than from a user asking why a service restarted.
+ * Outbound notification, so the people affected find out from the system rather than from a
+ * user asking why something changed.
+ *
+ * One live caller: {@link #notifyIncidentUpdated}, on any update to an incident.
+ * {@link #notifyAutoRemediation} is a leftover of the deleted auto-run lane and currently has
+ * none — nothing in this application acts without a human approving it. Delete that method or
+ * a future reader will infer a lane that does not exist.
  *
  * Four properties of this class matter more than its brevity:
  *
- * 1. **Recipients come from the incident, never from a registry.** Reporter, assignee,
- *    assigned group. A separately maintained address list would be a second source of
- *    truth that goes stale the moment somebody changes teams.
+ * 1. **Recipients come from the incident, never from a registry.** Reporter and assignee, and
+ *    nothing else — see {@link #recipientsFor}. A separately maintained address list would be a
+ *    second source of truth that goes stale the moment somebody changes teams.
  * 2. **No credential.** The relay is reached unauthenticated on the internal network. No
  *    username or password is read, stored, or sent. That is what allows "configure it all
  *    from the UI" and "no auth details in the database" to hold at the same time.
@@ -114,8 +118,12 @@ public class NotificationService {
     /**
      * The notification list for a ticket update:
      *   1. the reporter, if one was named and has an address;
-     *   2. the assigned operator — looked up in auth.users;
-     *   3. the assigned group.
+     *   2. the assigned operator — looked up in auth.users.
+     *
+     * There is deliberately no third source. A configured catch-all list and an assignment-group
+     * expansion were both described here once and neither was implemented; a recipient this method
+     * cannot resolve is dropped rather than guessed, because send() reporting "notified" has to mean
+     * the relay accepted a message for a real address.
      */
     public List<String> recipientsFor(Incident incident) {
         LinkedHashSet<String> to = new LinkedHashSet<>();
@@ -162,8 +170,8 @@ public class NotificationService {
         Settings settings = settings();
         if (!settings.usable()) {
             // The recipient count is logged even here: an admin asking "would this have
-            // reached anyone?" is asking about the roster and the group address, and that
-            // question has an answer whether or not a relay is configured.
+            // reached anyone?" is asking whether the ticket names a reporter and an assignee
+            // with addresses, and that has an answer whether or not a relay is configured.
             log.info("[NOTIFY] Notifications are disabled or unconfigured; nothing sent. recipients={} subject={}",
                     to.size(), subject);
             return false;
@@ -196,10 +204,13 @@ public class NotificationService {
     }
 
     /**
-     * Tells the reporter, the assignee and the assigned group that the platform fixed
-     * something without asking first. The body states what ran and on what authority,
-     * because the first question anyone asks about an unattended action is "who approved
-     * this?".
+     * Tells the reporter and the assignee that the platform fixed something without asking
+     * first. The body states what ran and on what authority, because the first question anyone
+     * asks about an unattended action is "who approved this?".
+     *
+     * Dead code: no caller remains, because the auto-run lane it served was removed. Kept only
+     * so the wording is not lost if unattended remediation ever returns behind an explicit
+     * opt-in; it is a deletion candidate, not a feature.
      */
     public boolean notifyAutoRemediation(Incident incident, String actionName, String target,
                                          String toolName, boolean succeeded, String precedentIncidentRef) {
@@ -251,7 +262,7 @@ public class NotificationService {
     }
 
     /**
-     * Tells the reporter, the assignee and the assigned group that the incident changed.
+     * Tells the reporter and the assignee that the incident changed.
      *
      * {@code changes} is the same field-level diff that goes into incident.incident_history,
      * so the mail and the audit trail cannot disagree. Called with an empty list when a

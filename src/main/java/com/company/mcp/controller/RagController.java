@@ -22,13 +22,16 @@ public class RagController {
     private final CurrentUser currentUser;
     private final SopProcedureRepository procedures;
     private final com.company.mcp.service.RateLimiterService rateLimiter;
+    private final com.company.mcp.service.ChatSessionService chatSessionService;
 
     public RagController(RagService ragService, CurrentUser currentUser, SopProcedureRepository procedures,
-                         com.company.mcp.service.RateLimiterService rateLimiter) {
+            com.company.mcp.service.RateLimiterService rateLimiter,
+            com.company.mcp.service.ChatSessionService chatSessionService) {
         this.ragService = ragService;
         this.currentUser = currentUser;
         this.procedures = procedures;
         this.rateLimiter = rateLimiter;
+        this.chatSessionService = chatSessionService;
     }
 
     @PostMapping("/ingest")
@@ -39,33 +42,59 @@ public class RagController {
             return ResponseEntity.badRequest().body(Map.of("error", "title and description are required"));
         }
         boolean success = ragService.ingestSop(currentUser.tenantId(), title.trim(), description.trim());
-        return success ? ResponseEntity.ok(Map.of("message", "SOP successfully ingested and approved for this workspace."))
-                : ResponseEntity.status(503).body(Map.of("error", "SOP service is unavailable; no procedure was stored."));
+        return success
+                ? ResponseEntity.ok(Map.of("message", "SOP successfully ingested and approved for this workspace."))
+                : ResponseEntity.status(503)
+                        .body(Map.of("error", "SOP service is unavailable; no procedure was stored."));
     }
 
     @PostMapping("/upload")
     public ResponseEntity<?> uploadSop(@RequestParam("file") MultipartFile file,
-                                       @RequestParam(value = "title", required = false) String title) {
-        if (file.isEmpty()) return ResponseEntity.badRequest().body(Map.of("error", "file is empty"));
+            @RequestParam(value = "title", required = false) String title) {
+        if (file.isEmpty())
+            return ResponseEntity.badRequest().body(Map.of("error", "file is empty"));
         boolean success = ragService.ingestFile(file.getResource(), title, currentUser.tenantId());
-        return success ? ResponseEntity.ok(Map.of("message", "File successfully ingested and approved for this workspace."))
-                : ResponseEntity.status(503).body(Map.of("error", "SOP service is unavailable; no procedure was stored."));
+        return success
+                ? ResponseEntity.ok(Map.of("message", "File successfully ingested and approved for this workspace."))
+                : ResponseEntity.status(503)
+                        .body(Map.of("error", "SOP service is unavailable; no procedure was stored."));
     }
 
     /**
-     * Rate limited on the same budget as ticket analysis and script generation. This is the
-     * box a user actually types into, and it was the one LLM surface with no ceiling at all:
-     * a held-down enter key spent the provider budget one question at a time. Length, blank
-     * text and scope are checked inside {@link RagService#refuse}, shared with analysis.
+     * Rate limited on the same budget as ticket analysis and script generation.
+     * This is the
+     * box a user actually types into, and it was the one LLM surface with no
+     * ceiling at all:
+     * a held-down enter key spent the provider budget one question at a time.
+     * Length, blank
+     * text and scope are checked inside {@link RagService#refuse}, shared with
+     * analysis.
      */
     @PostMapping("/chat")
     public ResponseEntity<?> chat(@RequestBody Map<String, String> body, HttpSession session) {
         String question = body.get("question");
-        if (question == null || question.isBlank()) return ResponseEntity.badRequest().body(Map.of("error", "question is required"));
+        if (question == null || question.isBlank())
+            return ResponseEntity.badRequest().body(Map.of("error", "question is required"));
         if (!rateLimiter.allowLlmCall(currentUser.username())) {
-            return ResponseEntity.status(429).body(Map.of("error", "Too many questions in the last minute. Try again shortly."));
+            return ResponseEntity.status(429)
+                    .body(Map.of("error", "Too many questions in the last minute. Try again shortly."));
         }
-        return ResponseEntity.ok(Map.of("answer", ragService.askStrictSopRag(session.getId(), question)));
+        String sessionIdParam = body.get("sessionId");
+        String effSessionId = (sessionIdParam != null && !sessionIdParam.isBlank()) ? sessionIdParam : session.getId();
+        String answer = ragService.askStrictSopRag(effSessionId, question);
+
+        // If user provided a valid database session ID, persist the turn
+        if (sessionIdParam != null && !sessionIdParam.isBlank()) {
+            try {
+                UUID sessionUuid = UUID.fromString(sessionIdParam);
+                chatSessionService.appendMessage(sessionUuid, "user", question, null);
+                chatSessionService.appendMessage(sessionUuid, "bot", answer, null);
+            } catch (IllegalArgumentException ignored) {
+                // Not a UUID session ID (e.g. servlet session fallback), ignore DB persistence
+            }
+        }
+
+        return ResponseEntity.ok(Map.of("answer", answer, "sessionId", effSessionId));
     }
 
     @GetMapping("/sops")
@@ -108,13 +137,19 @@ public class RagController {
     @PutMapping("/procedures/{id}")
     public ResponseEntity<?> updateProcedure(@PathVariable UUID id, @RequestBody SopProcedure update) {
         Optional<SopProcedure> opt = procedures.findByIdAndTenantId(id, currentUser.tenantId());
-        if (opt.isEmpty()) return ResponseEntity.notFound().build();
+        if (opt.isEmpty())
+            return ResponseEntity.notFound().build();
         SopProcedure existing = opt.get();
-        if (update.getTitle() != null && !update.getTitle().isBlank()) existing.setTitle(update.getTitle().trim());
-        if (update.getDescription() != null) existing.setDescription(update.getDescription().trim());
-        if (update.getMatchKeywords() != null) existing.setMatchKeywords(update.getMatchKeywords().trim());
-        if (update.getActionKey() != null && !update.getActionKey().isBlank()) existing.setActionKey(update.getActionKey().trim());
-        if (update.getApprovalStatus() != null && !update.getApprovalStatus().isBlank()) existing.setApprovalStatus(update.getApprovalStatus().trim());
+        if (update.getTitle() != null && !update.getTitle().isBlank())
+            existing.setTitle(update.getTitle().trim());
+        if (update.getDescription() != null)
+            existing.setDescription(update.getDescription().trim());
+        if (update.getMatchKeywords() != null)
+            existing.setMatchKeywords(update.getMatchKeywords().trim());
+        if (update.getActionKey() != null && !update.getActionKey().isBlank())
+            existing.setActionKey(update.getActionKey().trim());
+        if (update.getApprovalStatus() != null && !update.getApprovalStatus().isBlank())
+            existing.setApprovalStatus(update.getApprovalStatus().trim());
         existing.setRequiresApproval(update.isRequiresApproval());
         existing.setExecutionOrder(update.getExecutionOrder());
         existing.setUpdatedAt(OffsetDateTime.now());
@@ -125,7 +160,8 @@ public class RagController {
     @DeleteMapping("/procedures/{id}")
     public ResponseEntity<?> deleteProcedure(@PathVariable UUID id) {
         Optional<SopProcedure> opt = procedures.findByIdAndTenantId(id, currentUser.tenantId());
-        if (opt.isEmpty()) return ResponseEntity.notFound().build();
+        if (opt.isEmpty())
+            return ResponseEntity.notFound().build();
         procedures.delete(opt.get());
         return ResponseEntity.ok(Map.of("message", "Procedure deleted successfully"));
     }
@@ -134,7 +170,8 @@ public class RagController {
     public ResponseEntity<?> updateSop(@PathVariable java.util.UUID id, @RequestBody Map<String, String> body) {
         String title = body.get("title");
         String description = body.get("description");
-        if (title == null || description == null) return ResponseEntity.badRequest().body(Map.of("error", "title and description are required"));
+        if (title == null || description == null)
+            return ResponseEntity.badRequest().body(Map.of("error", "title and description are required"));
         boolean success = ragService.updateSop(id, title, description);
         return success ? ResponseEntity.ok(Map.of("message", "SOP successfully updated and re-embedded."))
                 : ResponseEntity.status(503).body(Map.of("error", "Failed to update SOP."));

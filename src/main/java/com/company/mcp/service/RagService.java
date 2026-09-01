@@ -411,6 +411,20 @@ public class RagService {
 
             // 5. Incident context, scoped to the caller's tenant, bounded, and relevant.
             String tenantId = currentUser.tenantId();
+            boolean isAggregate = isAggregateQuestion(question);
+
+            long totalIncidents = 0;
+            try {
+                totalIncidents = incidentRepository.countByTenantId(tenantId);
+            } catch (Exception e) {
+                log.warn("[RAG] Failed to count incidents for tenant {}: {}", tenantId, e.getMessage());
+            }
+
+            if (isAggregate && totalIncidents == 0) {
+                log.info("[RAG] 0-incident count detected for aggregate question: {}", question);
+                return "Currently, there are **0** incidents recorded in your workspace database. If you have active tickets in ServiceNow, Freshservice, or Jira, you can sync them from the Incidents page or configure auto-sync in Settings.";
+            }
+
             String incidentsContext = incidentContext(tenantId, question);
 
             if (hybridDocs.isEmpty() && incidentsContext.isEmpty()) {
@@ -587,7 +601,37 @@ public class RagService {
             return "";
         }
 
-        if (rows.size() <= 40 || isAggregateQuestion(question)) {
+        if (isAggregateQuestion(question)) {
+            StringBuilder sb = new StringBuilder();
+            try {
+                long totalCount = incidentRepository.countByTenantId(tenantId);
+                sb.append("LIVE INCIDENT DATABASE METRICS:\n");
+                sb.append(String.format("- Total incidents in workspace: %d\n", totalCount));
+                
+                List<Object[]> statusCounts = incidentRepository.countGroupedByStatus(tenantId);
+                if (!statusCounts.isEmpty()) {
+                    sb.append("- Status breakdown: ");
+                    sb.append(statusCounts.stream().map(r -> r[0] + ": " + r[1]).collect(Collectors.joining(", ")));
+                    sb.append("\n");
+                }
+                List<Object[]> priorityCounts = incidentRepository.countGroupedByPriority(tenantId);
+                if (!priorityCounts.isEmpty()) {
+                    sb.append("- Priority breakdown: ");
+                    sb.append(priorityCounts.stream().map(r -> r[0] + ": " + r[1]).collect(Collectors.joining(", ")));
+                    sb.append("\n");
+                }
+            } catch (Exception e) {
+                log.warn("[RAG] Failed to compute live aggregate metrics: {}", e.getMessage());
+            }
+            if (!rows.isEmpty()) {
+                sb.append("\nACTIVE INCIDENT ROSTER:\n");
+                sb.append(String.join("\n", rows));
+            }
+            log.info("[RAG] Rich aggregate incident context constructed ({} chars)", sb.length());
+            return sb.toString().trim();
+        }
+
+        if (rows.size() <= 40) {
             log.info("[RAG] Rich incident context; keeping all {} ticket rows in the prompt", rows.size());
             return String.join("\n", rows);
         }
@@ -620,7 +664,10 @@ public class RagService {
 
     private static final Set<String> AGGREGATE_TERMS = Set.of(
         "how many", "count", "total", "list all", "show all", "all tickets", "all incidents",
-        "all open", "open tickets", "open incidents", "summary", "summarise", "summarize",
+        "all open", "open tickets", "open incidents", "how many incident", "how many ticket",
+        "ticket count", "incident count", "any open", "any active", "active incidents", "active tickets",
+        "number of incidents", "number of tickets", "status summary", "ticket roster", "show open",
+        "open count", "summary", "summarise", "summarize",
         "overview", "report", "breakdown", "trend", "most common", "oldest", "newest",
         "unassigned", "per team", "by team", "by priority", "by status", "average", "backlog",
         "which", "next", "more", "tell me", "tell", "show me", "show", "what is", "status",

@@ -417,7 +417,7 @@ const HitlReviewConsole: React.FC<{ requestId: string; onBack: () => void; onCha
               </Button>
             </div>
             {!people.length && (
-              <p className="review-note">No accounts could be listed. Add users under Teams first.</p>
+              <p className="review-note">No accounts could be listed. An admin adds them under Settings &rarr; Accounts &amp; Access.</p>
             )}
           </article>
 

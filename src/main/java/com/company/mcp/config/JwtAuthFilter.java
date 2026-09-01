@@ -24,7 +24,7 @@ import java.util.List;
 public class JwtAuthFilter extends OncePerRequestFilter {
 
     /** A role outside this set is treated as a forged claim, not as a new role. */
-    private static final java.util.Set<String> ROLES = java.util.Set.of("VIEWER", "ANALYST", "ADMIN");
+    private static final java.util.Set<String> ROLES = java.util.Set.of("VIEWER", "ANALYST", "ADMIN", "OWNER");
 
     private final JwtService jwtService;
 

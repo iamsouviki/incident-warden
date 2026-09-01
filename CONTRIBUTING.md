@@ -7,7 +7,7 @@ that reason and not for ceremony.
 ## Getting it running
 
 You need **JDK 21**, **Maven**, **Node 20+**, and **PostgreSQL 16 with the `vector` extension** on
-`localhost:5432` (database `mcp_db`, user `mcp_user`). Postgres + pgvector is the only supported
+`localhost:5432` (database `incident_warden_db`, user `warden_user`). Postgres + pgvector is the only supported
 store — the old H2 + fake vector store were removed because a fake `similaritySearch` returned every
 document unranked and made retrieval look like it worked while proving nothing.
 
@@ -19,9 +19,9 @@ mvn -o spring-boot:run -Dspring-boot.run.profiles=local -Dmaven.test.skip=true
 npm run dev --prefix frontend
 ```
 
-Then <http://localhost:5173>, sign in as `admin`. Set `MCP_DEFAULT_PASSWORD` before you start the
-backend, or read the password it generated out of its own startup log (`grep BOOTSTRAP
-logs/backend-local.log`). The two dev stand-ins
+Then <http://localhost:5173>, sign in as `admin`. The password is `MCP_DEFAULT_PASSWORD` if you set
+it before the backend started, otherwise the literal `admin` — and the first screen after login is a
+forced password change either way. The two dev stand-ins
 (`scripts/dev-executor.mjs`, `scripts/dev-smtp.mjs`) make the execution and notification legs
 observable without anything leaving your machine — see [Quick start](README.md#quick-start).
 
@@ -35,8 +35,11 @@ mvn -o test
 npx tsc --noEmit --project frontend
 ```
 
-Both must pass. `mvn -q` hides the test summary, so if you use it, read
-`target/surefire-reports/*.xml` instead of trusting a silent exit code.
+Both must pass — **112 tests, 0 failures** is the current baseline. `mvn -q` hides the test summary,
+so if you use it, read `target/surefire-reports/*.txt` instead of trusting a silent exit code.
+
+Migrations are one squashed changeset (`1.0-baseline`). **Never edit an existing changeset** — add a
+new one. A changed checksum stops every database that already ran it.
 
 ## Things that must not break
 
@@ -48,10 +51,13 @@ first. In particular, a PR will not be merged if it:
 - lets a script run without a matching approved SHA-256 hash;
 - skips the guardrail re-scan at dispatch;
 - adds a path where a mutating action runs on a host the platform inferred rather than confirmed;
-- widens unattended execution beyond "same store, same tool, already human-approved, already
-  succeeded, restart-or-read-only, clean scan, not P1";
+- adds any way for a script to be dispatched without a person approving that exact script — a
+  scheduler, a confidence threshold, an inherited approval from an earlier incident. That path
+  existed once and was deleted on purpose; re-adding it is the one change that changes what this
+  product *is*;
 - stores an integration credential, provider API key, or token in the database, or returns one from
-  an API;
+  an API. (`IntegrationManagerService` currently breaks this rule and is a known defect — see
+  [S1](docs/enterprise-readiness.md). Fixing it is welcome; matching it is not.);
 - adds a configuration knob that can only be set by editing a properties file when it is something
   an operator needs to change at runtime. Operator-facing settings belong in the UI.
 
@@ -74,15 +80,44 @@ that is the bar.
 
 ## Where the useful gaps are
 
-[Known gaps](README.md#known-gaps) is the honest list. The ones most worth a contribution:
+[docs/enterprise-readiness.md](docs/enterprise-readiness.md) is the full list with `file:line`
+references and a suggested order; [Known gaps](README.md#known-gaps) is the short version. The ones
+most worth a contribution:
 
-- **MCP tool access.** The registry and `/api/v1/mcp/*` exist; nothing wires the agent to actually
-  call an MCP server yet.
+- **Get `npm run typecheck` back to green.** It exits 2 today with **58 errors** in five committed
+  files, so the frontend CI job is red before you touch anything — if your first run fails, it is not
+  you. Roughly 40 are unused imports (`TS6133`) and are pure deletion. The two that matter: the chat
+  page calls `handleMissingParamChange` and `handleMissingParamsSubmit` (`ChatPage.tsx:909,919`) and
+  **neither function exists**, so that card throws a `ReferenceError`; and `ToolPlan`/`RunStage`
+  (lines 46, 64) are missing six fields the render code reads. Good first contribution, and nothing
+  else can be gated until it lands.
+- **Answering a target refusal from the UI.** `TARGET_HOST_UNKNOWN` blocks a plan and says "enter the
+  server this affects" — and the only screen with a hostname input is the HITL review console, which
+  a blocked plan never reaches, because the `!eligible` branch returns without creating a request.
+  Render the escalation's `action` string plus the three inputs on `IncidentManagementPage`, reusing
+  `patchIncident('target', …)` from `HitlReviewConsole.tsx:463`. Frontend-only.
+- **ITSM credentials out of the database.** `IntegrationManagerService` writes three secrets to
+  `config.system_config` in plaintext. The fix pattern already exists in `AiConfigService`: read them
+  from the environment, keep the non-secret fields UI-editable, add a changeset that deletes the
+  rows. Highest-value fix in the repository.
+- **A deployment that boots.** `docker compose up` fails because `mcp-app` sets no `MCP_JWT_SECRET`,
+  and `SPRING_PROFILES_ACTIVE: docker` names a profile with no `application-docker.yml`.
 - **A real executor agent.** `scripts/dev-executor.mjs` runs nothing on purpose. A sandboxed agent
   that does run scripts, with its own allowlist and audit log, is the highest-value missing piece.
-- **Self-service password change**, which the default-password situation makes overdue.
-- **A background poller** for incident intake, which needs a distributed lock before it can run on
-  more than one instance.
+- **MCP tool access.** The registry and `/api/v1/mcp/*` exist; nothing wires the agent to actually
+  call an MCP server yet.
+- **A distributed lock on `IntegrationManagerService.scheduledSync`**, which currently runs on every
+  replica and hardcodes `tenant-1`.
+- **Timeouts on the three ITSM `RestTemplate`s**, none of which has one.
+- **A frontend test suite.** There is no `test` script and no framework, and the chat page is the
+  product.
+- **The two API-only settings.** The notification relay (`/api/v1/ai/config/notifications`) and the
+  HITL band (`hitlThreshold` on `POST /api/v1/ai/config`) have live endpoints and no UI — the forms
+  were removed from `AiConfigPage.tsx` and never replaced. Either restore both cards or delete the
+  endpoints; a half-removed setting is what makes documentation lie. Small, self-contained, and it
+  closes a violation of the rule two bullets up.
+- **Deleting `TeamController` and `TeamsPage.tsx`** — a fake API that returns `200 "success"` and
+  persists nothing, plus its only consumer.
 
 ## Licensing of contributions
 

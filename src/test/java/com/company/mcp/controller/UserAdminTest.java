@@ -44,6 +44,14 @@ class UserAdminTest {
             users, jwt, encoder, mock(OidcTokenValidator.class), rateLimiter, bootstrap, "", "tenant-1");
 
     UserAdminTest() {
+        AppUser owner = new AppUser();
+        owner.setUsername("owner");
+        owner.setRole("OWNER");
+        owner.setTenantId("tenant-1");
+        owner.setEnabled(true);
+        owner.setPasswordHash(encoder.encode("an-owner-password-nobody-published"));
+        table.put("owner", owner);
+
         AppUser admin = new AppUser();
         admin.setUsername("admin");
         admin.setRole("ADMIN");
@@ -63,14 +71,14 @@ class UserAdminTest {
     }
 
     @Test
-    void aCreatedAccountIsHandedTheStarterPasswordAndMustReplaceIt() {
-        Map<String, Object> created = asMap(controller.createUser(adminToken(), Map.of(
+    void anOwnerCanCreateAccountAndHandStarterPassword() {
+        Map<String, Object> created = asMap(controller.createUser(ownerToken(), Map.of(
                 "username", NEW_USER, "email", "priya.mehta@company.com", "role", "ANALYST")));
 
         assertThat(created.get("defaultPassword")).isEqualTo(BootstrapPassword.STARTER_PASSWORD);
         assertThat(table.get(NEW_USER).isMustChangePassword()).isTrue();
         assertThat(encoder.matches(BootstrapPassword.STARTER_PASSWORD, table.get(NEW_USER).getPasswordHash()))
-                .as("the password the admin reads out is the one that works")
+                .as("the password the owner reads out is the one that works")
                 .isTrue();
 
         // Sign-in has to say so, or the client never knows to block.
@@ -81,8 +89,15 @@ class UserAdminTest {
     }
 
     @Test
+    void anAdminCannotCreateAccountOnlyOwnerCan() {
+        ResponseEntity<?> resp = controller.createUser(adminToken(), Map.of(
+                "username", NEW_USER, "email", "priya.mehta@company.com", "role", "ANALYST"));
+        assertThat(resp.getStatusCode().value()).isEqualTo(403);
+    }
+
+    @Test
     void theForcedResetCannotBeSatisfiedByTheStarterPasswordItself() {
-        controller.createUser(adminToken(), Map.of(
+        controller.createUser(ownerToken(), Map.of(
                 "username", NEW_USER, "email", "priya.mehta@company.com", "role", "ANALYST"));
         String token = accessTokenFor(NEW_USER, "ANALYST");
 
@@ -119,7 +134,7 @@ class UserAdminTest {
         assertThat(table.get("admin").isEnabled()).isTrue();
 
         // Someone else's account is fair game, and a reset flags it again.
-        controller.createUser(adminToken(), Map.of(
+        controller.createUser(ownerToken(), Map.of(
                 "username", NEW_USER, "email", "priya.mehta@company.com", "role", "ANALYST"));
         controller.changePassword(accessTokenFor(NEW_USER, "ANALYST"), Map.of(
                 "currentPassword", BootstrapPassword.STARTER_PASSWORD, "newPassword", "a-password-of-their-own"));
@@ -133,7 +148,7 @@ class UserAdminTest {
     }
 
     @Test
-    void onlyAnAdminReachesTheUserRoutes() {
+    void onlyAnAdminOrOwnerReachesTheUserRoutes() {
         String analyst = accessTokenFor("someone", "ANALYST");
         assertThat(controller.updateUser(analyst, "admin", Map.of("role", "ANALYST"))
                 .getStatusCode().value()).isEqualTo(403);
@@ -141,6 +156,10 @@ class UserAdminTest {
         assertThat(controller.createUser(analyst, Map.of(
                 "username", NEW_USER, "email", "priya.mehta@company.com", "role", "ADMIN"))
                 .getStatusCode().value()).isEqualTo(403);
+    }
+
+    private String ownerToken() {
+        return accessTokenFor("owner", "OWNER");
     }
 
     private String adminToken() {

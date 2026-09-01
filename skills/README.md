@@ -1,7 +1,7 @@
 # Skills
 
 Skills are the allowlist of things this platform can be asked to do. They live in the database
-(`tools.skills`) and are edited in the browser: **Tools & scripts → Skills**, ADMIN only.
+(`tools.skills`) and are edited in the browser: **Skills & Tools → Skills**, ADMIN only.
 
 There is nothing to edit in this directory, and that is the point.
 
@@ -10,7 +10,8 @@ There is nothing to edit in this directory, and that is the point.
 This directory held 1,700 lines documenting `REMOTE_EXEC`, `SCALE_UP`, `ROLLBACK`,
 `VaultCredentialService`, `RemoteExecutionService`, `ScriptGuardrailValidator`,
 `ScriptGeneratorService`, `mcp.vault`, `mcp.remote` and a Flyway migration step. None of those
-exist in the source tree — several never did. A catalogue that lists tools the engine will refuse
+exist in the source tree — several never did, and this project uses Liquibase, not Flyway. A
+catalogue that lists tools the engine will refuse
 to run is worse than no catalogue: an SOP author reads it, writes `SCALE_UP:deploy:3` into a
 procedure, and finds out at approval time that the key is unknown.
 

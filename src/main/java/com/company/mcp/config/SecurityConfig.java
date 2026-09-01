@@ -32,69 +32,90 @@ public class SecurityConfig {
     private final List<String> allowedOrigins;
 
     public SecurityConfig(JwtService jwtService, ObjectMapper json,
-                          @Value("${mcp.security.cors.allowed-origins:http://localhost:5173,http://localhost:5174,http://localhost:8080}") String allowedOrigins) {
+            @Value("${mcp.security.cors.allowed-origins:http://localhost:5173,http://localhost:5174,http://localhost:8080}") String allowedOrigins) {
         this.jwtService = jwtService;
         this.json = json;
-        this.allowedOrigins = Arrays.stream(allowedOrigins.split(",")).map(String::trim).filter(origin -> !origin.isBlank()).toList();
+        this.allowedOrigins = Arrays.stream(allowedOrigins.split(",")).map(String::trim)
+                .filter(origin -> !origin.isBlank()).toList();
     }
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http.cors(c -> c.configurationSource(corsSource())).csrf(csrf -> csrf.disable())
-            .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-            .exceptionHandling(e -> e.authenticationEntryPoint(unauthorizedEntryPoint()).accessDeniedHandler(forbiddenHandler()))
-            .authorizeHttpRequests(auth -> auth
-                // ── Public: token issuance and liveness only ────────────────────────
-                .requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/sso", "/api/auth/refresh").permitAll()
-                .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                .requestMatchers("/api/health", "/actuator/health", "/actuator/health/**", "/actuator/info").permitAll()
-                // Redacted incident counts, search, and guarded public chat assistant.
-                // Read-only on ticket mutation by construction: see PublicReadService and RagService.
-                .requestMatchers("/api/v1/public/**").permitAll()
+                .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .exceptionHandling(e -> e.authenticationEntryPoint(unauthorizedEntryPoint()).accessDeniedHandler(
+                        forbiddenHandler()))
+                .authorizeHttpRequests(auth -> auth
+                        // ── Public: token issuance and liveness only ────────────────────────
+                        .requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/sso", "/api/auth/refresh")
+                        .permitAll()
+                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                        .requestMatchers("/api/health", "/actuator/health", "/actuator/health/**", "/actuator/info")
+                        .permitAll()
+                        // Redacted incident counts, search, and guarded public chat assistant.
+                        // Read-only on ticket mutation by construction: see PublicReadService and
+                        // RagService.
+                        .requestMatchers("/api/v1/public/**").permitAll()
 
-                // ── Operator surface: read for everyone signed in ───────────────────
-                .requestMatchers(HttpMethod.GET, "/api/auth/me", "/api/auth/users", "/api/v1/teams/**", "/api/v1/statuses/**",
-                        "/api/v1/incidents", "/api/v1/incidents/**", "/api/v1/scripts", "/api/v1/scripts/**",
-                        "/api/v1/rag/**", "/api/v1/skills", "/api/v1/skills/**",
-                        "/api/v1/integrations/**",
-                        "/api/v1/hitl/**", "/api/v1/telemetry/**").authenticated()
-                .requestMatchers(HttpMethod.POST, "/api/v1/rag/chat").authenticated()
-                .requestMatchers(HttpMethod.POST, "/api/auth/password").authenticated()
+                        // ── Operator surface: read for everyone signed in ───────────────────
+                        .requestMatchers(HttpMethod.GET, "/api/auth/me", "/api/auth/users", "/api/v1/teams/**",
+                                "/api/v1/statuses/**",
+                                "/api/v1/incidents", "/api/v1/incidents/**", "/api/v1/scripts", "/api/v1/scripts/**",
+                                "/api/v1/rag/**", "/api/v1/skills", "/api/v1/skills/**",
+                                "/api/v1/integrations/**", "/api/v1/chat/**",
+                                "/api/v1/hitl/**", "/api/v1/telemetry/**")
+                        .authenticated()
+                        .requestMatchers(HttpMethod.POST, "/api/v1/rag/chat", "/api/v1/chat/**").authenticated()
+                        .requestMatchers(HttpMethod.PUT, "/api/v1/chat/**").authenticated()
+                        .requestMatchers(HttpMethod.DELETE, "/api/v1/chat/**").authenticated()
+                        .requestMatchers(HttpMethod.POST, "/api/auth/password").authenticated()
 
-                // ── Analyst surface: create and triage work ─────────────────────────
-                .requestMatchers(HttpMethod.POST, "/api/v1/intake/**").hasAnyRole("ANALYST", "ADMIN")
-                .requestMatchers(HttpMethod.POST, "/api/v1/telemetry/events").hasAnyRole("ANALYST", "ADMIN")
-                .requestMatchers(HttpMethod.POST, "/api/v1/hitl/incidents/*/plan").hasAnyRole("ANALYST", "ADMIN")
-                .requestMatchers(HttpMethod.POST, "/api/v1/rag/ingest", "/api/v1/rag/upload").hasAnyRole("ANALYST", "ADMIN")
-                .requestMatchers(HttpMethod.POST, "/api/v1/incidents", "/api/v1/incidents/**").hasAnyRole("ANALYST", "ADMIN")
-                .requestMatchers(HttpMethod.PUT, "/api/v1/incidents/**").hasAnyRole("ANALYST", "ADMIN")
-                .requestMatchers(HttpMethod.POST, "/api/v1/scripts", "/api/v1/scripts/**").hasAnyRole("ANALYST", "ADMIN")
-                .requestMatchers(HttpMethod.PUT, "/api/v1/scripts/**").hasAnyRole("ANALYST", "ADMIN")
-                .requestMatchers(HttpMethod.POST, "/api/v1/integrations/sync", "/api/v1/integrations/incidents/**").hasAnyRole("ANALYST", "ADMIN")
+                        // ── Analyst surface: create and triage work ─────────────────────────
+                        .requestMatchers(HttpMethod.POST, "/api/v1/intake/**").hasAnyRole("ANALYST", "ADMIN", "OWNER")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/telemetry/events").hasAnyRole("ANALYST", "ADMIN", "OWNER")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/hitl/incidents/*/plan")
+                        .hasAnyRole("ANALYST", "ADMIN", "OWNER")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/rag/ingest", "/api/v1/rag/upload")
+                        .hasAnyRole("ANALYST", "ADMIN", "OWNER")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/incidents", "/api/v1/incidents/**")
+                        .hasAnyRole("ANALYST", "ADMIN", "OWNER")
+                        .requestMatchers(HttpMethod.PUT, "/api/v1/incidents/**").hasAnyRole("ANALYST", "ADMIN", "OWNER")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/scripts", "/api/v1/scripts/**")
+                        .hasAnyRole("ANALYST", "ADMIN", "OWNER")
+                        .requestMatchers(HttpMethod.PUT, "/api/v1/scripts/**").hasAnyRole("ANALYST", "ADMIN", "OWNER")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/integrations/sync",
+                                "/api/v1/integrations/incidents/**")
+                        .hasAnyRole("ANALYST", "ADMIN", "OWNER")
 
-                // ── Reviewer surface: an analyst may approve and simulate ───────────
-                .requestMatchers(HttpMethod.POST, "/api/v1/hitl/requests/*/decision",
-                        "/api/v1/hitl/requests/*/dry-run").hasAnyRole("ANALYST", "ADMIN")
+                        // ── Reviewer surface: an analyst may approve and simulate ───────────
+                        .requestMatchers(HttpMethod.POST, "/api/v1/hitl/requests/*/decision",
+                                "/api/v1/hitl/requests/*/dry-run")
+                        .hasAnyRole("ANALYST", "ADMIN", "OWNER")
 
-                // ── Admin surface: execution, config, deletion, user creation ──
-                .requestMatchers(HttpMethod.POST, "/api/auth/users", "/api/auth/users/**").hasRole("ADMIN")
-                .requestMatchers(HttpMethod.PUT, "/api/auth/users/**").hasRole("ADMIN")
-                .requestMatchers(HttpMethod.POST, "/api/v1/hitl/requests/*/execute").hasRole("ADMIN")
-                .requestMatchers("/api/v1/ai/config/**", "/api/v1/integrations/settings", "/api/v1/integrations/test", "/actuator/**").hasRole("ADMIN")
-                .requestMatchers(HttpMethod.POST, "/api/v1/skills", "/api/v1/skills/**").hasRole("ADMIN")
-                .requestMatchers(HttpMethod.DELETE, "/api/v1/skills", "/api/v1/skills/**").hasRole("ADMIN")
-                .requestMatchers(HttpMethod.PUT, "/api/v1/rag/sops/**").hasRole("ADMIN")
-                .requestMatchers(HttpMethod.POST, "/api/v1/rag/procedures/**").hasRole("ADMIN")
-                .requestMatchers(HttpMethod.PUT, "/api/v1/rag/procedures/**").hasRole("ADMIN")
-                .requestMatchers(HttpMethod.DELETE, "/api/v1/rag/procedures/**").hasRole("ADMIN")
-                .requestMatchers(HttpMethod.DELETE, "/**").hasRole("ADMIN")
+                        // ── Owner exclusive: user account creation ──────────────────────────
+                        .requestMatchers(HttpMethod.POST, "/api/auth/users").hasRole("OWNER")
 
-                // ── Fail-closed default: an unlisted write is never a VIEWER right ───
-                .requestMatchers(HttpMethod.POST, "/**").hasAnyRole("ANALYST", "ADMIN")
-                .requestMatchers(HttpMethod.PUT, "/**").hasAnyRole("ANALYST", "ADMIN")
-                .requestMatchers(HttpMethod.PATCH, "/**").hasAnyRole("ANALYST", "ADMIN")
-                .anyRequest().authenticated())
-            .addFilterBefore(new JwtAuthFilter(jwtService), UsernamePasswordAuthenticationFilter.class);
+                        // ── Admin surface: execution, config, deletion, user management ─────
+                        .requestMatchers(HttpMethod.PUT, "/api/auth/users/**").hasAnyRole("ADMIN", "OWNER")
+                        .requestMatchers(HttpMethod.POST, "/api/auth/users/*/reset-password").hasAnyRole("ADMIN", "OWNER")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/hitl/requests/*/execute").hasAnyRole("ADMIN", "OWNER")
+                        .requestMatchers("/api/v1/ai/config/**", "/api/v1/integrations/settings",
+                                "/api/v1/integrations/test", "/actuator/**")
+                        .hasAnyRole("ADMIN", "OWNER")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/skills", "/api/v1/skills/**").hasAnyRole("ADMIN", "OWNER")
+                        .requestMatchers(HttpMethod.DELETE, "/api/v1/skills", "/api/v1/skills/**").hasAnyRole("ADMIN", "OWNER")
+                        .requestMatchers(HttpMethod.PUT, "/api/v1/rag/sops/**").hasAnyRole("ADMIN", "OWNER")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/rag/procedures/**").hasAnyRole("ADMIN", "OWNER")
+                        .requestMatchers(HttpMethod.PUT, "/api/v1/rag/procedures/**").hasAnyRole("ADMIN", "OWNER")
+                        .requestMatchers(HttpMethod.DELETE, "/api/v1/rag/procedures/**").hasAnyRole("ADMIN", "OWNER")
+                        .requestMatchers(HttpMethod.DELETE, "/**").hasAnyRole("ADMIN", "OWNER")
+
+                        // ── Fail-closed default: an unlisted write is never a VIEWER right ───
+                        .requestMatchers(HttpMethod.POST, "/**").hasAnyRole("ANALYST", "ADMIN", "OWNER")
+                        .requestMatchers(HttpMethod.PUT, "/**").hasAnyRole("ANALYST", "ADMIN", "OWNER")
+                        .requestMatchers(HttpMethod.PATCH, "/**").hasAnyRole("ANALYST", "ADMIN", "OWNER")
+                        .anyRequest().authenticated())
+                .addFilterBefore(new JwtAuthFilter(jwtService), UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }
 
@@ -106,20 +127,30 @@ public class SecurityConfig {
         return (request, response, ex) -> write(response, 403, "Your role is not permitted to perform this action.");
     }
 
-    private void write(jakarta.servlet.http.HttpServletResponse response, int status, String message) throws java.io.IOException {
+    private void write(jakarta.servlet.http.HttpServletResponse response, int status, String message)
+            throws java.io.IOException {
         response.setStatus(status);
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         response.getWriter().write(json.writeValueAsString(Map.of("error", message)));
     }
 
-    @Bean public PasswordEncoder passwordEncoder() { return new BCryptPasswordEncoder(10); }
-    @Bean public CorsConfigurationSource corsSource() {
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder(10);
+    }
+
+    @Bean
+    public CorsConfigurationSource corsSource() {
         CorsConfiguration cfg = new CorsConfiguration();
         // Patterns, not exact origins. An exact-match list cannot express "any port on
-        // localhost", and a dev server that drifts from 5173 to 5174 because the first port
-        // was taken then fails every request with "Invalid CORS request" — which reads as a
-        // broken login, not as a config mismatch. Patterns accept literal origins too, so a
-        // deployment that lists exact hosts behaves exactly as before; nothing is loosened
+        // localhost", and a dev server that drifts from 5173 to 5174 because the first
+        // port
+        // was taken then fails every request with "Invalid CORS request" — which reads
+        // as a
+        // broken login, not as a config mismatch. Patterns accept literal origins too,
+        // so a
+        // deployment that lists exact hosts behaves exactly as before; nothing is
+        // loosened
         // unless someone configures a wildcard.
         cfg.setAllowedOriginPatterns(allowedOrigins.isEmpty()
                 ? List.of("http://localhost:*", "http://127.0.0.1:*")

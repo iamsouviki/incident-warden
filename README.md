@@ -12,6 +12,7 @@
   <a href="#functional-flow-in-detail">How it works</a> ·
   <a href="#safeguards">Safeguards</a> ·
   <a href="#api">API</a> ·
+  <a href="docs/enterprise-readiness.md">Readiness review</a> ·
   <a href="docs/client_poc_demo.md">Demo run sheet</a> ·
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
@@ -62,8 +63,8 @@ the product, and it is in this repository.
 | **Platform-aware script generation** | Probes the target to learn its operating system, then emits PowerShell or Bash. Three tiers: deterministic SOP template → model-assisted → refuse. |
 | **Deterministic guardrails** | Allowlisted action keys, blocked terms, hash pinning at approval, re-scan at dispatch, and `dryRun:false` refused on the public execute endpoint. |
 | **AI guardrails** | A scope gate before any model call, a 4 000-character input cap, prompt-injection refusal, a per-user LLM rate limit, and provider failures excluded from the answer cache so one bad minute cannot break a question permanently. |
-| **No credentials in the database** | `connection_method` records *how* to reach a host; the secret lives with the executor. The LLM provider key is environment-only and is never returned by an API. Login passwords are BCrypt hashes. |
-| **Operated from the UI** | Provider and model, thresholds, teams and users, SOP procedures, notification recipients, web-search egress — all database-backed and editable in the browser. No properties file edits to run it. |
+| **Target credentials stay with the executor** | `connection_method` records *how* to reach a host; the secret for that method lives with the executor agent, not here. The LLM provider key is environment-only (`MCP_LLM_API_KEY`) and is never returned by an API. Login passwords are BCrypt hashes. **One exception, and it is a known defect:** the ITSM integration page writes ServiceNow/Freshservice/Jira secrets into `config.system_config` — see [S1 in the readiness review](docs/enterprise-readiness.md). |
+| **Operated from the UI** | Provider and model, users and roles, agent skills, SOP procedures, ITSM integrations, web-search egress — all database-backed and editable in the browser, with no properties-file edit needed to run it. Two settings fall short of this today and are listed as defects rather than claimed: the notification relay and the HITL confidence band are API-only, their forms having been removed from the Settings page. |
 | **JWT access control** | A role matrix over every endpoint, fail-closed on unmapped writes, refresh tokens, and a rate-limited login. |
 | **Runs fully offline** | Postgres + pgvector + Ollama, plus two dev stand-ins (executor, SMTP) that make the whole loop observable with nothing leaving the machine. |
 
@@ -98,20 +99,24 @@ Read this section before changing anything in the remediation path.
    today stops a plan approved yesterday.
 4. **`POST /api/v1/scripts/execute` with `dryRun:false` returns 409.** There is no "just run it"
    endpoint.
-5. **No integration credential is stored in the database.** `connection_method` names *how* to
-   connect (`SSH`/`WINRM`/`AGENT`); the secret for that method lives with the executor on the
-   target network. User login passwords are BCrypt hashes.
-6. **Nothing runs unattended. There is no switch that makes it.** No scheduler scans for work, no
-   confidence score dispatches, and no past approval is inherited by a later incident. Every
-   execution is recorded against the name of a person who read that script.
+5. **No credential for a target host is stored in the database.** `connection_method` names *how*
+   to connect (`SSH`/`WINRM`/`AGENT`); the secret for that method lives with the executor on the
+   target network. User login passwords are BCrypt hashes. The intent is that no credential of any
+   kind is stored — and the ITSM integration path currently breaks that intent, which is tracked as
+   [S1](docs/enterprise-readiness.md) rather than described here as if it were fixed.
+6. **No script runs unattended. There is no switch that makes it.** No scheduler dispatches a
+   remediation, no confidence score dispatches, and no past approval is inherited by a later
+   incident. Every execution is recorded against the name of a person who read that script. (One
+   `@Scheduled` job does exist — `IntegrationManagerService.scheduledSync` pulls tickets *in* from
+   ITSM once an hour. It creates rows. It never plans and never executes.)
 7. **A mutating plan with no named host is refused.** Nothing is ever run on a guessed machine.
 
 ---
 
 ## Quick start
 
-Requires PostgreSQL 16 with the `vector` extension on `localhost:5432` (database `mcp_db`, user
-`mcp_user`). The `local` profile is Postgres too — the old H2 + fake vector store are gone,
+Requires PostgreSQL 16 with the `vector` extension on `localhost:5432` (database `incident_warden_db`, user
+`warden_user`). The `local` profile is Postgres too — the old H2 + fake vector store are gone,
 because a fake `similaritySearch` returned every document unranked and made RAG "work" locally
 while proving nothing.
 
@@ -133,12 +138,14 @@ node scripts/dev-executor.mjs store-0042-pos-01,store-0042-app-01,store-0099-pos
 node scripts/dev-smtp.mjs
 ```
 
-Open <http://localhost:5173> and sign in as **`admin`**. The password is whatever you set
-`MCP_DEFAULT_PASSWORD` to; if you left it unset, the backend generated one and logged it once at
-startup — `grep BOOTSTRAP logs/backend-local.log`. Nothing in this repository contains a working
-password, by design.
-All four are also entries in [.claude/launch.json](.claude/launch.json) (`backend`, `frontend`,
-`executor`, `smtp`).
+Open <http://localhost:5173> and sign in as **`admin`**. The password is `MCP_DEFAULT_PASSWORD` if
+you set it, otherwise the literal `admin` — and either way the first screen after login is a forced
+password change (`must_change_password` is seeded `true`, and `POST /api/auth/password` is the only
+thing that clears it). **That default is a development convenience and a deployment defect.** Set
+`MCP_DEFAULT_PASSWORD` before first boot for anything reachable by anyone else.
+
+All four processes are also entries in [.claude/launch.json](.claude/launch.json) (`backend`,
+`frontend`, `executor`, `smtp`).
 
 The `local` profile ships a committed dev JWT key, disables Redis/Vault, sets
 `hitl-threshold: 0.70` and turns **separation of duties off** so the single seeded account can both
@@ -198,28 +205,36 @@ Spring Boot 3.2 control plane (8080)
 
 ### Database schemas
 
-Six: `incident` · `sop` · `tools` · `teams` · `auth` · `config`. The hash-chained audit log is
-`incident.audit_events`; per-table history lives in `*_audit` tables beside their subjects. The
-pgvector table is `sop.vector_store` (`spring.ai.vectorstore.pgvector.schema-name: sop`,
-`initialize-schema: false` — Liquibase owns it, not Spring AI).
+Eight: `incident` · `sop` · `tools` · `auth` · `config` · `ai` · `hitl` · `mcp_rag`. The last two
+are misleading names worth knowing about before you go looking: **`mcp_rag` holds no RAG data** — it
+is Liquibase's own bookkeeping schema (`spring.liquibase.default-schema`) — and **`hitl` is
+empty**, because the HITL tables live in `incident.*`. Both are called out for renaming in the
+[readiness review](docs/enterprise-readiness.md#7-database-name).
 
-Liquibase owns the schema: **26 changesets**, `1.0-ddl` → `1.23-retire-autorun`
-([db.changelog-master.xml](src/main/resources/db/changelog/db.changelog-master.xml)). The recent
-ones matter for the flow:
+The hash-chained audit log is `incident.audit_events`; per-table history lives in `*_audit` tables
+beside their subjects. The pgvector table is `sop.vector_store`
+(`spring.ai.vectorstore.pgvector.schema-name: sop`, `initialize-schema: false` — Liquibase owns it,
+not Spring AI).
 
-| Changeset | What it added |
+Liquibase owns the schema as **one squashed changeset**, `1.0-baseline` →
+[versions/1.0/baseline.sql](src/main/resources/db/changelog/versions/1.0/baseline.sql), carrying
+`<validCheckSum>ANY</validCheckSum>` so a database created before the squash does not fail its
+checksum. The 26-changeset history it replaced described a product that no longer exists — three of
+those changesets added an autonomy surface that a later one deleted.
+
+17 tables:
+
+| Schema | Tables |
 |---|---|
-| `1.12-universal-hitl-foundation` | remediation plans, HITL requests, action executions |
-| `1.13-sop-procedure` | `sop.sop_procedure` — the approved procedures with action keys |
-| `1.14-plan-script` | script text + provenance + plan hash on the plan |
-| `1.16-notifications` | `config.notification_recipient` (tenant-scoped), `reporter_email`, transport keys in `config.system_config`. **No credential column.** |
-| `1.17-team-email` | team distribution address |
-| `1.18-target-host` | `store_number`, `target_host`, `connection_method` on the incident |
-| `1.19-user-meta` | `full_name`, `department` on users; `full_name`, `role`, `department` on team employees |
-| `1.20-default-password` | BCrypt of the shared starting password onto the seeded admin |
-| `1.21-target-platform` | `target_platform` on the incident — the operator's answer to "which OS", overriding detection |
-| `1.22-skills` | `tools.skills` — the categorisation, extraction and execution rules as editable rows |
-| `1.23-retire-autorun` | **deletes** the `autorun_enabled` and `auto_resolve_threshold` config rows. An inert switch is worse than a missing one: setting it would have done nothing while looking like it had done something. |
+| `auth` | `users`, `users_audit` |
+| `incident` | `incidents`, `incident_comments`, `statuses`, `remediation_plans`, `hitl_requests`, `action_executions`, `audit_events`, `telemetry_events` |
+| `sop` | `vector_store`, `sop_procedure` |
+| `tools` | `saved_scripts`, `execution_logs`, `skills` |
+| `config` | `system_config` |
+| `ai` | `ai_config` |
+
+**Never edit an existing changeset** — add a new one. A changed checksum stops every database that
+already ran it.
 
 ### Two different SOP stores — do not confuse them
 
@@ -243,20 +258,22 @@ row lands in `incident.incidents` with a tenant, a priority, and a **store numbe
 
 There is no "New incident" form. A ticket that a person types into this platform is a ticket that
 does not exist in the system of record everyone else is watching, and the moment those two disagree
-the audit trail is worth nothing. Incidents come from intake; the host can be set later from the
-incident's **🖥 Remediation target** panel (`PUT /api/v1/incidents/{id}` with `storeNumber` /
-`targetHost` / `connectionMethod`).
+the audit trail is worth nothing. Incidents come from intake; the host is set later with
+`PUT /api/v1/incidents/{id}` (`storeNumber` / `targetHost` / `connectionMethod` / `targetPlatform`),
+which the HITL review console calls on the operator's behalf — see
+[Refusals an operator can answer](#refusals-an-operator-can-answer) for the one case where no UI
+reaches it.
 
-That panel does not start empty. `Incident.getDetectedTargetHost()` / `getDetectedStoreNumber()`
-are `@Transient` `READ_ONLY` fields on every incident JSON, computed by
-`IncidentTarget.hostInText` / `storeInText` — the same extractor `resolve()` uses, so what an
-operator is offered is exactly what the planner would have found. They prefill the Store and
-Server boxes when the typed columns are blank, with a visible "filled in from this ticket, press
-Save target" note, and they are blank when the ticket names nothing. Read-only on purpose: a
-prefill is a suggestion for a person to confirm, never a saved answer. The OS is deliberately
-*not* prefilled — writing `target_platform` is `OPERATOR_DECLARED`, the top of the platform
-ladder, and a keyword guess sitting in that box would outrank the machine's own probe reply the
-moment somebody pressed Save.
+What the incident page shows is a **read-only `Target Infrastructure`** line
+(`IncidentManagementPage.tsx:492`). It falls back through `targetHost || detectedTargetHost ||
+'Auto-extracted'`, where `Incident.getDetectedTargetHost()` / `getDetectedStoreNumber()` are
+`@Transient` `READ_ONLY` fields computed by `IncidentTarget.hostInText` / `storeInText` — the same
+extractor `resolve()` uses, so what an operator is shown is exactly what the planner would have
+found. The distinction the line draws is the useful part: a confirmed host and an extracted one are
+different values, and a mutating plan will not run on the extracted one. The OS is deliberately not
+surfaced as a guess at all — writing `target_platform` is `OPERATOR_DECLARED`, the top of the
+platform ladder, and an extracted guess parked in that field would outrank the machine's own probe
+reply.
 
 Bulk imports run nothing. An import of a thousand historical tickets creates a thousand rows and
 zero plans — planning is something a person asks for, per incident.
@@ -329,13 +346,23 @@ explained in one clause, and never a hostname or path the ticket did not supply.
    | P2 | **58.25 %** | never | never |
    | P1 | **24.5 %** | never | never |
 
-   So a P1 or P2 is *always* escalated to a person, no matter how good the evidence — the risk
-   penalty is doing exactly what it was put there to do. The escalation says so in words
-   (`CONFIDENCE_BELOW_HITL_BAND:<score>`) instead of blaming a guardrail. If a demo needs a
-   reviewable P1, the honest change is to re-weight `riskPenalty`/`systemHealth` in
-   `AgentAssessmentService`, not to lower the threshold — and
-   `AgentAssessmentServiceTest.aP1OrP2CannotReachTheApprovalBandNoMatterHowGoodTheEvidence` fails
-   the moment someone does, so this table cannot quietly go stale.
+   So at the shipped bands a P1 or P2 is *always* escalated to a person, no matter how good the
+   evidence — the risk penalty is doing exactly what it was put there to do. The escalation says so
+   in words (`CONFIDENCE_BELOW_HITL_BAND:<score>`) instead of blaming a guardrail, and
+   `AgentAssessmentServiceTest.aP1OrP2CannotReachTheApprovalBandNoMatterHowGoodTheEvidence` fails the
+   moment someone re-weights `riskPenalty`/`systemHealth`, so this table cannot quietly go stale.
+
+   **The band is not a constant, though.** `hitlBandPercent()` reads the `hitl_threshold` config row,
+   falling back to the property only when no row exists — and that row is writable through
+   `POST /api/v1/ai/config` with `{"hitlThreshold":"0.40"}`. So an admin setting the band below
+   **58.25 %** *does* make a P2 reviewable, and below 24.5 % a P1.
+   `AgentAssessmentServiceTest.theBandAnAdminSetsOnTheConfigPageIsTheBandThePlannerUses` pins that
+   behaviour deliberately: the band is the operator's risk appetite, expressed in one audited row
+   rather than a code change. What no value of it does is skip the human — a lower band changes which
+   plans reach a reviewer, never whether one is asked.
+
+   ⚠️ **The slider that used to write that row is gone**, so the band is API-only today, exactly like
+   the notification relay. Same defect, same list.
 4. **Classification → action key.** `classify()` first walks the tenant's **approved** rows in
    `sop.sop_procedure` and matches their `match_keywords` (and title) against the ticket wording,
    deriving the category and action key from the procedure's own `action_key`. Only if nothing
@@ -406,23 +433,36 @@ answer:
   operator's override for the OS question below; blank is the normal case and behaves exactly as
   it did before the column existed.
 
-### When the agent needs an answer, it asks on the screen
+### Refusals an operator can answer
 
-Every refusal an operator can actually fix is prefixed `TARGET_`, and both consoles match on
-that prefix to render the question inline — with the fields to answer it, and one button that saves
-the answer *and* re-plans:
+Every refusal an operator could fix is prefixed `TARGET_`, and the review console matches on that
+prefix to render the question inline with the fields to answer it:
 
 | Reason | What the operator sees | Where |
 |---|---|---|
-| `TARGET_HOST_UNKNOWN` | "A script has to run somewhere, and nothing here confirms which machine." | incident page + HITL review console |
-| `TARGET_HOST_INVALID:<value>` | the rejected value, so a typo is obvious | both |
-| `TARGET_UNREACHABLE:<host>` | "Confirm the server name and the connection method on this incident, then plan again." | both |
-| `TARGET_REACHABILITY_UNKNOWN` | advisory — "a dry run may be the first thing to find out" | both, non-blocking |
-| `CONFIDENCE_BELOW_HITL_BAND:<score>` | the score, the required band, and why a P1/P2 sits below it by design | incident page |
+| `TARGET_HOST_UNKNOWN` | "No server is named on this incident or in its description. Enter the server this affects, then create the plan again." | ⚠️ **nowhere — see below** |
+| `TARGET_HOST_INVALID:<value>` | the rejected value, so a typo is obvious | ⚠️ nowhere, same reason |
+| `TARGET_UNREACHABLE:<host>` | "Confirm the server name and the connection method on this incident, then plan again." | ⚠️ nowhere, same reason |
+| `TARGET_REACHABILITY_UNKNOWN` | advisory — "a dry run may be the first thing to find out" | HITL review console, non-blocking |
+| `CONFIDENCE_BELOW_HITL_BAND:<score>` | the score, the required band, and why a P1/P2 sits below it by design | not operator-fixable by design |
 
-The incident page's **"Save answer and plan again"** issues the partial `PUT /api/v1/incidents/{id}`
-and re-runs the planner in one click; a P3 with an approved procedure goes straight from
-`TARGET_HOST_UNKNOWN` to `PENDING_APPROVAL` without leaving the panel.
+The answer panel is `HitlReviewConsole.tsx:426-470`, titled **"We need one answer from you"**: a
+hostname box, a connection select (`Executor default` / SSH / WinRM / Local agent), an OS select, and
+a **Save answer** button that issues the partial `PUT /api/v1/incidents/{id}`. It renders whenever the
+plan carries a finding starting `TARGET_`.
+
+⚠️ **The blocking target refusals cannot reach it.** `HitlWorkflowService.java:183` saves an
+ineligible plan as `BLOCKED`, and the `!eligible` branch at line 230 returns without creating a
+`HitlRequest` — so there is no review request to open, and the console holding the only target inputs
+in the whole UI is unreachable for exactly the refusals whose remedy is typing a hostname. In
+practice the panel is reachable only for the advisory `TARGET_REACHABILITY_UNKNOWN`. Until that is
+fixed, answering a `TARGET_HOST_UNKNOWN` means calling `PUT /api/v1/incidents/{id}` directly or
+letting an ITSM sync populate the field. Filed as **C13** in
+[docs/enterprise-readiness.md](docs/enterprise-readiness.md).
+
+Save answer also does **not** re-plan. Its confirmation says so — *"Saved. Create the plan again on
+the incident to re-evaluate with this target."* — because a plan built on an answer typed seconds ago
+should be a plan somebody asked for.
 
 ### And which operating system
 
@@ -433,7 +473,7 @@ one that holds:
 
 | Rung | `targetPlatformSource` | Signal |
 |---|---|---|
-| 1 | `OPERATOR_DECLARED` | `incident.target_platform` — a person picked the OS on the incident (create form, **🖥 Remediation target** panel, or the HITL answer panel) and nothing contradicts it |
+| 1 | `OPERATOR_DECLARED` | `incident.target_platform` — a person picked the OS on the HITL answer panel (or via `PUT /api/v1/incidents/{id}`; there is no other UI for it) and nothing contradicts it |
 | 1b | `OPERATOR_OVERRODE_HOST` | the same field, but the probed host reported a *different* OS. The person still wins; the disagreement is carried in the source and the HITL badge turns red |
 | 2 | `HOST_REPORTED` | the executor's `POST /probe` 200 body contains `platform=<os>` |
 | 3 | `CONNECTION_METHOD` | `connection_method = WINRM` — WinRM only talks to Windows, so choosing it *is* the answer. SSH implies nothing: it serves Linux, macOS and Windows alike |
@@ -546,18 +586,28 @@ ordinary, and flagging them trains reviewers to click through warnings.
 
 Stateless JWT (HS256, jjwt), BCrypt hashes (`BCryptPasswordEncoder(10)`), no sessions.
 
-**Session lifetime.** Two tokens: a 1-hour access token, and a refresh token whose expiry *is*
-the session length — 7 days with "keep me signed in" ticked, 1 day without. `tokenType` is a
-claim, and [JwtAuthFilter](src/main/java/com/company/mcp/config/JwtAuthFilter.java) authenticates
+**Session lifetime.** Two tokens, both constants in
+[AuthController](src/main/java/com/company/mcp/controller/AuthController.java#L21): a **30-minute
+access token** and a **3-hour refresh token** whose expiry *is* the session length. `tokenType` is
+a claim, and [JwtAuthFilter](src/main/java/com/company/mcp/config/JwtAuthFilter.java) authenticates
 an `access` token only, so the long-lived one opens nothing but `/api/auth/refresh`.
+
+Two things to know rather than discover: `mcp.jwt.expiry-ms` in `application.yml` is **dead
+config** — the constants above win — and the `rememberMe` flag the login API accepts **changes
+nothing**, because the refresh TTL is flat. Both are listed as defects
+([D7, A4](docs/enterprise-readiness.md)); neither is documented here as a feature.
 
 Rotation deliberately does **not** extend the window: the replacement refresh token inherits the
 old one's `exp` rather than being minted with a full TTL, and the access token is capped at
 whatever is left (`Math.min(ACCESS_TTL, remainingMs)`). With no session table, that expiry is the
-only thing that can end a session — mint a fresh 7 days on every rotation and "7 days" silently
-means "until the browser closes", because the client rotates every half hour. Day 7 asks for the
-password again. Covered by
+only thing that can end a session — mint a fresh window on every rotation and the stated session
+length silently means "until the browser closes", because the client rotates every few minutes.
+Hour 3 asks for the password again. Covered by
 [TokenRotationTest](src/test/java/com/company/mcp/controller/TokenRotationTest.java).
+
+**There is no revocation.** No `jti`, no denylist, no session table — so disabling an account does
+not end a session already in flight, and a leaked token is good for its remaining minutes. The
+3-hour ceiling is the mitigation, and it is a ceiling, not a control.
 
 Renewal is request-driven, never clock-driven: `authFetch()` refreshes when the token it is about
 to send is within 5 minutes of expiry. So the session follows the person — work and it renews
@@ -590,23 +640,23 @@ Patterns accept literal origins too, so nothing is loosened for a real deploymen
 that Vite picking 5174 because 5173 was taken is not a login bug. Credentials are not allowed
 (the JWT travels in the `Authorization` header, not a cookie), so bare `*` is never needed.
 
-### Teams, people and who can be handed a review
+### Accounts, roles and who can be handed a review
 
-Two tables, on purpose:
+One table — `auth.users` — managed at **Settings → Accounts & Access** (ADMIN only). The separate
+team-roster tables are gone; a roster that could hold a person who cannot sign in produced two
+answers to "who is assigned" and no way to reconcile them.
 
-| Table | Answers | Managed at |
+| Action | Endpoint | Notes |
 |---|---|---|
-| `teams.teams` + `teams.team_employees` | who owns an incident, who gets emailed | **Teams → Add Team / Add Member to …** |
-| `auth.users` | who can sign in, and with what role | **Teams → Create User Account** (ADMIN only) |
+| List accounts | `GET /api/auth/users` | ADMIN |
+| Create ADMIN / ANALYST | `POST /api/auth/users` | ADMIN. Starts on the default password with `must_change_password` set. |
+| Change role | `PUT /api/auth/users/{id}/role` | ADMIN. The signed-in admin's own row renders read-only as **owner** — you cannot demote yourself out of the ability to fix it. |
+| Change own password | `POST /api/auth/password` | any signed-in user; wrong current password → **400** |
 
-`POST /api/auth/users` is `hasRole('ADMIN')`. It **requires a valid email** — checked with the same
+`POST /api/auth/users` **requires a valid email** — checked with the same
 `NotificationService.isSendableAddress` the sender uses, because an account nothing can email is an
 account the UI would still show as "notified" — and it **rejects an unknown role** rather than
-quietly filing the person as a VIEWER. The response carries `defaultPassword`, and the UI states
-whatever the server returned instead of hardcoding a second copy of it.
-
-A HITL review can only be assigned to an `auth.users` row. The review console lists the incident's
-current assignee anyway, marked `· current, no login`, when it is a roster-only person.
+quietly filing the person as a VIEWER.
 
 ---
 
@@ -616,18 +666,21 @@ Transport in `config.system_config` (shared infrastructure): `notify_enabled`, `
 `notify_smtp_port`, `notify_from`. Recipient lists in `config.notification_recipient`, **with a
 tenant id** — a global list would email tenant A about tenant B.
 
-`NotificationService.recipientsFor(incident)` = reporter address + assignee's address (team roster
-first, then `auth.users`) + the assigned team's distribution address, deduplicated
-case-insensitively. A missing address means that recipient is skipped, never fabricated.
+`NotificationService.recipientsFor(incident)` = the reporter's address + the assignee's `auth.users`
+address, deduplicated case-insensitively by a `LinkedHashSet`. A missing address means that recipient
+is skipped, never fabricated. There is **no configured recipient list and no group expansion** — the
+method's own javadoc still claims a third source ("the assigned group") that the body never adds.
 
 `send()` returns true **only if the relay accepted the message**, so an audit entry saying
 "notified" is not recording a wish.
 
-Configured entirely in the UI: **AI configuration → Notifications**
-(`GET|POST /api/v1/ai/config/notifications`, `POST /api/v1/ai/config/notifications/test`). No
-properties file, and no relay password column — the relay is reached unauthenticated on the
-internal network, which is what lets "configure it from the UI" and "no auth details in the
-database" both hold at once.
+⚠️ **There is no UI for this.** The API is real — `GET|POST /api/v1/ai/config/notifications` and
+`POST /api/v1/ai/config/notifications/test?to=<addr>` — but the SMTP form was removed from the
+Settings page along with the threshold sliders and never replaced, so the relay can only be
+configured with an authenticated `POST`. That breaks the project's own "operator settings live in the
+UI" rule and is on the [readiness list](docs/enterprise-readiness.md). What *is* right: no relay
+password column — the relay is reached unauthenticated on the internal network, which is what lets
+"configurable without a properties file" and "no auth details in the database" both hold at once.
 
 ---
 
@@ -702,7 +755,14 @@ procedures and their action keys) · `PUT|DELETE /api/v1/rag/sops/{id}` (ADMIN)
 **Scripts** — `GET|POST /api/v1/scripts` · `/{id}` · `POST /api/v1/scripts/generate` · `/validate` ·
 `/execute` (dry-run only — `409` otherwise)
 
-**Other** — `/api/v1/telemetry/events` · `/api/v1/teams` (roster add/remove) · `/api/v1/statuses` ·
+**Accounts** (ADMIN) — `GET|POST /api/auth/users` · `PUT /api/auth/users/{id}/role` ·
+`POST /api/auth/password` (any signed-in user, own password only)
+
+**Public, no token** — `GET /api/v1/public/stats` · `GET /api/v1/public/search?q=` (at most 20 rows
+of `{externalId, subject, status, priority, updatedAt}` — the redaction is the projection, not a
+filter applied afterwards)
+
+**Other** — `/api/v1/telemetry/events` · `/api/v1/statuses` · `/api/v1/integrations/*` ·
 `/api/v1/mcp/*` · `/api/health`
 
 ---
@@ -710,7 +770,8 @@ procedures and their action keys) · `PUT|DELETE /api/v1/rag/sops/{id}` (ADMIN)
 ## Configuration
 
 **Everything an operator needs is in the UI and stored in the database**, not in a properties file:
-the LLM provider and models, notification transport and recipients, teams and rosters, the public
+the LLM provider and models, notification transport and recipients, user accounts and roles, ITSM
+integration endpoints, the public
 read toggle, separation of duties, and the agent skills for all three stages.
 
 YAML holds only deployment facts:
@@ -732,7 +793,12 @@ YAML holds only deployment facts:
 | `mcp.security.cors.allowed-origins` | localhost | Explicit list, never `*`. |
 | `mcp.rag.top-k` / `similarity-threshold` | `5` / `0.60` | Retrieval tuning. |
 | `mcp.sso.*` | disabled | All four keys required, or 503. |
-| `mcp.servicenow.*` / `mcp.freshservice.*` | disabled | On-demand import. No poller. |
+| `mcp.servicenow.*` / `mcp.freshservice.*` | disabled | Ticket import. Also reachable from **Settings → Integrations**, which is where the credential-in-the-DB defect lives. |
+
+An hourly `@Scheduled` job (`IntegrationManagerService.scheduledSync`) pulls tickets in from any
+enabled ITSM integration. It creates rows and nothing else — it never plans and never executes. It
+also hardcodes `tenant-1` and takes no distributed lock, so on more than one replica it runs more
+than once; see [C3](docs/enterprise-readiness.md).
 
 `spring.ai.*` holds per-provider connection settings for OpenAI, Anthropic and Vertex AI; each is
 excluded from autoconfiguration until removed from `spring.autoconfigure.exclude`. Default provider
@@ -745,24 +811,31 @@ is Ollama (`phi3:mini` chat, `nomic-embed-text` embeddings), no API key needed.
 React 18 + Vite + TypeScript. JWT in `localStorage` (`mcp_jwt_token`, `mcp_refresh_token`,
 `mcp_user`); every call through `authFetch()`, which proactively refreshes a token expiring within
 5 minutes and dispatches `mcp:auth-expired` on a hard 401. `localStorage` and not a store like
-Redux because the refresh token has to survive a page reload — in-memory state cannot hold a
-7-day value. Hardening path, when the deployment warrants it: move the refresh token to an
-`HttpOnly; Secure; SameSite=Strict` cookie so no script can read it at all.
+Redux because the refresh token has to survive a page reload — in-memory state cannot hold it
+across F5. The cost is that any script on the origin can read it, which is why the
+[readiness review](docs/enterprise-readiness.md) lists both the missing CSP and the
+cookie-hardening path: move the refresh token to an `HttpOnly; Secure; SameSite=Strict` cookie so
+no script can read it at all — and reinstate CSRF protection in the same commit, because
+`csrf.disable()` is only correct while the credential is a header.
 
-| Route | Page | Notes |
+| Route | Page | In the sidebar? |
 |---|---|---|
-| `/` | Chat | the product. Anonymous read, then plan → review → approve → run, inline |
-| `/tools` | Tools & scripts | saved tools with a plain-language explanation of each, run logs, and the **Skills** tab (ADMIN) — the categorise/extract/execute rules as editable rows |
-| `/sops` | SOP library | uploads, drafts/approvals, **Approved procedures** with action keys |
-| `/settings/ai` | AI configuration | provider/models, notifications + test send, public-read and separation-of-duties toggles |
-| `/incidents` | Incidents | list, detail, comments, history, **remediation target** panel, **Create guarded remediation plan** |
-| `/hitl` | HITL queue | queue + review console (script text, explanation, provenance, guardrails, plan hash, SOP evidence, precedent, timeline) |
-| `/teams` | Teams | roster add/remove, team distribution address |
-| `/account` | Account | profile |
+| `/` | **Assistant** — the product. Anonymous read, then plan → review → approve → run, inline | yes |
+| `/incidents` | **Incident dump** — bulk import, list, detail, comments, history, **remediation target** panel, **Create guarded remediation plan** | yes |
+| `/tools` | **Skills & Tools** — saved tools with a plain-language explanation of each, run logs, and the **Skills** tab (ADMIN) for the categorise/extract/execute rules | yes |
+| `/sops` | **SOP library** — uploads, drafts/approvals, **Approved procedures** with action keys | yes |
+| `/settings/ai` | **Settings** — provider/models, notifications + test send, **Accounts & Access**, public-read and separation-of-duties toggles | yes |
+| `/hitl` | HITL queue + review console (script text, explanation, provenance, guardrails, plan hash, SOP evidence, precedent, timeline) | no — chat drives this flow inline |
+| `/account` | Account profile | no |
 
-The sidebar lists **SOP, Tools and AI configuration only**. Incidents, HITL and Teams stay mounted
-as routes — chat drives the whole HITL flow inline, so a second menu entry to the same three
-endpoints was menu for menu's sake. Anything unmatched redirects to `/`.
+The five sidebar entries are the whole menu. HITL stays mounted as a route because chat drives the
+entire approval flow inline, so a second menu entry to the same three endpoints was menu for menu's
+sake. Anything unmatched redirects to `/`.
+
+Every surface is responsive on the existing breakpoint scale — 1280 / 1024 / 860 / 720 / 640 / 375 —
+with the sidebar collapsing to a 68px icon rail at 1024 and an off-canvas drawer at 720. The chat
+composer sizes on `dvh`, not `vh`: with `vh` the iOS keyboard covers the input on the one screen the
+whole product is about.
 
 ```bash
 npm run build --prefix frontend
@@ -778,72 +851,115 @@ npm run build --prefix frontend
 MCP_JWT_SECRET=local-development-only-key-min-32-bytes mvn -o test
 ```
 
-**123 tests, 0 failures.**
+**112 tests, 0 failures, 0 errors, 0 skipped**, across 19 suites.
 
 | Suite | Tests | Covers |
 |---|---:|---|
 | `IncidentTargetTest` | 18 | typed field precedence, host extraction, rejected shapes |
-| `RemediationToolRegistryTest` | 17 | action key parsing, probe/dispatch outcomes |
+| `RemediationToolRegistryTest` | 17 | action key parsing, DB-loaded skills, probe/dispatch outcomes |
 | `RemediationScriptServiceTest` | 8 | provenance tiers |
-| `TeamMembershipTest` | 8 | roster add/remove |
 | `SopProcedureServiceTest` | 7 | approval state and action keys |
-| `NotificationServiceRecipientsTest` | 7 | recipient resolution and dedup |
 | `IncidentPrecedentServiceTest` | 7 | what qualifies as a precedent |
 | `HitlWorkflowServiceTest` | 7 | plan/approve/dispatch gating, and that a duplicate plan names the open one instead of escalating the incident |
 | `GuardrailServiceTest` | 7 | allow-lists, destructive signatures, injection |
 | `ScriptExplainerTest` | 6 | every script line is explained or reported verbatim — never silently dropped |
-| `BootstrapPasswordTest` | 6 | the seeded admin credential and its rotation |
 | `RagServiceScopeTest` | 5 | out-of-scope questions are refused, not answered |
-| `AgentAssessmentServiceTest` | 5 | routing arithmetic, classifier vocabulary |
-| `PublicReadServiceTest` | 4 | the anonymous projection carries no description or assignee |
-| `IncidentUpdateTest` | 4 | field updates incl. target |
+| `PublicReadServiceTest` | 5 | the anonymous projection is exactly six fields — no assignee, reporter address or host — and `maskSensitive` strips IPs, emails, credentials and card numbers from the description it *does* expose |
+| `AgentAssessmentServiceTest` | 5 | routing arithmetic, classifier vocabulary, and that a P1/P2 cannot reach the approval band |
+| `UserAdminTest` | 4 | account creation, role validation, email requirement |
+| `BootstrapPasswordTest` | 4 | the seeded admin credential and the forced change |
 | `TokenRotationTest` | 3 | refresh rotation keeps the original session deadline |
+| `IncidentUpdateTest` | 3 | field updates incl. target |
+| `NotificationServiceRecipientsTest` | 2 | recipient resolution and dedup |
 | `IncidentIntakeBulkTest` | 2 | a bulk import creates rows and runs nothing |
-| `RagServiceBaseUrlTest` | 1 | provider base URL resolution |
 | `ApplicationContextSmokeTest` | 1 | beans, `@Value`s, migrations — fails in ~3 s |
+| `RagServiceBaseUrlTest` | 1 | provider base URL resolution |
 
 The context smoke test is the cheap check that catches most breakage.
+
+There is **no frontend test suite** — `frontend/package.json` has no `test` script and no framework.
+The chat page is the product surface and has zero automated coverage; that is a gap, listed as
+[B6](docs/enterprise-readiness.md).
 
 ---
 
 ## Stack
 
 Java 21 · Spring Boot 3.2.0 · Spring AI 1.0.8 · PostgreSQL 16 + pgvector · Liquibase · Redis
-(rate limiting, optional) · Resilience4j · React 18 + Vite · Maven (`com.mcp:incident-automation`,
+(rate limiting, optional) · Resilience4j · React 18 + Vite 5 · Maven (`com.mcp:incident-warden`,
 builds offline with `-o`)
+
+**Spring Boot 3.2.0 is past OSS support** and Dependabot is configured to ignore the parent POM, so
+nothing currently tells you when that matters. Raising the floor to Boot 3.5.x is the first item in
+[§4 of the readiness review](docs/enterprise-readiness.md#4-build-ci-supply-chain).
 
 ---
 
 ## Known gaps
 
-- **The prose SOP vector index is empty** in the demo database; the six approved procedures carry
-  the decisions.
+Read [docs/enterprise-readiness.md](docs/enterprise-readiness.md) before deploying this anywhere
+that matters — it is the full list with `file:line` references and an ordering. The short version:
+
+- **`npm run typecheck` fails on the committed tree — 58 errors, so CI is red.** `npm run build`
+  passes because Vite strips types without checking them. Most are unused imports; the substantive
+  ones are below.
+- **The chat page's parameter-collection card is half-built and throws.** `ChatPage.tsx:909,919` call
+  `handleMissingParamChange` / `handleMissingParamsSubmit`, and neither function exists anywhere in
+  the repository. Typing in that card raises a `ReferenceError`. Finish it or delete it.
+- **Three target refusals have no UI answer.** `TARGET_HOST_UNKNOWN`, `TARGET_HOST_INVALID` and
+  `TARGET_UNREACHABLE` block a plan and tell the operator to name a server, but the only screen with
+  those inputs is reachable only through a HITL request — which a blocked plan never creates. Use
+  `PUT /api/v1/incidents/{id}` until it is fixed.
+- **`docker compose up` does not start the backend.** `mcp-app` sets no `MCP_JWT_SECRET`, and the
+  application refuses to boot without one. Run it from source until that is fixed.
+- **ITSM integration secrets are written to the database in plaintext.** The one place the
+  no-credentials-in-the-DB rule is broken, and the highest-severity item in the review.
+- **The shared default password is `admin`** unless `MCP_DEFAULT_PASSWORD` is set, its BCrypt hash
+  is committed in `baseline.sql`, and the bootstrap logs the effective password at INFO. The forced
+  change on first login is the only thing standing in front of it.
+- **`org.springframework.ai` logs at DEBUG by default**, which puts prompts — incident text, host
+  names, SOP excerpts — into `logs/incident-warden.log`.
+- **No token revocation.** Disabling an account does not end a session in flight.
+- **`TeamController` is a fake API** that returns `200 {"status":"success"}` and persists nothing.
+  It should be deleted; until it is, do not build on it.
+- **The prose SOP vector index is empty** in the demo database; the approved procedures carry the
+  decisions.
 - **MCP tool access.** The registry and `/api/v1/mcp/*` exist; wiring the agent to call MCP servers
   is not done.
-- **No background poller.** Nothing is `@Scheduled`; incidents arrive by explicit intake, import or
-  UI, and nothing acts on them until a person asks. This is a property, not a gap — a poller is what
-  a platform needs when it intends to work on its own.
-- **A team member is not a login.** `teams.team_employees` (the roster, who gets notified) and
-  `auth.users` (who can sign in) are separate tables on purpose. Only an `auth.users` row can be
-  handed a HITL review; the review console lists an incident's existing assignee as
-  `· current, no login` when it is roster-only, so nobody "fixes" an assignment that was never wrong.
-- **No self-service password change.** New accounts start on the password the server issues at
-  creation time (`MCP_DEFAULT_PASSWORD` if set, otherwise a value generated per boot by
-  `BootstrapPassword` and shown once in the Teams page banner) and an admin resets it via the API.
-  A change-password screen is the next thing a real deployment needs.
+- **No real executor agent in this repository.** `scripts/dev-executor.mjs` runs nothing on purpose.
+  A sandboxed agent that does run scripts, with its own allowlist and audit log, is the
+  highest-value missing piece.
+- **Rate limits are per-instance and in-memory**, so N replicas means N× the budget, and the map is
+  never evicted.
+- **No LLM token accounting.** Provider spend is invisible to the platform that causes it; see
+  [§8](docs/enterprise-readiness.md#8-llm-memory-context-and-cost).
+- **Two settings are API-only.** The notification relay and the HITL confidence band still have live
+  endpoints, but the forms that drove them were deleted from the Settings page and never replaced —
+  so changing either needs an authenticated `curl`. That breaks this project's own rule that operator
+  settings live in the UI.
 
 ### Closed since the last review
 
-- SOP procedures are now authored from the UI — **SOP library → Procedures** over
+- **Self-service password change** — `POST /api/auth/password`, with `must_change_password` forcing
+  it on first login.
+- **User administration moved into Settings → Accounts & Access.** The team-roster tables are gone;
+  `auth.users` is the single answer to "who is this person".
+- **Migration history squashed** to one `1.0-baseline` changeset. The 26 it replaced described
+  three generations of a product, including an autonomy surface a later changeset deleted.
+- SOP procedures are authored from the UI — **SOP library → Procedures** over
   `POST|PUT|DELETE /api/v1/rag/procedures`.
 - The classifier reads its vocabulary from approved `sop.sop_procedure` rows (`match_keywords` +
   title), so approving a procedure teaches it. The built-in list is a fallback, not the source.
-- **Tools & scripts → Run Logs** reads `incident.action_executions`, so HITL runs appear there.
+- **Skills are rows, not code.** `tools.skills` holds the categorise/extract/execute rules, edited
+  in the browser, with `BUILT_IN` as the fallback when the table is empty or unreachable.
+- **Skills & Tools → Run Logs** reads `incident.action_executions`, so HITL runs appear there.
 - **Execution mode has one source of truth**: `RemediationToolRegistry.dispatchMode()`, derived from
   the two flags that decide it. The page that used to display it read `SIMULATED` from a second
   property while this class was dispatching real scripts; both the page and the property are gone,
   and the review console shows `LIVE`/`SIMULATED` at the moment of approval instead — which is the
   only moment it matters.
+- **RAG query expansion is conditional.** It used to fire on every question and cost a measured ~7 s;
+  it now runs only when direct retrieval returns fewer than `top-k` distinct documents.
 - **The autonomy surface is deleted, not disabled**: `AutonomousRemediationService`,
   `AutonomyController`, the ops page, the `autorun_enabled` config row, and the `mcp.autonomy.*`
   namespace (now `mcp.executor.*`, which is what those keys always were).
@@ -858,9 +974,11 @@ missing real executor agent and the unwired MCP tool access are the two highest-
 
 ## Security
 
-[SECURITY.md](SECURITY.md) covers private vulnerability reporting, what the design guarantees, and —
-stated plainly rather than buried — the hardening still needed before this runs anywhere that
-matters, starting with the shared default password.
+[SECURITY.md](SECURITY.md) covers private vulnerability reporting and what the design guarantees.
+[docs/enterprise-readiness.md](docs/enterprise-readiness.md) is the unflattering companion: every
+issue found in a full read of the working tree, with `file:line`, ordered by what has to be fixed
+before this is reachable from a network. Start with the ITSM credentials in the database and the
+shared default password.
 
 ## License
 

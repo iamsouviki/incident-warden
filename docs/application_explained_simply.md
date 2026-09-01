@@ -8,7 +8,9 @@ This app is like a **very careful helper robot**. It helps the grown-ups find th
 
 A problem can come to the helper robot in a few ways.
 
-A different computer system, like ServiceNow or a monitoring tool, can send a message. A grown-up can also upload a spreadsheet, like a CSV or Excel file, full of problems. Or a grown-up can type a problem directly into the app.
+A different computer system, like ServiceNow, Freshservice or Jira, can send a message. A grown-up can also upload a spreadsheet, like a CSV or Excel file, full of problems.
+
+There is **no button for typing in a brand-new problem by hand**. That button used to exist and it was taken away on purpose. If a person types a problem into this app, that problem does not exist in the big system everybody else is watching — and the moment the two lists disagree, nobody can trust either one.
 
 For example, a message might say:
 
@@ -77,9 +79,9 @@ Before the app can show a fix to a grown-up, nine safety teachers look at it.
 | Sneaky-word teacher | “Does this contain dangerous or trick words?” |
 | Big-impact teacher | “Is this trying to touch too many machines?” |
 | Practice teacher | “Will we do a pretend practice first?” |
-| Too-many-times teacher | “Are we making the same plan too many times?” |
+| Secret teacher | “Is this trying to peek at passwords or keys?” |
 | Round-and-round teacher | “Is the app stuck making the same plan again?” |
-| Stop teacher | “Is the old automatic robot turned off?” |
+| Too-long teacher | “Is this script so long that nobody will really read it?” |
 | Answer teacher | “Will the result clearly say what happened?” |
 
 The safety teachers block words and ideas like deleting everything, destroying cloud machines, restarting everything, or saying “ignore all the rules.”
@@ -102,11 +104,11 @@ The card shows the grown-up:
 
 - What problem happened.
 - Which safe tool the app suggests.
-- Which machine or ticket it is for.
-- What the SOP book said.
+- Which machine it is for, and which kind of computer that machine is.
+- What the SOP book said, and whether the app has fixed this exact thing before.
 - How risky the app thinks it is.
 - What safety teachers checked.
-- What a future rollback instruction would be.
+- **The whole script, written out**, with a sentence above it saying in plain words what each line does.
 
 It also puts a special secret-looking fingerprint on the card. This is called a **hash**.
 
@@ -119,12 +121,12 @@ There are different kinds of users in the app.
 | Person | What they can do |
 |---|---|
 | Viewer | Look at problems and information. |
-| Analyst | Add problems and ask the app to make a plan. |
-| Admin | Read the approval card, say yes or no, and start the pretend practice. |
+| Analyst | Ask the app to make a plan, read the approval card, say yes or no, and start the pretend practice. |
+| Admin | Everything an Analyst can do — **and only an Admin may press the button that touches the real machine.** |
 
-Only an **Admin** can say yes to the approval card.
+So two different grown-ups are usually involved: one says “this plan is safe”, and one says “now do it”. And in a real setup the app will not let the **same** person do both — the grown-up who asked for the plan is not allowed to approve their own plan.
 
-The Admin can choose:
+The grown-up reading the card can choose:
 
 > “Yes, this exact plan looks safe.”
 
@@ -134,20 +136,21 @@ or
 
 The app writes down who made the choice, when they made it, and why.
 
-If the Admin says no, the plan is finished. Nothing happens to any machine.
+If the grown-up says no, the plan is finished. Nothing happens to any machine.
 
 ## 9. The app does a pretend practice
 
-Even after an Admin says yes, the app still does **not** touch the real machine.
+Even after a grown-up says yes, the app still does **not** touch the real machine.
 
 First it does a pretend practice, like pretending to drive a toy car before driving a real car.
 
 The app checks again:
 
-- Is this still the same card the Admin approved?
+- Is this still the same card that was approved?
 - Did anybody change the special hash?
 - Do the safety teachers still say okay?
 - Is the action still on the small safe list?
+- Can the app even reach that machine, and what kind of computer is it?
 
 If something changed, the app stops.
 
@@ -155,7 +158,17 @@ If everything matches, the app writes:
 
 > “Pretend practice finished. No real machine was changed.”
 
-Right now, this is the final step. The app records a **simulated resolution**. That means it practiced and saved the result, but it did not really restart, delete, change, or break anything.
+The pretend practice is **not optional**. It has to happen before anything real can.
+
+## 9b. Then, and only then, the real fix
+
+After the practice passes, an **Admin** can press the last button.
+
+Here is the important part: **this app never runs the fix itself.** It has no way to. Instead it hands the script to a completely separate little helper — a **tool runner** that lives out where the machines are. That tool runner is the only one that knows the machine’s password. This app only knows who approved what.
+
+That split is on purpose. If a bad person somehow got into this app, they would find approval cards and a diary — not the keys to every machine in every shop.
+
+And if the grown-ups have not set up a tool runner yet, the app says so honestly: it writes down that the fix was **pretended**, not done. It never claims to have fixed something it did not fix.
 
 ## 10. The app keeps a diary that is hard to secretly change
 
@@ -166,9 +179,10 @@ For example, it writes:
 1. A problem came in.
 2. A plan was made.
 3. Safety teachers checked it.
-4. A human asked for approval.
-5. An Admin said yes or no.
+4. A human was asked for approval.
+5. A grown-up said yes or no, and why.
 6. A pretend practice happened.
+7. A real fix ran, and exactly what the machine said back.
 
 Every diary page is connected to the page before it with a special secret code. This makes it much harder for someone to secretly change the story later.
 
@@ -182,13 +196,15 @@ or
 
 the diary can answer.
 
-## 11. What the old automatic robot does now
+## 11. What happened to the old automatic robot
 
-The older version of the app had a robot that could see certain problem words and try a fixed command on its own.
+The older version of the app had a robot that could see certain problem words and try a fixed command on its own. If it had fixed the same thing at the same shop before, and a person had said yes back then, it was allowed to just go and do it again.
 
-That old robot is now **turned off** for real actions.
+That robot is **gone**. Not switched off — deleted, along with the switch that used to turn it on.
 
-It wakes up every 60 seconds only to check its work area, but it is not allowed to run the old direct-fix path. This is very important because we do not want a computer to do surprise things without a person checking first.
+Here is why that matters. An app that can run by itself “only if a little setting says so” has to be checked all over again every single time somebody changes that setting. An app with no such setting only has to be checked once. So now there is exactly one road, and a person stands on it: **every fix is a grown-up reading that exact script for that exact machine and saying yes — even the hundredth time.**
+
+One small robot does still wake up on a timer, and it is worth knowing what it does. Once an hour it goes and asks ServiceNow, Freshservice and Jira, “any new problems?” and copies them into the queue. That is all it does. It **writes problems down. It never fixes anything.**
 
 ## 12. A very short example story
 
@@ -196,24 +212,28 @@ Imagine this happens:
 
 1. A monitoring tool says, “Printer 7 in Store 4 is offline.”
 2. The app checks whether it already has that exact printer problem.
-3. It finds the SOP page about printer problems.
+3. It finds the SOP page about printer problems, and it also looks back at old problems to see whether somebody fixed this before.
 4. It suggests the tiny tool: “Clear the printer queue.”
-5. The safety teachers check that it is only for Printer 7—not every printer in the whole company.
-6. The app makes an approval card.
-7. An Admin reads the card and says yes.
-8. The app does a pretend practice.
-9. The app writes in its diary: “The practice was done. No machine was changed.”
+5. It works out **which machine** — the one named on the ticket, not a guess — and asks that machine what kind of computer it is, so the script is written the right way.
+6. The safety teachers check that it is only for Printer 7 — not every printer in the whole company.
+7. The app makes an approval card, with the whole script written out and explained.
+8. An Analyst reads the card and says yes. The app puts glitter glue around the script at that exact moment.
+9. The app does a pretend practice and checks it can reach the machine.
+10. An Admin presses the last button. The app hands the script to the tool runner out at the shop.
+11. The app writes in its diary who approved it, who ran it, and exactly what the machine said back.
 
 That is how the app is supposed to be helpful **and** careful.
 
-## 13. What the app will learn to do later
+## 13. What the app still needs to learn
 
-Before the app can safely fix real things, more work is needed.
+Before this app can be trusted in a big company, some real work is still missing.
 
-It needs a separate, very locked-down tool runner. That runner must understand only the approved tools, never accept surprise commands, check its own permissions, and know how to undo a tool safely.
+The biggest one: **the locked-down tool runner is not finished.** The app knows how to hand a script to one, and there is a pretend one for practising, but a real runner — one that understands only the approved tools, refuses surprise commands, and keeps its own diary — still has to be built. Right now that runner would also be handed the same key no matter which team’s machine it is touching, and that needs fixing before more than one team shares it.
 
-It also needs to finish hiding each team’s SOP pages from other teams at the database/search level, connect the new approval cards to the frontend screen, and use real identity sign-in instead of the proof-of-concept role chooser.
+There are also some untidy things a grown-up should fix before letting strangers near it. The app’s starting password is far too easy to guess. It writes down some secrets in its notebook when it should keep them somewhere safer. When it is talking to the clever language model, it writes the whole conversation into its log file, and those conversations have real ticket details in them. And the one-command “just start everything” recipe does not actually work yet — it forgets to give the app its secret signing key, so the app refuses to wake up.
 
-Until then, the safest rule is:
+All of those are written down properly, with exact file names, in **[the readiness review](enterprise-readiness.md)**.
 
-> **The app can read, suggest, check, ask, and practice. A human stays in charge.**
+Until they are fixed, the safest rule is:
+
+> **The app can read, suggest, check, ask, practise, and — when a grown-up presses the button — fix one machine at a time. A human stays in charge.**

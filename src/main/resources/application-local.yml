@@ -8,9 +8,9 @@
 # Requires PostgreSQL on localhost:5432 with the vector extension. See README.
 spring:
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:mcp_db}
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:incident_warden_db}
     driver-class-name: org.postgresql.Driver
-    username: ${DB_USER:mcp_user}
+    username: ${DB_USER:warden_user}
     password: ${DB_PASSWORD:changeme}
     hikari:
       maximum-pool-size: 5

@@ -1,8 +1,8 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  AlertCircle, AlertTriangle, ArrowRight, BotMessageSquare, Check, ChevronDown, ChevronRight, HelpCircle, Info, Loader2,
-  Lock, LogIn, Play, Send, ShieldAlert, Sparkles, Terminal, User, X,
+  AlertCircle, AlertTriangle, ArrowRight, BotMessageSquare, Check, ChevronDown, ChevronRight, Edit2, HelpCircle, History, Info, Loader2,
+  Lock, LogIn, MessageSquare, PanelLeft, Play, Plus, Send, ShieldAlert, Sparkles, Terminal, Trash2, User, X,
 } from 'lucide-react';
 import { AuthUser, authFetch, extractApiError, getStoredUser, login } from '../services/api';
 import './ChatPage.css';
@@ -24,6 +24,16 @@ import './ChatPage.css';
  * review queue drives — decision, dry-run, execute — in the same order, with the same server
  * gates. Chat is a faster way to reach them, never a way around them.
  */
+
+interface SessionItem {
+  id: string;
+  tenantId?: string;
+  username?: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  isArchived?: boolean;
+}
 
 interface PublicRow {
   externalId: string;
@@ -219,6 +229,7 @@ interface MissingInfoForm {
 }
 
 const STORAGE_KEY = 'iw_chat_history';
+const ACTIVE_SESSION_KEY = 'iw_active_session_id';
 
 const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
   const navigate = useNavigate();
@@ -232,6 +243,14 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
       return [];
     }
   });
+  const [sessions, setSessions] = useState<SessionItem[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(() => {
+    return sessionStorage.getItem(ACTIVE_SESSION_KEY) || null;
+  });
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState('');
+
   const [loading, setLoading] = useState(false);
   /** The plan whose script is open in the review modal, with the message it belongs to. */
   const [review, setReview] = useState<{ messageId: string; plan: ToolPlan } | null>(null);
@@ -255,6 +274,138 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
       sessionStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
     } catch {}
   }, [messages]);
+
+  const loadSessions = async () => {
+    if (!activeUser) return;
+    try {
+      const res = await authFetch('/api/v1/chat/sessions');
+      if (res.ok) {
+        const list = await res.json();
+        setSessions(list);
+      }
+    } catch {}
+  };
+
+  useEffect(() => {
+    if (activeUser) {
+      loadSessions();
+    }
+  }, [activeUser]);
+
+  useEffect(() => {
+    const handleLogoutEvent = () => {
+      setMessages([]);
+      setActiveSessionId(null);
+      setSessions([]);
+      try {
+        sessionStorage.removeItem(STORAGE_KEY);
+        sessionStorage.removeItem(ACTIVE_SESSION_KEY);
+      } catch {}
+    };
+    window.addEventListener('mcp:logout', handleLogoutEvent);
+    return () => window.removeEventListener('mcp:logout', handleLogoutEvent);
+  }, []);
+
+  const selectSession = async (id: string) => {
+    try {
+      setLoading(true);
+      const res = await authFetch(`/api/v1/chat/sessions/${id}`);
+      if (res.ok) {
+        const data = await res.json();
+        setActiveSessionId(id);
+        sessionStorage.setItem(ACTIVE_SESSION_KEY, id);
+        if (Array.isArray(data.messages)) {
+          const loaded: Message[] = data.messages.map((m: any) => {
+            let metaObj: any = {};
+            if (m.metadata) {
+              try { metaObj = JSON.parse(m.metadata); } catch {}
+            }
+            return {
+              id: m.id || `${Date.now()}-${Math.random()}`,
+              role: (m.role === 'assistant' || m.role === 'bot') ? 'bot' : 'user',
+              text: m.content || '',
+              ...metaObj
+            };
+          });
+          setMessages(loaded);
+        }
+      }
+    } catch {} finally {
+      setLoading(false);
+      setDrawerOpen(false);
+    }
+  };
+
+  const createNewSession = () => {
+    setActiveSessionId(null);
+    setMessages([]);
+    try {
+      sessionStorage.removeItem(STORAGE_KEY);
+      sessionStorage.removeItem(ACTIVE_SESSION_KEY);
+    } catch {}
+    setDrawerOpen(false);
+  };
+
+  const saveSessionTitle = async (id: string) => {
+    if (!editingTitle.trim()) {
+      setEditingSessionId(null);
+      return;
+    }
+    try {
+      const res = await authFetch(`/api/v1/chat/sessions/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: editingTitle.trim() }),
+      });
+      if (res.ok) {
+        setEditingSessionId(null);
+        loadSessions();
+      }
+    } catch {}
+  };
+
+  const deleteSession = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (!window.confirm('Delete this conversation history?')) return;
+    try {
+      const res = await authFetch(`/api/v1/chat/sessions/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        if (activeSessionId === id) {
+          createNewSession();
+        }
+        loadSessions();
+      }
+    } catch {}
+  };
+
+  const sessionGroups = useMemo(() => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const yesterday = today - 86400000;
+    const last7Days = today - 7 * 86400000;
+
+    const groups: { title: string; items: SessionItem[] }[] = [
+      { title: 'Today', items: [] },
+      { title: 'Yesterday', items: [] },
+      { title: 'Previous 7 Days', items: [] },
+      { title: 'Older', items: [] },
+    ];
+
+    sessions.forEach(s => {
+      const t = new Date(s.updatedAt || s.createdAt).getTime();
+      if (t >= today) {
+        groups[0].items.push(s);
+      } else if (t >= yesterday) {
+        groups[1].items.push(s);
+      } else if (t >= last7Days) {
+        groups[2].items.push(s);
+      } else {
+        groups[3].items.push(s);
+      }
+    });
+
+    return groups.filter(g => g.items.length > 0);
+  }, [sessions]);
 
   const handleModalLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -797,12 +948,39 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
         await startSolve(q, botId);
         return;
       }
+
+      let currentSessionId = activeSessionId;
+      if (!currentSessionId) {
+        try {
+          const sessionTitle = q.length > 40 ? q.substring(0, 37) + '…' : q;
+          const sRes = await authFetch('/api/v1/chat/sessions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: sessionTitle }),
+          });
+          if (sRes.ok) {
+            const sData = await sRes.json();
+            currentSessionId = sData.id;
+            setActiveSessionId(sData.id);
+            sessionStorage.setItem(ACTIVE_SESSION_KEY, sData.id);
+          }
+        } catch (e) {
+          console.warn('Could not initialize session:', e);
+        }
+      }
+
       const res = await authFetch('/api/v1/rag/chat', {
         method: 'POST',
-        body: JSON.stringify({ question: q, tenantId: activeUser.tenantId }),
+        body: JSON.stringify({
+          question: q,
+          tenantId: activeUser.tenantId,
+          sessionId: currentSessionId || undefined,
+        }),
       });
       if (res.ok) {
-        updateMessage(botId, { loading: false, text: (await res.json()).answer });
+        const data = await res.json();
+        updateMessage(botId, { loading: false, text: data.answer });
+        loadSessions();
       } else if (res.status === 429) {
         updateMessage(botId, {
           loading: false, error: true,
@@ -1044,9 +1222,143 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
   );
 
   const suggestions = activeUser ? SUGGESTIONS_SIGNED_IN : SUGGESTIONS_ANON;
+  const currentSession = sessions.find(s => s.id === activeSessionId);
+  const activeTitle = currentSession?.title || (messages.length > 0 ? 'Active Conversation' : 'New Chat');
 
   return (
     <div className="chat-page">
+      {/* Sessions Toolbar */}
+      <div className="chat-toolbar">
+        <div className="chat-toolbar-left">
+          {activeUser && (
+            <button
+              className="chat-toolbar-btn"
+              onClick={() => {
+                setDrawerOpen(true);
+                loadSessions();
+              }}
+              aria-label="View conversation history"
+            >
+              <History size={14} /> History {sessions.length > 0 && `(${sessions.length})`}
+            </button>
+          )}
+          <div className="chat-toolbar-title">
+            <span>Session:</span> <strong>{activeTitle}</strong>
+          </div>
+        </div>
+
+        {activeUser && (
+          <button
+            className="chat-toolbar-btn"
+            onClick={createNewSession}
+            title="Start a new conversation"
+          >
+            <Plus size={14} /> New Chat
+          </button>
+        )}
+      </div>
+
+      {/* Sessions Slide-over Drawer */}
+      {drawerOpen && (
+        <div className="chat-sessions-backdrop" onClick={() => setDrawerOpen(false)} />
+      )}
+      <aside className={`chat-sessions-drawer ${drawerOpen ? 'open' : ''}`} aria-label="Conversation history">
+        <div className="chat-sessions-head">
+          <h3><MessageSquare size={16} /> Chat History</h3>
+          <button
+            className="chat-session-action-btn"
+            onClick={() => setDrawerOpen(false)}
+            aria-label="Close drawer"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <button
+          className="chat-sessions-new-btn"
+          onClick={createNewSession}
+        >
+          <Plus size={15} /> + New Conversation
+        </button>
+
+        <div className="chat-sessions-list">
+          {sessions.length === 0 ? (
+            <div style={{ padding: '24px 12px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
+              No saved sessions yet. Start asking questions to build your history.
+            </div>
+          ) : (
+            sessionGroups.map(group => (
+              <div key={group.title} className="chat-sessions-group">
+                <div className="chat-sessions-group-title">{group.title}</div>
+                {group.items.map(s => (
+                  <div
+                    key={s.id}
+                    className={`chat-session-item ${s.id === activeSessionId ? 'active' : ''}`}
+                    onClick={() => selectSession(s.id)}
+                  >
+                    {editingSessionId === s.id ? (
+                      <div
+                        style={{ display: 'flex', alignItems: 'center', gap: '4px', width: '100%' }}
+                        onClick={e => e.stopPropagation()}
+                      >
+                        <input
+                          type="text"
+                          className="chat-session-edit-input"
+                          value={editingTitle}
+                          onChange={e => setEditingTitle(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') saveSessionTitle(s.id);
+                            if (e.key === 'Escape') setEditingSessionId(null);
+                          }}
+                          autoFocus
+                        />
+                        <button
+                          className="chat-session-action-btn"
+                          onClick={() => saveSessionTitle(s.id)}
+                          title="Save title"
+                        >
+                          <Check size={13} style={{ color: 'var(--green, #22c55e)' }} />
+                        </button>
+                        <button
+                          className="chat-session-action-btn"
+                          onClick={() => setEditingSessionId(null)}
+                          title="Cancel"
+                        >
+                          <X size={13} />
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <span className="chat-session-title" title={s.title}>{s.title}</span>
+                        <div className="chat-session-actions" onClick={e => e.stopPropagation()}>
+                          <button
+                            className="chat-session-action-btn"
+                            onClick={() => {
+                              setEditingSessionId(s.id);
+                              setEditingTitle(s.title);
+                            }}
+                            title="Rename"
+                          >
+                            <Edit2 size={12} />
+                          </button>
+                          <button
+                            className="chat-session-action-btn danger"
+                            onClick={e => deleteSession(e, s.id)}
+                            title="Delete"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ))
+          )}
+        </div>
+      </aside>
+
       <div className="chat-stream">
         <div className="chat-column">
           {messages.length === 0 ? (

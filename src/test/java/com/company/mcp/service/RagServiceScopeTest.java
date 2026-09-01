@@ -69,8 +69,12 @@ class RagServiceScopeTest {
     @Test
     void aggregateQuestionsKeepEveryTicketRow() {
         assertTrue(RagService.isAggregateQuestion("how many tickets are open"));
+        assertTrue(RagService.isAggregateQuestion("how many incident we have"));
+        assertTrue(RagService.isAggregateQuestion("how many incidents do we have"));
+        assertTrue(RagService.isAggregateQuestion("incident count"));
         assertTrue(RagService.isAggregateQuestion("give me a summary of this week"));
         assertTrue(RagService.isAggregateQuestion("list all incidents by priority"));
+        assertTrue(RagService.isAggregateQuestion("status summary"));
         assertFalse(RagService.isAggregateQuestion("why is the till in lane 3 down"));
         assertFalse(RagService.isAggregateQuestion("tomcat is not starting on store 42"));
     }

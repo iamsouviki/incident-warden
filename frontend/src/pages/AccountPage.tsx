@@ -43,7 +43,7 @@ const AccountPage: React.FC<Props> = ({ onLogout }) => {
   const initials = realName.substring(0, 2).toUpperCase();
 
   const roleColors: Record<string, string> = {
-    ADMIN: 'var(--accent)', ANALYST: 'var(--purple)', VIEWER: 'var(--ok)'
+    OWNER: '#f59e0b', ADMIN: 'var(--accent)', ANALYST: 'var(--purple)', VIEWER: 'var(--ok)'
   };
   const roleColor = roleColors[role] || 'var(--text-3)';
 

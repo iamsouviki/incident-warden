@@ -10,6 +10,6 @@ public class RuntimeHealthController {
 
     @GetMapping("/api/health")
     public Map<String, Object> health() {
-        return Map.of("status", "UP", "service", "mcp-incident-automation");
+        return Map.of("status", "UP", "service", "incident-warden");
     }
 }

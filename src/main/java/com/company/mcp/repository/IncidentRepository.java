@@ -23,6 +23,9 @@ public interface IncidentRepository extends JpaRepository<Incident, UUID>, JpaSp
     /** Tenant-scoped and bounded: assistant context must never span tenants or grow without limit. */
     List<Incident> findTop50ByTenantIdOrderByUpdatedAtDesc(String tenantId);
 
+    long countByTenantId(String tenantId);
+    long countByTenantIdAndStatus(String tenantId, String status);
+
     /**
      * Highest internally-issued ticket number, or null when none has been issued.
      * Deliberately not tenant-scoped: {@code external_id} is unique across the table, so

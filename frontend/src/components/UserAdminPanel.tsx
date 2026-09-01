@@ -47,7 +47,9 @@ const UserAdminPanel: React.FC = () => {
   // you did it from. So the own row gets this form instead of the reset button.
   const [pwd, setPwd] = useState<{ current: string; next: string; confirm: string } | null>(null);
   const [notice, setNotice] = useState('');
-  const me = getStoredUser()?.username;
+  const currentUser = getStoredUser();
+  const me = currentUser?.username;
+  const isOwner = currentUser?.role === 'OWNER';
 
   const load = async () => {
     setError('');
@@ -102,6 +104,7 @@ const UserAdminPanel: React.FC = () => {
 
   const changeOwn = () => {
     if (!pwd) return;
+    if (pwd.next.length < 8) { setError('Password must be at least 8 characters long.'); return; }
     if (pwd.next !== pwd.confirm) { setError('The two new passwords do not match.'); return; }
     void send('/api/auth/password',
       { method: 'POST', body: JSON.stringify({ currentPassword: pwd.current, newPassword: pwd.next }) },
@@ -185,79 +188,97 @@ const UserAdminPanel: React.FC = () => {
                        value={pwd.current} onChange={e => setPwd({ ...pwd, current: e.target.value })} />
               </div>
               <div>
-                <label style={label} htmlFor="cp-next">New password</label>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label style={label} htmlFor="cp-next">New password</label>
+                  <span style={{ fontSize: '11px', color: pwd.next.length >= 8 ? 'var(--green, #22c55e)' : (pwd.next.length > 0 ? '#f59e0b' : 'var(--text-muted)') }}>
+                    {pwd.next.length}/8 chars {pwd.next.length >= 8 ? '✓' : ''}
+                  </span>
+                </div>
                 <input id="cp-next" style={input} type="password" autoComplete="new-password"
                        value={pwd.next} onChange={e => setPwd({ ...pwd, next: e.target.value })} />
               </div>
               <div>
-                <label style={label} htmlFor="cp-confirm">New password again</label>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label style={label} htmlFor="cp-confirm">New password again</label>
+                  {pwd.confirm.length > 0 && (
+                    <span style={{ fontSize: '11px', color: pwd.next === pwd.confirm ? 'var(--green, #22c55e)' : 'var(--red, #ef4444)' }}>
+                      {pwd.next === pwd.confirm ? 'Match ✓' : 'Mismatch ✗'}
+                    </span>
+                  )}
+                </div>
                 <input id="cp-confirm" style={input} type="password" autoComplete="new-password"
                        value={pwd.confirm} onChange={e => setPwd({ ...pwd, confirm: e.target.value })} />
               </div>
             </div>
-            <button onClick={changeOwn} disabled={busy || !pwd.current || pwd.next.length < 8 || !pwd.confirm}
+            <button onClick={changeOwn} disabled={busy || !pwd.current || pwd.next.length < 8 || pwd.next !== pwd.confirm}
                     className="btn-primary"
-                    style={{ display: 'flex', alignItems: 'center', gap: '6px', minHeight: '40px', padding: '0 16px', marginTop: '16px', border: 'none', fontSize: '13px', cursor: busy ? 'not-allowed' : 'pointer' }}>
+                    style={{ display: 'flex', alignItems: 'center', gap: '6px', minHeight: '40px', padding: '0 16px', marginTop: '16px', border: 'none', fontSize: '13px', cursor: (busy || !pwd.current || pwd.next.length < 8 || pwd.next !== pwd.confirm) ? 'not-allowed' : 'pointer' }}>
               <Save size={14} /> {busy ? 'Saving…' : 'Save password'}
             </button>
           </div>
         )}
 
-        {draft ? (
-          <div style={{ padding: '16px 18px', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: '8px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-              <strong style={{ fontSize: '13px' }}>New account</strong>
-              <button onClick={() => setDraft(null)} aria-label="Close form"
-                      style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
-                <X size={16} />
+        {isOwner ? (
+          draft ? (
+            <div style={{ padding: '16px 18px', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: '8px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                <strong style={{ fontSize: '13px' }}>New account</strong>
+                <button onClick={() => setDraft(null)} aria-label="Close form"
+                        style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px' }}>
+                <div>
+                  <label style={label} htmlFor="nu-username">Username</label>
+                  <input id="nu-username" style={input} value={draft.username} placeholder="p.mehta"
+                         onChange={e => setDraft({ ...draft, username: e.target.value })} />
+                </div>
+                <div>
+                  <label style={label} htmlFor="nu-fullname">Full name</label>
+                  <input id="nu-fullname" style={input} value={draft.fullName} placeholder="Priya Mehta"
+                         onChange={e => setDraft({ ...draft, fullName: e.target.value })} />
+                </div>
+                <div>
+                  <label style={label} htmlFor="nu-email">Email</label>
+                  <input id="nu-email" style={input} type="email" value={draft.email} placeholder="priya.mehta@company.com"
+                         onChange={e => setDraft({ ...draft, email: e.target.value })} />
+                </div>
+                <div>
+                  <label style={label} htmlFor="nu-role">Role</label>
+                  <select id="nu-role" style={{ ...input, appearance: 'auto' }} value={draft.role}
+                          onChange={e => setDraft({ ...draft, role: e.target.value })}>
+                    {ROLES.map(r => <option key={r.id} value={r.id}>{r.title}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={label} htmlFor="nu-dept">Department</label>
+                  <input id="nu-dept" style={input} value={draft.department} placeholder="Store Systems"
+                         onChange={e => setDraft({ ...draft, department: e.target.value })} />
+                </div>
+              </div>
+
+              <p style={{ margin: '12px 0 0', fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                {ROLES.find(r => r.id === draft.role)?.what} An email address is required, or this
+                person can never be told about an incident assigned to them.
+              </p>
+
+              <button onClick={() => void create()} disabled={busy || !draft.username.trim() || !draft.email.trim()}
+                      className="btn-primary"
+                      style={{ display: 'flex', alignItems: 'center', gap: '6px', minHeight: '40px', padding: '0 16px', marginTop: '16px', border: 'none', fontSize: '13px', cursor: busy ? 'not-allowed' : 'pointer' }}>
+                <Save size={14} /> {busy ? 'Creating…' : 'Create account'}
               </button>
             </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px' }}>
-              <div>
-                <label style={label} htmlFor="nu-username">Username</label>
-                <input id="nu-username" style={input} value={draft.username} placeholder="p.mehta"
-                       onChange={e => setDraft({ ...draft, username: e.target.value })} />
-              </div>
-              <div>
-                <label style={label} htmlFor="nu-fullname">Full name</label>
-                <input id="nu-fullname" style={input} value={draft.fullName} placeholder="Priya Mehta"
-                       onChange={e => setDraft({ ...draft, fullName: e.target.value })} />
-              </div>
-              <div>
-                <label style={label} htmlFor="nu-email">Email</label>
-                <input id="nu-email" style={input} type="email" value={draft.email} placeholder="priya.mehta@company.com"
-                       onChange={e => setDraft({ ...draft, email: e.target.value })} />
-              </div>
-              <div>
-                <label style={label} htmlFor="nu-role">Role</label>
-                <select id="nu-role" style={{ ...input, appearance: 'auto' }} value={draft.role}
-                        onChange={e => setDraft({ ...draft, role: e.target.value })}>
-                  {ROLES.map(r => <option key={r.id} value={r.id}>{r.title}</option>)}
-                </select>
-              </div>
-              <div>
-                <label style={label} htmlFor="nu-dept">Department</label>
-                <input id="nu-dept" style={input} value={draft.department} placeholder="Store Systems"
-                       onChange={e => setDraft({ ...draft, department: e.target.value })} />
-              </div>
-            </div>
-
-            <p style={{ margin: '12px 0 0', fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
-              {ROLES.find(r => r.id === draft.role)?.what} An email address is required, or this
-              person can never be told about an incident assigned to them.
-            </p>
-
-            <button onClick={() => void create()} disabled={busy || !draft.username.trim() || !draft.email.trim()}
-                    className="btn-primary"
-                    style={{ display: 'flex', alignItems: 'center', gap: '6px', minHeight: '40px', padding: '0 16px', marginTop: '16px', border: 'none', fontSize: '13px', cursor: busy ? 'not-allowed' : 'pointer' }}>
-              <Save size={14} /> {busy ? 'Creating…' : 'Create account'}
+          ) : (
+            <button onClick={() => setDraft({ ...blank })} style={{ ...smallBtn, minHeight: '38px', alignSelf: 'flex-start', background: 'var(--surface2)' }}>
+              <Plus size={13} /> Add an account
             </button>
-          </div>
+          )
         ) : (
-          <button onClick={() => setDraft({ ...blank })} style={{ ...smallBtn, minHeight: '38px', alignSelf: 'flex-start', background: 'var(--surface2)' }}>
-            <Plus size={13} /> Add an account
-          </button>
+          <div style={{ padding: '14px 16px', borderRadius: '8px', background: 'var(--surface2)', border: '1px solid var(--border)', color: 'var(--text-muted)', fontSize: '12.5px', lineHeight: 1.6 }}>
+            User account creation is restricted to Workspace Owners. Contact your workspace owner to invite new operators.
+          </div>
         )}
 
         <div style={{ display: 'grid', gap: '8px' }}>

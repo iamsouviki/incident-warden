@@ -36,8 +36,13 @@ class PublicReadServiceTest {
 
     /**
      * The redaction boundary, asserted on the type rather than on one response body. Adding
-     * {@code description}, {@code assignee}, {@code targetHost} or {@code reporterEmail} to
-     * the public row fails here — which is the point, because it would not fail anywhere else.
+     * {@code assignee}, {@code targetHost} or {@code reporterEmail} to the public row fails here —
+     * which is the point, because it would not fail anywhere else.
+     *
+     * {@code description} is on the list deliberately: an anonymous caller gets the ticket text,
+     * but only after {@link PublicReadService#maskSensitive} has removed addresses, IPs, internal
+     * host names, credentials and card numbers from it — which the next test asserts. So the
+     * boundary here is "these six fields and no seventh", not "no free text".
      */
     @Test
     void publicRowExposesOnlyTheSixAgreedFields() {

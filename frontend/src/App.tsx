@@ -88,9 +88,20 @@ function ForcePasswordReset({ user, onDone, onLogout }: { user: AuthUser; onDone
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
+  const isLongEnough = next.length >= 8;
+  const isMatching = next.length > 0 && confirm.length > 0 && next === confirm;
+  const canSubmit = !busy && current.trim().length > 0 && isLongEnough && isMatching;
+
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (next !== confirm) { setError('The two new passwords do not match.'); return; }
+    if (!isLongEnough) {
+      setError('Password must be at least 8 characters long.');
+      return;
+    }
+    if (next !== confirm) {
+      setError('The two new passwords do not match.');
+      return;
+    }
     setBusy(true);
     setError('');
     try {
@@ -99,7 +110,6 @@ function ForcePasswordReset({ user, onDone, onLogout }: { user: AuthUser; onDone
         body: JSON.stringify({ currentPassword: current, newPassword: next }),
       });
       const body = await res.json().catch(() => null);
-      // The server explains which rule failed — length, or reusing the handed-over value.
       if (!res.ok) throw new Error(body?.error || 'That password could not be set.');
       const updated = { ...user, mustChangePassword: false };
       setAuth(updated);
@@ -125,7 +135,7 @@ function ForcePasswordReset({ user, onDone, onLogout }: { user: AuthUser; onDone
   return (
     <div role="dialog" aria-modal="true" aria-label="Set your password"
          style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', background: 'var(--bg, #0f172a)', overflowY: 'auto' }}>
-      <form onSubmit={submit} style={{ width: 'min(430px, 100%)', padding: '32px 28px', background: 'var(--surface-1, #1e293b)', border: '1px solid var(--border, #334155)', borderRadius: '16px', display: 'flex', flexDirection: 'column', gap: '16px', boxShadow: '0 20px 40px rgba(0,0,0,0.35)' }}>
+      <form onSubmit={submit} style={{ width: 'min(440px, 100%)', padding: '32px 28px', background: 'var(--surface-1, #1e293b)', border: '1px solid var(--border, #334155)', borderRadius: '16px', display: 'flex', flexDirection: 'column', gap: '16px', boxShadow: '0 20px 40px rgba(0,0,0,0.35)' }}>
         <div>
           <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: 'var(--text-1, #ffffff)' }}>Set your secure password</h2>
           <p style={{ margin: '6px 0 0', fontSize: '13px', color: 'var(--text-3, #94a3b8)', lineHeight: 1.6 }}>
@@ -146,18 +156,44 @@ function ForcePasswordReset({ user, onDone, onLogout }: { user: AuthUser; onDone
                  value={current} onChange={e => setCurrent(e.target.value)} />
         </div>
         <div>
-          <label style={label} htmlFor="fpr-next">New password</label>
-          <input id="fpr-next" style={field} type="password" autoComplete="new-password"
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <label style={label} htmlFor="fpr-next">New password</label>
+            <span style={{ fontSize: '11px', color: isLongEnough ? '#22c55e' : (next.length > 0 ? '#f59e0b' : 'var(--text-3, #94a3b8)'), fontWeight: 600 }}>
+              {next.length}/8 chars {isLongEnough ? '✓' : ''}
+            </span>
+          </div>
+          <input id="fpr-next" style={{ ...field, borderColor: next.length > 0 ? (isLongEnough ? '#22c55e' : '#f59e0b') : 'var(--border, #334155)' }}
+                 type="password" autoComplete="new-password"
                  value={next} onChange={e => setNext(e.target.value)} />
         </div>
         <div>
-          <label style={label} htmlFor="fpr-confirm">Confirm new password</label>
-          <input id="fpr-confirm" style={field} type="password" autoComplete="new-password"
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <label style={label} htmlFor="fpr-confirm">Confirm new password</label>
+            {confirm.length > 0 && (
+              <span style={{ fontSize: '11px', color: isMatching ? '#22c55e' : '#ef4444', fontWeight: 600 }}>
+                {isMatching ? 'Passwords match ✓' : 'Passwords do not match ✗'}
+              </span>
+            )}
+          </div>
+          <input id="fpr-confirm" style={{ ...field, borderColor: confirm.length > 0 ? (isMatching ? '#22c55e' : '#ef4444') : 'var(--border, #334155)' }}
+                 type="password" autoComplete="new-password"
                  value={confirm} onChange={e => setConfirm(e.target.value)} />
         </div>
 
-        <button type="submit" disabled={busy || !current || next.length < 8 || !confirm}
-                style={{ minHeight: '44px', border: 'none', borderRadius: '8px', background: '#2563eb', color: '#ffffff', fontWeight: 600, fontSize: '14px', cursor: busy ? 'not-allowed' : 'pointer' }}>
+        {/* Live requirement indicators */}
+        <div style={{ padding: '10px 12px', background: 'var(--surface-2, #152033)', borderRadius: '8px', border: '1px solid var(--border, #334155)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: isLongEnough ? '#22c55e' : 'var(--text-3, #94a3b8)' }}>
+            <span>{isLongEnough ? '✓' : '•'}</span>
+            <span>At least 8 characters long ({next.length}/8)</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: isMatching ? '#22c55e' : (confirm.length > 0 ? '#ef4444' : 'var(--text-3, #94a3b8)') }}>
+            <span>{isMatching ? '✓' : '•'}</span>
+            <span>Passwords match exactly</span>
+          </div>
+        </div>
+
+        <button type="submit" disabled={!canSubmit}
+                style={{ minHeight: '44px', border: 'none', borderRadius: '8px', background: canSubmit ? '#2563eb' : 'var(--surface-2, #334155)', color: canSubmit ? '#ffffff' : 'var(--text-3, #94a3b8)', fontWeight: 600, fontSize: '14px', cursor: canSubmit ? 'pointer' : 'not-allowed', transition: 'all 0.2s ease' }}>
           {busy ? 'Saving…' : 'Save and continue'}
         </button>
         <button type="button" onClick={onLogout}
@@ -177,10 +213,8 @@ function AppContent({ user, onLogin, onLogout, theme, toggleTheme }: { user: Aut
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  // The management surfaces are the admin's; everyone else gets the assistant. Enforced here
-  // for what renders and in SecurityConfig for what the API answers — the sidebar hiding a
-  // page is a courtesy, the server refusing it is the control.
-  const isAdmin = user?.role === 'ADMIN';
+  // The management surfaces are for admins and owners; everyone else gets the assistant.
+  const isAdmin = user?.role === 'ADMIN' || user?.role === 'OWNER';
   const activePath = location.pathname.startsWith('/incidents/') ? '/incidents' : location.pathname;
   const isChat = activePath === '/';
   const meta = PAGE_META[activePath] || PAGE_META['/incidents'];
@@ -358,7 +392,15 @@ function AppContent({ user, onLogin, onLogout, theme, toggleTheme }: { user: Aut
 const App: React.FC = () => {
   const [user, setUser] = useState<AuthUser | null>(getStoredUser());
   const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('mcp_theme') as 'dark' | 'light') || 'dark');
-  const handleLogout = () => { clearAuth(); setUser(null); };
+  const handleLogout = () => {
+    try {
+      window.dispatchEvent(new CustomEvent('mcp:logout'));
+      sessionStorage.removeItem('iw_chat_history');
+      sessionStorage.removeItem('iw_active_session_id');
+    } catch {}
+    clearAuth();
+    setUser(null);
+  };
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);

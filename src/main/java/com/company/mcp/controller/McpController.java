@@ -91,7 +91,7 @@ public class McpController {
         Map<String, Object> info = new LinkedHashMap<>();
         info.put("protocolVersion", PROTOCOL_VERSION);
         info.put("capabilities", Map.of("tools", Map.of("listChanged", false)));
-        info.put("serverInfo", Map.of("name", "mcp-incident-automation", "version", "1.0"));
+        info.put("serverInfo", Map.of("name", "incident-warden", "version", "1.0"));
         info.put("instructions", "Incident remediation tools for the authenticated operator's tenant. "
                 + "Remediation cannot be executed without a human approval recorded in this system: "
                 + "call create_remediation_plan to raise one, then wait for a reviewer.");

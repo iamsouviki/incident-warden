@@ -10,4 +10,9 @@
         <sqlFile path="versions/1.0/baseline.sql" relativeToChangelogFile="true" splitStatements="false" />
     </changeSet>
 
+    <changeSet id="1.1-chat-sessions" author="mcp-incident-automation">
+        <validCheckSum>ANY</validCheckSum>
+        <sqlFile path="versions/1.0/chat_sessions.sql" relativeToChangelogFile="true" splitStatements="false" />
+    </changeSet>
+
 </databaseChangeLog>
