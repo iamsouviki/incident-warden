@@ -12,12 +12,12 @@
   },
   "dependencies": {
     "lucide-react": "^1.31.0",
-    "react": "^18.2.0",
+    "react": "^19.2.8",
     "react-dom": "^18.2.0",
     "react-router-dom": "^7.18.2"
   },
   "devDependencies": {
-    "@types/react": "^18.2.0",
+    "@types/react": "^19.2.18",
     "@types/react-dom": "^18.2.0",
     "@typescript-eslint/eslint-plugin": "^6.7.0",
     "@typescript-eslint/parser": "^6.7.0",
