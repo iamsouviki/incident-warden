@@ -80,6 +80,10 @@ export interface ToolPlan {
   scanLevel?: string;
   /** Provenance of the SOP this plan was derived from. */
   provenance?: string;
+  /** Whether this action mutates system state (restart, delete, write). */
+  mutating?: boolean;
+  /** Rollback procedure if the action needs to be reversed. */
+  rollback?: string;
 }
 
 interface RunStage {
@@ -104,8 +108,10 @@ interface Message {
   choices?: IncidentChoice[];
   /** Proposed action ready for the user to review. */
   plan?: ToolPlan;
-  /** Set once the user has answered the run question, so the buttons cannot be clicked twice. */
-  decisionMade?: boolean;
+  /** Set once the user has confirmed or dismissed the run prompt. */
+  answered?: string;
+  /** Keyword the search was matched against, for display. */
+  matched?: string;
   /** An executed run and its live stages. */
   run?: {
     requestId?: string;
@@ -145,15 +151,7 @@ interface IncidentChoice {
   status: string;
 }
 
-/**
- * Mirrors {@code RagService.AGGREGATE_TERMS}. Duplicated on purpose: the anonymous tier has to
- * decide which endpoint to call before any request goes out, and shipping the backend's list
- * to the browser would be a bigger contract than copying twelve words.
- */
-const COUNT_TERMS = [
-  'how many', 'count', 'total', 'summary', 'overview', 'report', 'breakdown',
-  'by status', 'by priority', 'per team', 'by team', 'backlog', 'all open',
-];
+// ponytail: COUNT_TERMS removed — routing is now done server-side
 
 /** Wanting something *done*, resolved or explained how to resolve. */
 const SOLVE_TERMS = [
@@ -164,7 +162,7 @@ const SOLVE_TERMS = [
 ];
 
 const INCIDENT_REF = /\b(?:INC|FS|SN)[-_]?\d{3,}\b/i;
-const PRIORITY_REF = /\b(?:p[1-4]|priority[- ]?[1-4])\b/i;
+// ponytail: PRIORITY_REF removed with pickKeyword
 
 const STOP_WORDS = new Set([
   'what', 'which', 'when', 'where', 'who', 'how', 'many', 'much', 'the', 'are', 'is', 'was',
@@ -192,12 +190,7 @@ const includesAny = (haystack: string, needles: string[]) => needles.some(n => h
 const contentWords = (question: string): string[] =>
   (question.toLowerCase().match(/[a-z0-9][a-z0-9-]{1,}/g) || []).filter(w => !STOP_WORDS.has(w));
 
-/** The single strongest content word, prioritizing incident IDs and priority tags. */
-const pickKeyword = (question: string): string => {
-  const pri = question.match(PRIORITY_REF)?.[0];
-  if (pri) return pri.replace(/[^p0-9]/gi, '').toLowerCase();
-  return contentWords(question).sort((a, b) => b.length - a.length)[0] || '';
-};
+// ponytail: pickKeyword removed — keyword selection moved to backend RAG
 
 const formatMarkdown = (text: string): string => text
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -838,6 +831,9 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
           risk: Number(detail.plan?.riskScore ?? 0),
           canApprove: Boolean(detail.canApprove),
           sodBlocked: Boolean(detail.separationOfDutiesBlocked),
+          riskLevel: (detail.plan?.riskLevel ?? detail.action?.riskLevel ?? 'MEDIUM') as ToolPlan['riskLevel'],
+          commandPreview: detail.script?.commandPreview ?? detail.action?.commandPreview ?? '',
+          parameters: detail.plan?.parameters ?? {},
         },
       });
     } catch (e) {
@@ -1085,6 +1081,41 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
       {!activeUser && <div className="chat-note">Public preview: IPs, credentials and PII are masked (****). Sign in for full incident context and remediation.</div>}
     </div>
   );
+
+  /** Update one field value inside the missingInfo card for a given message. */
+  const handleMissingParamChange = (msgId: string, key: string, value: string) => {
+    setMessages(prev => prev.map(m => {
+      if (m.id !== msgId || !m.missingInfo) return m;
+      return { ...m, missingInfo: { ...m.missingInfo, values: { ...m.missingInfo.values, [key]: value } } };
+    }));
+  };
+
+  /** Re-submit plan with the filled-in param values. */
+  const handleMissingParamsSubmit = (msgId: string) => {
+    const msg = messages.find(m => m.id === msgId);
+    if (!msg?.missingInfo) return;
+    const missing = msg.missingInfo;
+    const requiredMissing = missing.fields.filter(f => f.required && !missing.values[f.key]?.trim());
+    if (requiredMissing.length > 0) {
+      setMessages(prev => prev.map(m =>
+        m.id === msgId && m.missingInfo
+          ? { ...m, missingInfo: { ...m.missingInfo, validationError: `Required: ${requiredMissing.map(f => f.label).join(', ')}` } }
+          : m
+      ));
+      return;
+    }
+    // Clear the form and surface the plan card with the provided values merged into parameters
+    setMessages(prev => prev.map(m => {
+      if (m.id !== msgId || !m.missingInfo) return m;
+      const merged = { ...m.plan?.parameters, ...m.missingInfo.values };
+      return {
+        ...m,
+        missingInfo: undefined,
+        plan: m.plan ? { ...m.plan, parameters: merged } : undefined,
+        text: m.text,
+      };
+    }));
+  };
 
   const renderMissingInfoCard = (msg: Message, missing: MissingInfoCardState) => {
     return (
@@ -1535,9 +1566,9 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
             <div className="chat-modal-body">
               <p className="chat-modal-provenance">{review.plan.provenance}</p>
               {review.plan.what && <p className="chat-modal-what">{review.plan.what}</p>}
-              {review.plan.how.length > 0 && (
+              {(review.plan.how?.length ?? 0) > 0 && (
                 <ol className="chat-modal-how">
-                  {review.plan.how.map((step, i) => <li key={i}>{step}</li>)}
+                  {review.plan.how!.map((step, i) => <li key={i}>{step}</li>)}
                 </ol>
               )}
               <pre className="chat-script">{review.plan.script || 'This plan carries no script; the tool runs directly.'}</pre>

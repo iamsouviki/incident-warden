@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import './IncidentManagementPage.css';
-import { RefreshCw, Search, Calendar, Clock, Layers, Download, FileText, Server, AlertCircle, CheckCircle2, ChevronRight, Hash, User, Building, ExternalLink, Paperclip } from 'lucide-react';
-import { authFetch, getStoredUser } from '../services/api';
+import { RefreshCw, Search, Calendar, Layers, Download, Server, AlertCircle, CheckCircle2, User, Building } from 'lucide-react';
+import { authFetch } from '../services/api';
 
 export interface Incident {
   id: string;
@@ -46,7 +46,6 @@ export interface HistoryRecord {
 }
 
 const IncidentManagementPage: React.FC = () => {
-  const currentUser = getStoredUser();
 
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);

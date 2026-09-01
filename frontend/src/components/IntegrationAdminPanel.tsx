@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { authFetch } from '../services/api';
-import { Layers, RefreshCw, CheckCircle, AlertCircle, Clock, Server, Key, Globe, Shield } from 'lucide-react';
+import { Layers, RefreshCw, CheckCircle, AlertCircle, Clock } from 'lucide-react';
 
 export default function IntegrationAdminPanel() {
   const [settings, setSettings] = useState<{

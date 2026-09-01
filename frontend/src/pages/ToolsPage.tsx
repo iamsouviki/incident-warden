@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { authFetch, getStoredUser } from '../services/api';
-import { Play, CheckCircle, XCircle, Trash2, Plus, Save, Sparkles, AlertTriangle } from 'lucide-react';
+import { Play, Trash2, Plus, Save, Sparkles, AlertTriangle } from 'lucide-react';
 import SkillsPanel from '../components/SkillsPanel';
 
 import './ScriptEditorPage.css'; // Reuse or import editor styles
@@ -43,7 +43,7 @@ const ToolsPage: React.FC = () => {
 
   // Skills default: Categorization, Extraction, and Skill Mapping define what actions the platform takes.
   const [mode, setMode] = useState<'skills' | 'scripts'>('skills');
-  const isAdmin = user?.role === 'ADMIN';
+
   const [savedScripts, setSavedScripts] = useState<SavedScript[]>([]);
   const [loadingList, setLoadingList] = useState(false);
 
@@ -263,7 +263,8 @@ const ToolsPage: React.FC = () => {
       const history = JSON.parse(localStorage.getItem('mcp_execution_history') || '[]');
       history.push(logEntry);
       localStorage.setItem('mcp_execution_history', JSON.stringify(history));
-      loadExecutionLogs();
+      // ponytail: refresh localStorage-backed list inline — no separate function needed
+      setSavedScripts(JSON.parse(localStorage.getItem('mcp_execution_history') || '[]'));
     } catch (e) {
       console.error(e);
     } finally {

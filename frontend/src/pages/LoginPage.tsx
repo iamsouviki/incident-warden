@@ -11,7 +11,7 @@ interface Props {
 export default function LoginPage({ onLogin, onSkip }: Props) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [rememberMe, setRememberMe] = useState(false);
+  const rememberMe = false; // ponytail: setter never called; keep value wired to login()
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
