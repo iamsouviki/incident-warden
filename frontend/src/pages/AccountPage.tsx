@@ -1,15 +1,26 @@
 import React, { useState, useEffect } from 'react';
-import { User, Mail, Shield, Building, Key, Clock, LogOut } from 'lucide-react';
+import { User, Mail, Shield, Building, Key, Clock, LogOut, Briefcase } from 'lucide-react';
 import { getStoredUser, getTokenExpiry, clearAuth, authFetch } from '../services/api';
 
 interface Props {
   onLogout: () => void;
 }
 
+interface UserProfile {
+  username: string;
+  fullName?: string;
+  email?: string;
+  role: string;
+  department?: string;
+  tenantId: string;
+  tenantName?: string;
+  ssoProvider?: string;
+}
+
 const AccountPage: React.FC<Props> = ({ onLogout }) => {
-  const user = getStoredUser();
+  const storedUser = getStoredUser();
   const expiry = getTokenExpiry();
-  const [profile, setProfile] = useState<{email?: string} | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
 
   useEffect(() => {
     authFetch('/api/auth/me').then(r => r.ok ? r.json() : null).then(d => {
@@ -21,36 +32,33 @@ const AccountPage: React.FC<Props> = ({ onLogout }) => {
     ? new Date(expiry).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
     : 'Unknown';
 
-  const isLongSession = expiry && (expiry - Date.now()) > 2 * 60 * 60 * 1000; // >2h means remember-me
 
-  const getColorForUser = (u: string) => {
-    const colors = ['#c8102e', '#2563eb', '#10b981', '#8b5cf6', '#f59e0b'];
-    let h = 0;
-    for (let i = 0; i < u.length; i++) h = u.charCodeAt(i) + ((h << 5) - h);
-    return colors[Math.abs(h) % colors.length];
-  };
+  const realName = profile?.fullName || storedUser?.fullName || storedUser?.username || 'User';
+  const username = profile?.username || storedUser?.username || 'user';
+  const department = profile?.department || storedUser?.department || 'Operations';
+  const email = profile?.email || '—';
+  const role = profile?.role || storedUser?.role || 'VIEWER';
+  const workspace = profile?.tenantName || storedUser?.tenantName || storedUser?.tenantId || 'Primary Workspace';
 
-  const avatarColor = user ? getColorForUser(user.username) : '#c8102e';
-  const initials = user ? user.username.substring(0, 2).toUpperCase() : 'US';
+  const initials = realName.substring(0, 2).toUpperCase();
 
   const roleColors: Record<string, string> = {
-    ADMIN: '#c8102e', ANALYST: '#2563eb', VIEWER: '#10b981'
+    OWNER: '#f59e0b', ADMIN: 'var(--accent)', ANALYST: 'var(--purple)', VIEWER: 'var(--ok)'
   };
-  const roleColor = roleColors[user?.role || ''] || '#64748b';
+  const roleColor = roleColors[role] || 'var(--text-3)';
 
   return (
-    <div style={{ maxWidth: '640px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+    <div style={{ maxWidth: '680px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
 
-      {/* Profile card */}
+      {/* Profile Banner Card */}
       <div className="card" style={{ overflow: 'hidden' }}>
-        {/* Banner */}
         <div style={{
-          height: '100px',
-          background: `linear-gradient(135deg, ${avatarColor}22, ${avatarColor}08, transparent)`,
-          borderBottom: `3px solid ${avatarColor}`,
+          height: '110px',
+          background: 'linear-gradient(135deg, rgba(59,130,246,0.18), rgba(139,92,246,0.12), transparent)',
+          borderBottom: '1px solid var(--border)',
           position: 'relative',
         }}>
-          <div style={{ position: 'absolute', right: 0, bottom: 0, opacity: 0.05, lineHeight: 1 }}>
+          <div style={{ position: 'absolute', right: 10, bottom: 0, opacity: 0.06, lineHeight: 1 }}>
             <User size={140} />
           </div>
         </div>
@@ -58,61 +66,64 @@ const AccountPage: React.FC<Props> = ({ onLogout }) => {
         <div style={{ padding: '0 28px 28px' }}>
           {/* Avatar */}
           <div style={{
-            width: '72px', height: '72px', borderRadius: '50%',
-            background: avatarColor, color: 'white',
+            width: '76px', height: '76px', borderRadius: '50%',
+            background: 'linear-gradient(135deg, #3b82f6, #1d4ed8)', color: 'white',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: '24px', fontWeight: 900, letterSpacing: '-1px',
-            marginTop: '-36px', marginBottom: '16px',
-            border: '4px solid var(--surface)',
-            boxShadow: `0 0 0 2px ${avatarColor}40`,
+            fontSize: '26px', fontWeight: 800, letterSpacing: '-1px',
+            marginTop: '-38px', marginBottom: '16px',
+            border: '4px solid var(--surface-1)',
+            boxShadow: '0 4px 16px var(--accent-glow)',
           }}>
             {initials}
           </div>
 
-          <h2 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text)', margin: '0 0 4px', letterSpacing: '-0.3px' }}>
-            {user?.username}
+          <h2 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text-1)', margin: '0 0 4px', letterSpacing: '-0.3px' }}>
+            {realName}
           </h2>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <div style={{ fontSize: '13px', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: '12px' }}>
+            @{username}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
             <span style={{
               fontSize: '11px', fontWeight: 700, padding: '3px 10px', borderRadius: '20px',
-              background: `${roleColor}15`, color: roleColor, border: `1px solid ${roleColor}30`,
+              background: 'var(--accent-dim)', color: roleColor, border: `1px solid ${roleColor}40`,
               textTransform: 'uppercase', letterSpacing: '0.5px',
             }}>
-              {user?.role}
+              {role}
             </span>
-            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-              {user?.tenantName || user?.tenantId}
+            <span style={{ fontSize: '12px', color: 'var(--text-2)' }}>
+              {department} · {workspace}
             </span>
           </div>
         </div>
       </div>
 
       {/* Info grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px' }}>
         {[
-          { icon: <User size={16}/>,     label: 'Username',  value: user?.username || '—' },
-          { icon: <Mail size={16}/>,     label: 'Email',     value: profile?.email || '—' },
-          { icon: <Shield size={16}/>,   label: 'Role',      value: user?.role || '—' },
-          { icon: <Building size={16}/>, label: 'Workspace', value: user?.tenantName || user?.tenantId || '—' },
-          { icon: <Key size={16}/>,      label: 'Tenant ID', value: user?.tenantId || '—' },
+          { icon: <User size={16}/>,     label: 'Full Name',        value: realName },
+          { icon: <User size={16}/>,     label: 'Username',         value: `@${username}` },
+          { icon: <Mail size={16}/>,     label: 'Email',            value: email },
+          { icon: <Briefcase size={16}/>,label: 'Department',       value: department },
+          { icon: <Shield size={16}/>,   label: 'Security Role',    value: role },
+          { icon: <Building size={16}/>, label: 'Workspace',        value: workspace },
+          { icon: <Key size={16}/>,      label: 'Tenant ID',        value: profile?.tenantId || storedUser?.tenantId || '—' },
           {
             icon: <Clock size={16}/>,
-            label: 'Session expires',
+            label: 'Access Token Expiry',
             value: expiryLabel,
-            extra: isLongSession
-              ? <span style={{ fontSize: '10px', color: '#10b981', fontWeight: 700, background: 'rgba(16,185,129,0.1)', padding: '1px 6px', borderRadius: '8px' }}>EXTENDED (7d)</span>
-              : null,
+            extra: <span style={{ fontSize: '10px', color: 'var(--ok)', fontWeight: 700, background: 'var(--ok-dim)', padding: '2px 8px', borderRadius: '8px' }}>AUTO REFRESH ACTIVE</span>,
           },
         ].map((item, i) => (
-          <div key={i} className="card" style={{ padding: '18px 20px', display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
-            <div style={{ padding: '8px', borderRadius: '8px', background: 'var(--surface2)', color: 'var(--text-muted)', flexShrink: 0 }}>
+          <div key={i} className="card" style={{ padding: '16px 18px', display: 'flex', gap: '14px', alignItems: 'flex-start' }}>
+            <div style={{ padding: '8px', borderRadius: '8px', background: 'var(--surface-2)', color: 'var(--accent)', flexShrink: 0 }}>
               {item.icon}
             </div>
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: '10px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: '4px' }}>
+              <div style={{ fontSize: '10.5px', fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: '3px' }}>
                 {item.label}
               </div>
-              <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text)', wordBreak: 'break-all' }}>
+              <div style={{ fontSize: '13.5px', fontWeight: 600, color: 'var(--text-1)', wordBreak: 'break-word' }}>
                 {item.value}
               </div>
               {(item as any).extra && <div style={{ marginTop: '4px' }}>{(item as any).extra}</div>}
@@ -121,34 +132,33 @@ const AccountPage: React.FC<Props> = ({ onLogout }) => {
         ))}
       </div>
 
-      {/* SSO notice */}
-      <div className="card" style={{ padding: '20px 24px', background: 'var(--accent-dim)', border: '1px solid rgba(37,99,235,0.15)' }}>
-        <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--accent)', marginBottom: '6px' }}>
-          SSO Integration Ready
+      {/* Enterprise SSO notice */}
+      <div className="card" style={{ padding: '20px 24px', background: 'var(--accent-dim)', border: '1px solid rgba(59,130,246,0.2)' }}>
+        <div style={{ fontSize: '13px', fontWeight: 800, color: 'var(--accent)', marginBottom: '6px' }}>
+          Enterprise Single Sign-On (SSO) Active
         </div>
-        <div style={{ fontSize: '12px', color: 'var(--text-dim)', lineHeight: '1.6' }}>
-          Your account supports Single Sign-On. Contact your administrator to link an SSO provider (Okta, Azure AD, etc.).
-          Once linked, you can sign in without a password.
+        <div style={{ fontSize: '12.5px', color: 'var(--text-2)', lineHeight: '1.6' }}>
+          Your account is configured for federated identity. You can link identity providers (Okta, Azure AD, Google Workspace) via OIDC tokens.
         </div>
       </div>
 
-      {/* Danger zone */}
-      <div className="card" style={{ padding: '20px 24px', border: '1px solid rgba(239,68,68,0.15)' }}>
-        <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text)', marginBottom: '12px' }}>Sign out</div>
+      {/* Sign out */}
+      <div className="card" style={{ padding: '20px 24px', border: '1px solid rgba(239,68,68,0.2)' }}>
+        <div style={{ fontSize: '13.5px', fontWeight: 800, color: 'var(--text-1)', marginBottom: '12px' }}>Session Management</div>
         <button
           id="account-logout-btn"
           onClick={() => { clearAuth(); onLogout(); }}
           style={{
             display: 'flex', alignItems: 'center', gap: '8px',
-            background: 'transparent', border: '1px solid rgba(239,68,68,0.3)',
-            color: 'var(--red)', padding: '8px 16px', borderRadius: '8px',
-            cursor: 'pointer', fontSize: '13px', fontWeight: 600, transition: 'all 0.2s',
-            fontFamily: 'var(--sans)',
+            background: 'transparent', border: '1px solid rgba(239,68,68,0.4)',
+            color: 'var(--crit)', padding: '9px 18px', borderRadius: '8px',
+            cursor: 'pointer', fontSize: '13px', fontWeight: 700, transition: 'all var(--transition-fast)',
+            fontFamily: 'var(--font-sans)',
           }}
-          onMouseEnter={e => { (e.currentTarget).style.background = 'var(--red-dim)'; (e.currentTarget).style.borderColor = 'var(--red)'; }}
-          onMouseLeave={e => { (e.currentTarget).style.background = 'transparent'; (e.currentTarget).style.borderColor = 'rgba(239,68,68,0.3)'; }}
+          onMouseEnter={e => { (e.currentTarget).style.background = 'var(--crit-dim)'; (e.currentTarget).style.borderColor = 'var(--crit)'; }}
+          onMouseLeave={e => { (e.currentTarget).style.background = 'transparent'; (e.currentTarget).style.borderColor = 'rgba(239,68,68,0.4)'; }}
         >
-          <LogOut size={14} /> Sign out of this session
+          <LogOut size={14} /> Sign out of current session
         </button>
       </div>
     </div>

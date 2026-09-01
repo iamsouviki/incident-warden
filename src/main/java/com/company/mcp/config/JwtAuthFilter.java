@@ -23,10 +23,15 @@ import java.util.List;
  */
 public class JwtAuthFilter extends OncePerRequestFilter {
 
-    private final JwtService jwtService;
+    /** A role outside this set is treated as a forged claim, not as a new role. */
+    private static final java.util.Set<String> ROLES = java.util.Set.of("VIEWER", "ANALYST", "ADMIN", "OWNER");
 
-    public JwtAuthFilter(JwtService jwtService) {
+    private final JwtService jwtService;
+    private final com.company.mcp.service.TokenRevocationService tokenRevocationService;
+
+    public JwtAuthFilter(JwtService jwtService, com.company.mcp.service.TokenRevocationService tokenRevocationService) {
         this.jwtService = jwtService;
+        this.tokenRevocationService = tokenRevocationService;
     }
 
     @Override
@@ -38,10 +43,32 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             String token = header.substring(7);
             try {
                 Claims claims = jwtService.parse(token);
+                // Only an "access" token authenticates an API call. A refresh token is
+                // long-lived and is accepted at /api/auth/refresh alone.
+                if (!"access".equals(claims.get("tokenType", String.class))) {
+                    chain.doFilter(request, response);
+                    return;
+                }
                 String username = claims.getSubject();
-                String role = (String) claims.getOrDefault("role", "VIEWER");
+                String role = String.valueOf(claims.getOrDefault("role", "VIEWER")).toUpperCase();
+                String tenantId = String.valueOf(claims.get("tenantId"));
+                if (username == null || username.isBlank() || tenantId == null || tenantId.isBlank() || "null".equals(tenantId)) {
+                    throw new JwtException("JWT is missing required identity claims");
+                }
+                if (!ROLES.contains(role)) {
+                    throw new JwtException("JWT carries an unknown role claim");
+                }
+
+                // Verify token is not in revocation denylist
+                if (tokenRevocationService != null && tokenRevocationService.isRevoked(
+                        claims.getId(), username,
+                        claims.getIssuedAt() != null ? claims.getIssuedAt().toInstant() : null)) {
+                    throw new JwtException("Token has been revoked");
+                }
+
+                var principal = new AuthenticatedUser(username, tenantId, role);
                 var auth = new UsernamePasswordAuthenticationToken(
-                        username, null,
+                        principal, null,
                         List.of(new SimpleGrantedAuthority("ROLE_" + role)));
                 SecurityContextHolder.getContext().setAuthentication(auth);
             } catch (JwtException | IllegalArgumentException ignored) {

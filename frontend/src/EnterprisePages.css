@@ -1,0 +1,224 @@
+@import './tokens.css';
+
+/* Enterprise Surface Components (Preline / TailGrids / PrebuiltUI style) */
+
+.card {
+  background: var(--surface-1) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-lg) !important;
+  color: var(--text-1);
+  box-shadow: var(--shadow-sm) !important;
+  transition: border-color var(--transition-base), box-shadow var(--transition-base);
+  overflow: hidden;
+  max-width: 100%;
+}
+
+.card:hover {
+  border-color: var(--border-bright) !important;
+  box-shadow: var(--shadow-md) !important;
+}
+
+.card-header {
+  background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent) !important;
+  color: var(--text-1) !important;
+  border-bottom: 1px solid var(--border) !important;
+  padding: 16px 20px;
+}
+
+.card-title, .content-title {
+  color: var(--text-1) !important;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+
+.content {
+  color: var(--text-1);
+  max-width: 100%;
+}
+
+.content p, .content small {
+  color: var(--text-2);
+}
+
+/* Modern Input Primitives */
+input, select, textarea {
+  background: var(--surface-2) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-md) !important;
+  color: var(--text-1) !important;
+  outline: none;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  transition: all var(--transition-fast);
+  box-sizing: border-box;
+  max-width: 100%;
+}
+
+input:focus, select:focus, textarea:focus {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px var(--accent-dim) !important;
+  background: var(--surface-3) !important;
+}
+
+input::placeholder, textarea::placeholder {
+  color: var(--text-3) !important;
+}
+
+/* Enterprise Buttons */
+button {
+  font-family: var(--font-sans);
+}
+
+.btn-primary, .btn-sync {
+  border: 1px solid var(--accent) !important;
+  border-radius: var(--radius-md) !important;
+  background: var(--accent) !important;
+  color: white !important;
+  font-weight: 600;
+  box-shadow: 0 2px 8px var(--accent-glow);
+  transition: all var(--transition-fast);
+}
+
+.btn-primary:hover, .btn-sync:hover:not(:disabled) {
+  background: var(--accent-hover) !important;
+  border-color: var(--accent-hover) !important;
+  box-shadow: 0 4px 14px var(--accent-glow);
+}
+
+.btn-secondary {
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-md) !important;
+  background: var(--surface-2) !important;
+  color: var(--text-2) !important;
+  transition: all var(--transition-fast);
+}
+
+.btn-secondary:hover {
+  background: var(--surface-3) !important;
+  border-color: var(--border-bright) !important;
+  color: var(--text-1) !important;
+}
+
+/* Workflow Rail */
+.workflow-rail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 32px 14px;
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.workflow-rail::-webkit-scrollbar {
+  display: none;
+}
+
+.workflow-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  white-space: nowrap;
+}
+
+.workflow-step span {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  background: var(--surface-2);
+}
+
+.workflow-step.active {
+  color: var(--accent);
+}
+
+.workflow-step.active span {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+
+.workflow-step.complete {
+  color: var(--ok);
+}
+
+.workflow-step.complete span {
+  border-color: var(--ok);
+  color: var(--ok);
+  background: var(--ok-dim);
+}
+
+.workflow-connector {
+  flex: 1;
+  min-width: 14px;
+  height: 1px;
+  background: var(--border);
+}
+
+.workflow-connector.complete {
+  background: rgba(16, 185, 129, 0.4);
+}
+
+/* Grid & Layout Responsive Adaptations */
+@media (max-width: 1280px) {
+  .workflow-rail {
+    margin-left: 24px;
+    margin-right: 24px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .workflow-rail {
+    margin-left: 20px;
+    margin-right: 20px;
+    padding: 8px 12px;
+  }
+  .page-content > div[style*="grid-template-columns: 280px 1fr"] {
+    grid-template-columns: 240px 1fr !important;
+  }
+}
+
+@media (max-width: 860px) {
+  .page-content > div[style*="grid-template-columns: 400px 1fr"],
+  .page-content > div[style*="grid-template-columns: 280px 1fr"] {
+    grid-template-columns: 1fr !important;
+    height: auto !important;
+    min-height: auto !important;
+  }
+  .page-content > div[style*="grid-template-columns: 400px 1fr"] > .card,
+  .page-content > div[style*="grid-template-columns: 280px 1fr"] > .card {
+    min-height: 380px;
+  }
+}
+
+@media (max-width: 640px) {
+  .workflow-rail {
+    margin-left: 14px;
+    margin-right: 14px;
+    padding: 6px 10px;
+  }
+  .workflow-step {
+    font-size: 10px;
+  }
+}
+
+@media (max-width: 375px) {
+  .workflow-rail {
+    margin-left: 10px;
+    margin-right: 10px;
+  }
+}

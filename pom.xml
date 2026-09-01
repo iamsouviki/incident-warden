@@ -13,9 +13,17 @@
     </parent>
 
     <groupId>com.mcp</groupId>
-    <artifactId>incident-automation</artifactId>
+    <artifactId>incident-warden</artifactId>
     <version>1.0.0</version>
-    <name>MCP Incident Automation (Stripped RAG)</name>
+    <name>Incident Warden</name>
+    <description>Open-source human-in-the-loop AI incident automation platform</description>
+    <url>https://github.com/iamsouviki/incident-warden</url>
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0</url>
+        </license>
+    </licenses>
 
     <properties>
         <java.version>21</java.version>
@@ -41,6 +49,20 @@
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
+        <!--
+          Present only so ClientHttpRequestFactories picks it over the JDK client.
+          spring-web 6.1.1 implements the JDK client's read timeout as
+          HttpRequest.Builder#timeout, which the JDK applies to response HEADERS only. A
+          provider that answers 200 and then stalls the body is never timed out: observed
+          live with a hosted LLM, where two chat requests logged "Routing chat query" and
+          then hung indefinitely, each holding a Tomcat worker. Apache's read timeout is a
+          socket timeout, so it covers body reads too. See config/OutboundHttpConfig.
+        -->
+        <dependency>
+            <groupId>org.apache.httpcomponents.client5</groupId>
+            <artifactId>httpclient5</artifactId>
+        </dependency>
+
         <!-- Redis for Caching -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -53,11 +75,31 @@
             <artifactId>spring-boot-starter-data-jpa</artifactId>
         </dependency>
 
-        <!-- PostgreSQL -->
+        <!-- PostgreSQL for Docker/enterprise deployments -->
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
             <scope>runtime</scope>
+        </dependency>
+
+        <!-- Mail: outbound notification only. No credential is configured anywhere; the
+             relay is reached unauthenticated on the internal network, and the host/port/
+             from-address are edited in the UI and stored in config.system_config. This
+             starter's auto-configuration reads spring.mail.* and is therefore inert here —
+             NotificationService builds its JavaMailSenderImpl from the database instead. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-mail</artifactId>
+        </dependency>
+
+        <!-- H2 is test-only. The application itself runs on PostgreSQL + pgvector in every
+             profile including 'local'. It survives here solely so ApplicationContextSmokeTest
+             can boot the wiring without a live database; making `mvn test` require Postgres
+             would cost more than it proves. -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>test</scope>
         </dependency>
 
         <!-- Lombok -->
@@ -119,6 +161,19 @@
             <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
 
+        <!-- XLSX intake parsing; CSV uses the Java standard library. -->
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>5.3.0</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
         <!-- JJWT for JWT signing & validation -->
         <dependency>
             <groupId>io.jsonwebtoken</groupId>
@@ -138,10 +193,43 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- Health, readiness and metrics endpoints (secured to ADMIN in SecurityConfig) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+
     </dependencies>
 
     <build>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>copy-frontend-dist</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>copy-resources</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.outputDirectory}/static</outputDirectory>
+                            <overwrite>true</overwrite>
+                            <resources>
+                                <resource>
+                                    <directory>${project.basedir}/frontend/dist</directory>
+                                    <filtering>false</filtering>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>

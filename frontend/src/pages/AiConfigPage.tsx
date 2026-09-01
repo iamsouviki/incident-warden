@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldAlert, Cpu, Share2, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Cpu } from 'lucide-react';
+import { authFetch } from '../services/api';
+import UserAdminPanel from '../components/UserAdminPanel';
+import IntegrationAdminPanel from '../components/IntegrationAdminPanel';
 
 const PROVIDERS = [
   { id: 'ollama', name: 'Ollama (Local)', defaultUrl: 'http://localhost:11434' },
@@ -9,55 +12,61 @@ const PROVIDERS = [
   { id: 'custom', name: 'Custom OpenAI-Compatible', defaultUrl: '' }
 ];
 
+/**
+ * Two things an admin configures: which model answers, and who has an account.
+ *
+ * This page used to carry threshold sliders, ITSM sync toggles, an SMTP form and two access
+ * switches. They are gone. The sliders tuned numbers that decide whether a plan is offered —
+ * but nothing runs without a person reading the script and approving it, so a percentage was
+ * never the control anyone actually used. The ITSM toggles wrote config rows no code read. And
+ * the access switches let a single operator turn off the requirement for a second reviewer,
+ * which is the one guarantee this platform makes; the answer to a one-person workspace is a
+ * second account, which is what the panel below is for.
+ */
 const AiConfigPage: React.FC = () => {
-  // AI Settings
   const [provider, setProvider] = useState('ollama');
   const [baseUrl, setBaseUrl] = useState('http://localhost:11434');
-  const [apiKey, setApiKey] = useState('');
+  // The provider key is not editable here. It is read from the MCP_LLM_API_KEY
+  // environment variable on the server; this page only learns whether one is set.
+  const [apiKeyPresent, setApiKeyPresent] = useState(false);
   const [chatModel, setChatModel] = useState('');
   const [embeddingModel, setEmbeddingModel] = useState('');
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
-  
-  // Rules and Thresholds Settings
-  const [autoResolveThreshold, setAutoResolveThreshold] = useState('1.00');
-  const [hitlThreshold, setHitlThreshold] = useState('0.80');
-  const [blastRadiusThreshold, setBlastRadiusThreshold] = useState('0.40');
-  
-  // ITSM Toggles
-  const [servicenowEnabled, setServicenowEnabled] = useState('false');
-  const [freshserviceEnabled, setFreshserviceEnabled] = useState('false');
+  const [modelLoadError, setModelLoadError] = useState('');
 
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
   useEffect(() => {
-    fetch('/api/v1/ai/config')
+    authFetch('/api/v1/ai/config')
       .then(res => res.json())
       .then(data => {
         if (data.provider) setProvider(data.provider);
         if (data.baseUrl) setBaseUrl(data.baseUrl);
-        if (data.apiKey) setApiKey(data.apiKey);
+        setApiKeyPresent(Boolean(data.apiKeyPresent));
         if (data.chatModel) setChatModel(data.chatModel);
         if (data.embeddingModel) setEmbeddingModel(data.embeddingModel);
-        if (data.autoResolveThreshold) setAutoResolveThreshold(data.autoResolveThreshold);
-        if (data.hitlThreshold) setHitlThreshold(data.hitlThreshold);
-        if (data.blastRadiusThreshold) setBlastRadiusThreshold(data.blastRadiusThreshold);
-        if (data.servicenowEnabled) setServicenowEnabled(data.servicenowEnabled);
-        if (data.freshserviceEnabled) setFreshserviceEnabled(data.freshserviceEnabled);
       })
       .catch(console.error);
   }, []);
 
   useEffect(() => {
     if (provider === 'ollama' && baseUrl) {
-      fetch(`/api/v1/ai/config/ollama-models?url=${encodeURIComponent(baseUrl)}`)
-        .then(res => res.json())
-        .then(data => {
-          if (Array.isArray(data)) {
-            setOllamaModels(data);
-          }
+      setModelLoadError('');
+      authFetch(`/api/v1/ai/config/ollama-models?url=${encodeURIComponent(baseUrl)}`)
+        .then(res => {
+          if (!res.ok) throw new Error(`Model discovery failed (${res.status})`);
+          return res.json();
         })
-        .catch(console.error);
+        .then(data => {
+          if (!Array.isArray(data)) throw new Error('Model discovery returned an invalid response');
+          setOllamaModels(data);
+        })
+        .catch(error => {
+          console.error(error);
+          setOllamaModels([]);
+          setModelLoadError('Could not load local Ollama models. Confirm the backend can reach the Base API URL.');
+        });
     }
   }, [provider, baseUrl]);
 
@@ -73,21 +82,10 @@ const AiConfigPage: React.FC = () => {
     setLoading(true);
     setMessage(null);
     try {
-      const res = await fetch('/api/v1/ai/config', {
+      const res = await authFetch('/api/v1/ai/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          provider, 
-          baseUrl, 
-          apiKey, 
-          chatModel, 
-          embeddingModel,
-          autoResolveThreshold,
-          hitlThreshold,
-          blastRadiusThreshold,
-          servicenowEnabled,
-          freshserviceEnabled
-        })
+        body: JSON.stringify({ provider, baseUrl, chatModel, embeddingModel })
       });
       const data = await res.json();
       if (res.ok) {
@@ -104,7 +102,7 @@ const AiConfigPage: React.FC = () => {
 
   return (
     <div className="content" style={{ maxWidth: 900, margin: '20px auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
-      
+
       {message && (
         <div style={{
           padding: '14px 20px', borderRadius: '8px',
@@ -117,15 +115,15 @@ const AiConfigPage: React.FC = () => {
         </div>
       )}
 
-      {/* SECTION 1: AI CORE ENGINE CONFIGURATION */}
+      {/* AI CORE ENGINE CONFIGURATION */}
       <div className="card">
         <div className="card-header" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <Cpu size={18} style={{ color: 'var(--accent)' }} />
           <div className="card-title">AI Core Engine Settings</div>
         </div>
         <div style={{ padding: '24px' }}>
-          
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px', marginBottom: '20px' }}>
             {/* Provider Select */}
             <div>
               <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-muted)', fontSize: '12px', fontWeight: 'bold' }}>
@@ -156,22 +154,23 @@ const AiConfigPage: React.FC = () => {
             </div>
           </div>
 
-          {/* API Key */}
+          {/* API key status. Read-only by design: a credential typed into a browser form
+              gets stored somewhere, and the somewhere was a plaintext database column. */}
           {provider !== 'ollama' && (
             <div style={{ marginBottom: '20px' }}>
               <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-muted)', fontSize: '12px', fontWeight: 'bold' }}>
                 API Key / Token
               </label>
-              <input
-                type="password"
-                placeholder="Enter API Key"
-                value={apiKey}
-                onChange={e => setApiKey(e.target.value)}
-              />
+              <p style={{ margin: 0, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: '6px', fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                {apiKeyPresent
+                  ? 'A key is configured in the server environment. It is never displayed or stored in the database.'
+                  : 'No key configured. Set MCP_LLM_API_KEY in the server environment and restart — this provider will fail model calls until you do.'}
+              </p>
             </div>
           )}
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
+          {modelLoadError && <p style={{ margin: '0 0 12px', color: 'var(--red)', fontSize: '12px' }}>{modelLoadError}</p>}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px', marginBottom: '20px' }}>
             {/* Chat Model Name */}
             <div>
               <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-muted)', fontSize: '12px', fontWeight: 'bold' }}>
@@ -224,147 +223,27 @@ const AiConfigPage: React.FC = () => {
               )}
             </div>
           </div>
+
+          <button
+            onClick={handleSave}
+            disabled={loading || !chatModel || !embeddingModel || !baseUrl}
+            className="btn-primary"
+            style={{
+              padding: '14px 24px', border: 'none', fontSize: '14px',
+              cursor: (loading || !chatModel || !embeddingModel || !baseUrl) ? 'not-allowed' : 'pointer',
+              width: '100%', textTransform: 'uppercase', letterSpacing: '0.5px'
+            }}
+          >
+            {loading ? 'Persisting Configuration...' : 'Save AI Settings'}
+          </button>
         </div>
       </div>
 
-      {/* SECTION 2: AI CONFIDENCE THRESHOLDS & BOUNDS */}
-      <div className="card">
-        <div className="card-header" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <ShieldAlert size={18} style={{ color: 'var(--michaels-red)' }} />
-          <div className="card-title">AI Incident Actions & Confidence Thresholds</div>
-        </div>
-        <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
-          
-          {/* Auto Resolve Slider */}
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-              <span style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--text)' }}>
-                Auto-Resolve Confidence Threshold
-              </span>
-              <span style={{ fontFamily: 'var(--mono)', fontSize: '13px', fontWeight: 'bold', color: 'var(--accent)' }}>
-                {Math.round(parseFloat(autoResolveThreshold) * 100)}%
-              </span>
-            </div>
-            <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>
-              Minimum AI classification confidence required to automatically resolve a support ticket without technician approval.
-            </p>
-            <input
-              type="range"
-              min="0.0"
-              max="1.0"
-              step="0.05"
-              value={autoResolveThreshold}
-              onChange={e => setAutoResolveThreshold(e.target.value)}
-              style={{ width: '100%', height: '6px', background: 'var(--surface3)', borderRadius: '3px', outline: 'none' }}
-            />
-          </div>
+      {/* ACCOUNTS & ACCESS */}
+      <UserAdminPanel />
 
-          {/* HITL Slider */}
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-              <span style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--text)' }}>
-                HITL (Human-in-the-Loop) Assistance Threshold
-              </span>
-              <span style={{ fontFamily: 'var(--mono)', fontSize: '13px', fontWeight: 'bold', color: 'var(--accent)' }}>
-                {Math.round(parseFloat(hitlThreshold) * 100)}%
-              </span>
-            </div>
-            <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>
-              Confidence threshold below which the platform prompts support technicians with interactive step-by-step suggestions.
-            </p>
-            <input
-              type="range"
-              min="0.0"
-              max="1.0"
-              step="0.05"
-              value={hitlThreshold}
-              onChange={e => setHitlThreshold(e.target.value)}
-              style={{ width: '100%', height: '6px', background: 'var(--surface3)', borderRadius: '3px', outline: 'none' }}
-            />
-          </div>
-
-          {/* Blast Radius Slider */}
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-              <span style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--text)' }}>
-                Maximum Allowed Action Blast Radius
-              </span>
-              <span style={{ fontFamily: 'var(--mono)', fontSize: '13px', fontWeight: 'bold', color: 'var(--accent)' }}>
-                {Math.round(parseFloat(blastRadiusThreshold) * 100)}%
-              </span>
-            </div>
-            <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>
-              Upper boundary of estimated system risk. Remediation actions with risk assessment values higher than this require senior admin bypass.
-            </p>
-            <input
-              type="range"
-              min="0.0"
-              max="1.0"
-              step="0.05"
-              value={blastRadiusThreshold}
-              onChange={e => setBlastRadiusThreshold(e.target.value)}
-              style={{ width: '100%', height: '6px', background: 'var(--surface3)', borderRadius: '3px', outline: 'none' }}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* SECTION 3: ITSM INTEGRATIONS SYNC */}
-      <div className="card">
-        <div className="card-header" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <Share2 size={18} style={{ color: 'var(--purple)' }} />
-          <div className="card-title">External ITSM Integration Sync</div>
-        </div>
-        <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          
-          {/* ServiceNow Sync Toggle */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px', background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)' }}>
-            <div>
-              <h4 style={{ fontSize: '14px', fontWeight: 'bold', color: 'var(--text)', marginBottom: '4px' }}>Sync ServiceNow Incidents</h4>
-              <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: 0 }}>
-                Periodically fetch new tickets and push resolution statuses back to your ServiceNow instance.
-              </p>
-            </div>
-            <button
-              onClick={() => setServicenowEnabled(servicenowEnabled === 'true' ? 'false' : 'true')}
-              style={{ background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', color: servicenowEnabled === 'true' ? 'var(--green)' : 'var(--text-muted)' }}
-            >
-              {servicenowEnabled === 'true' ? <ToggleRight size={40} /> : <ToggleLeft size={40} />}
-            </button>
-          </div>
-
-          {/* Freshservice Sync Toggle */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px', background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)' }}>
-            <div>
-              <h4 style={{ fontSize: '14px', fontWeight: 'bold', color: 'var(--text)', marginBottom: '4px' }}>Sync Freshservice Tickets</h4>
-              <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: 0 }}>
-                Periodically synchronize active work logs, custom fields, and asset tracking with Freshservice.
-              </p>
-            </div>
-            <button
-              onClick={() => setFreshserviceEnabled(freshserviceEnabled === 'true' ? 'false' : 'true')}
-              style={{ background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', color: freshserviceEnabled === 'true' ? 'var(--green)' : 'var(--text-muted)' }}
-            >
-              {freshserviceEnabled === 'true' ? <ToggleRight size={40} /> : <ToggleLeft size={40} />}
-            </button>
-          </div>
-
-        </div>
-      </div>
-
-      {/* SAVE BUTTON */}
-      <button
-        onClick={handleSave}
-        disabled={loading || !chatModel || !embeddingModel || !baseUrl}
-        className="btn-primary"
-        style={{
-          padding: '16px 24px', border: 'none', fontSize: '15px',
-          cursor: (loading || !chatModel || !embeddingModel || !baseUrl) ? 'not-allowed' : 'pointer',
-          width: '100%', textTransform: 'uppercase', letterSpacing: '0.5px'
-        }}
-      >
-        {loading ? 'Persisting Configuration...' : 'Save Configuration & Thresholds'}
-      </button>
+      {/* EXTERNAL ITSM & BUG TRACKER INTEGRATIONS */}
+      <IntegrationAdminPanel />
 
     </div>
   );

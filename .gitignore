@@ -46,14 +46,21 @@ logs/
 
 # ── IDE / editor ────────────────────────────────────────────────────────────────
 .idea/
-.vscode/settings.json
+.vscode/
+.kilo/
 *.iml
 *.iws
 *.ipr
 .project
 .classpath
 .settings/
+# IDE-generated scratch under .github/ — everything else in .github/ is committed on purpose.
+.github/java-upgrade/
+.github/modernize/
 
 # ── OS ──────────────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+
+# Local runtime data
+.data/

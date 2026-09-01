@@ -1,0 +1,40 @@
+name: Feature or change request
+description: Propose something the platform should do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: >
+        What goes wrong today, for whom. An on-call engineer, a service desk agent, an admin —
+        say which. Proposals that start from the problem get built; proposals that start from
+        the solution usually get rewritten.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you'd like
+      description: Rough is fine. The lazier the version that solves it, the better.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you already tried
+      description: Existing settings, SOP procedures, or endpoints that got close but not there.
+
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Does this widen what can run without a human?
+      options:
+        - label: >
+            No — this does not change what executes, or it only affects analysis, UI, or
+            reporting.
+        - label: >
+            Yes — and I understand that widening unattended execution is the highest bar in this
+            project, and needs the reasoning spelled out in the issue.

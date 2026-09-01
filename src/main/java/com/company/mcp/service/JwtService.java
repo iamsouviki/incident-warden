@@ -9,6 +9,7 @@ import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Signs and validates JWTs.
@@ -20,14 +21,22 @@ public class JwtService {
 
     private final SecretKey key;
 
-    public JwtService(@Value("${mcp.jwt.secret:mcp-incident-automation-jwt-secret-key-change-in-prod-32ch}") String secret) {
+    /**
+     * No default value: a deployment without MCP_JWT_SECRET must fail to start
+     * rather than sign tokens with a key that is published in this repository.
+     */
+    public JwtService(@Value("${mcp.jwt.secret}") String secret) {
+        if (secret == null || secret.isBlank() || secret.getBytes(StandardCharsets.UTF_8).length < 32) {
+            throw new IllegalStateException("MCP_JWT_SECRET must be set and contain at least 32 bytes");
+        }
         this.key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
     }
 
-    /** Issue a JWT with the given expiry (ms). */
+    /** Issue a JWT with the given expiry (ms) and unique jti. */
     public String generate(String subject, Map<String, Object> claims, long expiryMs) {
         Date now = new Date();
         return Jwts.builder()
+                .id(UUID.randomUUID().toString())
                 .subject(subject)
                 .claims(claims)
                 .issuedAt(now)
@@ -49,6 +58,23 @@ public class JwtService {
         try {
             parse(token);
             return true;
+        } catch (JwtException | IllegalArgumentException e) {
+            return false;
+        }
+    }
+
+    public boolean isRefreshToken(String token) {
+        try {
+            return "refresh".equals(parse(token).get("tokenType", String.class));
+        } catch (JwtException | IllegalArgumentException e) {
+            return false;
+        }
+    }
+
+    /** True only for a token minted as an API access token. */
+    public boolean isAccessToken(String token) {
+        try {
+            return "access".equals(parse(token).get("tokenType", String.class));
         } catch (JwtException | IllegalArgumentException e) {
             return false;
         }

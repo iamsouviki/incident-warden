@@ -15,6 +15,18 @@ public class ExecutionLog {
     @Column(name = "script_id")
     private UUID scriptId;
 
+    @Column(name = "incident_id")
+    private UUID incidentId;
+
+    @Column(name = "agent")
+    private String agent;
+
+    @Column(name = "phase")
+    private String phase;
+
+    @Column(name = "validation_status")
+    private String validationStatus;
+
     @Column(name = "name", nullable = false)
     private String name;
 
@@ -54,6 +66,18 @@ public class ExecutionLog {
 
     public UUID getScriptId() { return scriptId; }
     public void setScriptId(UUID scriptId) { this.scriptId = scriptId; }
+
+    public UUID getIncidentId() { return incidentId; }
+    public void setIncidentId(UUID incidentId) { this.incidentId = incidentId; }
+
+    public String getAgent() { return agent; }
+    public void setAgent(String agent) { this.agent = agent; }
+
+    public String getPhase() { return phase; }
+    public void setPhase(String phase) { this.phase = phase; }
+
+    public String getValidationStatus() { return validationStatus; }
+    public void setValidationStatus(String validationStatus) { this.validationStatus = validationStatus; }
 
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }

@@ -19,7 +19,12 @@ public class AppUser {
     @Column(nullable = false, unique = true)
     private String username;
 
+    @Column(name = "full_name")
+    private String fullName;
+
     private String email;
+
+    private String department;
 
     @Column(name = "password_hash")
     private String passwordHash;
@@ -42,6 +47,10 @@ public class AppUser {
     @Column(nullable = false)
     private boolean enabled = true;
 
+    /** True while the account still carries the password an admin handed over. */
+    @Column(name = "must_change_password", nullable = false)
+    private boolean mustChangePassword = false;
+
     @Column(name = "created_at")
     private OffsetDateTime createdAt;
 
@@ -56,8 +65,14 @@ public class AppUser {
     public String getUsername()              { return username; }
     public void setUsername(String username) { this.username = username; }
 
+    public String getFullName()              { return fullName; }
+    public void setFullName(String fullName) { this.fullName = fullName; }
+
     public String getEmail()           { return email; }
     public void setEmail(String email) { this.email = email; }
+
+    public String getDepartment()                { return department; }
+    public void setDepartment(String department) { this.department = department; }
 
     public String getPasswordHash()                    { return passwordHash; }
     public void setPasswordHash(String passwordHash)   { this.passwordHash = passwordHash; }
@@ -79,6 +94,9 @@ public class AppUser {
 
     public boolean isEnabled()               { return enabled; }
     public void setEnabled(boolean enabled)  { this.enabled = enabled; }
+
+    public boolean isMustChangePassword()                  { return mustChangePassword; }
+    public void setMustChangePassword(boolean mustChange)   { this.mustChangePassword = mustChange; }
 
     public OffsetDateTime getCreatedAt()                     { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt)       { this.createdAt = createdAt; }

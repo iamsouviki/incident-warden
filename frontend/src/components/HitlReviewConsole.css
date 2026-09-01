@@ -1,0 +1,171 @@
+/* Review console — the page where a human reads a generated script and decides. */
+
+/* minmax(0, …) not the implicit `auto`: an auto track sizes to the widest child's min-content,
+   which on a narrow viewport made the whole console wider than the page and `main`'s
+   overflow:hidden clipped the right edge — silently, no scrollbar. The Approve button and the
+   guardrail badge were the parts that disappeared, on the one page whose job is being read
+   before approving. */
+.review-console { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+
+.review-state {
+  min-height: 260px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px; color: var(--text-3); font-size: 12px;
+}
+
+.review-header {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-1);
+}
+.review-heading { flex: 1 1 auto; min-width: 0; }
+.review-heading h2 {
+  margin: 0; font-size: 18px; font-weight: 650; letter-spacing: -.02em; color: var(--text-1);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.review-sub { margin-top: 3px; color: var(--text-3); font-family: var(--font-mono); font-size: 11px; }
+.review-header-badges { display: flex; flex: 0 0 auto; gap: 6px; }
+
+/* Reserved for the two states a reviewer must not skim past: an ungrounded script, and a
+   plan whose hash drifted after approval. */
+.review-alarm {
+  display: flex; gap: 12px; padding: 12px 14px;
+  border: 1px solid rgba(239, 77, 86, .34); border-left: 3px solid var(--crit);
+  border-radius: var(--radius-md); background: rgba(239, 77, 86, .08);
+}
+.review-alarm svg { flex: 0 0 auto; margin-top: 1px; color: var(--crit); }
+.review-alarm strong { display: block; color: var(--text-1); font-size: 13px; }
+.review-alarm p { margin: 4px 0 0; color: var(--text-2); font-size: 12px; line-height: 1.5; }
+
+.review-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 14px; align-items: start; }
+.review-main, .review-side { display: grid; gap: 14px; min-width: 0; }
+
+.review-card {
+  border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-1); overflow: hidden;
+}
+.review-card-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  padding: 11px 14px; border-bottom: 1px solid var(--border); background: var(--surface-2);
+}
+.review-card-title {
+  display: inline-flex; align-items: center; gap: 7px;
+  color: var(--text-1); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+}
+.review-card-title svg { color: var(--accent); }
+.review-card-badges { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+.review-provenance {
+  margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--border);
+  color: var(--text-2); font-size: 12px; line-height: 1.5;
+}
+.review-body { margin: 0; padding: 13px 14px; color: var(--text-2); font-size: 12px; line-height: 1.6; white-space: pre-wrap; }
+/* Plain language above the code: the summary in full text colour, the steps as a list. */
+.review-what {
+  margin: 0; padding: 12px 14px 6px;
+  color: var(--text-1); font-size: 12.5px; line-height: 1.6;
+}
+.review-how {
+  margin: 0; padding: 0 14px 12px 32px;
+  display: grid; gap: 5px;
+  color: var(--text-2); font-size: 12px; line-height: 1.5;
+}
+.review-how li::marker { color: var(--accent, var(--text-3)); font-weight: 600; }
+
+.review-empty { padding: 16px 14px; color: var(--text-3); font-size: 12px; }
+.review-note { margin: 0; padding: 10px 14px; border-top: 1px solid var(--border); color: var(--text-3); font-size: 11px; line-height: 1.5; }
+.review-note-bad { color: var(--crit); }
+
+/* The script is the artifact under review, so it gets real reading room and no wrapping
+   tricks: a line that scrolls is honest, a line that silently reflows is not. */
+.review-script {
+  margin: 0; max-height: 460px; overflow: auto; padding: 14px;
+  background: var(--bg); color: var(--text-1);
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.65; tab-size: 2;
+}
+.review-script code { white-space: pre; }
+
+.review-facts { display: grid; gap: 0; margin: 0; padding: 6px 0; }
+.review-facts > div {
+  display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 10px; align-items: baseline;
+  padding: 6px 14px;
+}
+.review-facts dt { color: var(--text-3); font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.review-facts dd { margin: 0; color: var(--text-1); font-size: 12px; overflow-wrap: anywhere; }
+.review-facts em { color: var(--text-3); font-style: normal; }
+.fact-bad { color: var(--crit); }
+.fact-hash { font-family: var(--font-mono); font-size: 11px; }
+
+.review-findings { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 13px 14px; list-style: none; }
+.review-findings li { max-width: 100%; }
+
+.review-timeline { margin: 0; padding: 13px 14px; list-style: none; display: grid; gap: 12px; }
+.review-timeline > li { padding-left: 12px; border-left: 2px solid var(--border); }
+.timeline-row { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.timeline-time { color: var(--text-3); font-family: var(--font-mono); font-size: 11px; }
+.timeline-validation { margin: 6px 0 0; color: var(--text-3); font-size: 11px; line-height: 1.5; }
+.review-output {
+  margin: 7px 0 0; max-height: 200px; overflow: auto; padding: 9px 11px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg);
+  color: var(--text-2); font-family: var(--font-mono); font-size: 11px; line-height: 1.55; white-space: pre-wrap;
+}
+
+.review-actions {
+  position: sticky; bottom: 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--surface-2); box-shadow: var(--shadow-popover);
+}
+.review-reason {
+  flex: 1 1 240px; min-width: 200px; padding: 8px 11px;
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--surface-1); color: var(--text-1); font-size: 12px; outline: 0;
+}
+.review-reason::placeholder { color: var(--text-3); }
+.review-reason:focus { border-color: var(--accent); }
+.review-ack {
+  display: flex; align-items: center; gap: 8px; flex: 1 1 100%; order: 3;
+  color: var(--text-2); font-size: 12px; cursor: pointer;
+}
+.review-ack input { accent-color: var(--crit); width: 15px; height: 15px; cursor: pointer; }
+.review-buttons { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+.review-step { color: var(--text-3); font-size: 11px; line-height: 1.5; }
+
+/* Inline "answer this and move on" controls in the side cards: assign a reviewer, name
+   the target host. Wraps rather than scrolls — the side column is narrow. */
+.review-assign { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.review-assign select,
+.review-assign input {
+  flex: 1 1 140px; min-width: 0; padding: 7px 9px;
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--surface-1); color: var(--text-1); font-size: 12px; outline: 0;
+}
+.review-assign select { cursor: pointer; }
+.review-assign input::placeholder { color: var(--text-3); }
+.review-assign select:focus,
+.review-assign input:focus { border-color: var(--accent); }
+
+.review-toast {
+  position: fixed; right: 20px; bottom: 20px; z-index: 40; max-width: 380px;
+  padding: 11px 14px; border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--surface-2); color: var(--text-1); font-size: 12px; line-height: 1.5;
+  box-shadow: var(--shadow-popover);
+}
+
+@media (max-width: 1100px) {
+  .review-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Phone. Approve and Reject are the two most consequential buttons in the product and they
+   were 74x30 and 142x30 here — under every touch-target guideline, side by side, on the
+   gesture edge of the screen. Full width and 44px so a misfire costs a scroll, not a restart
+   of the wrong host. */
+@media (max-width: 640px) {
+  /* The badges are flex: 0 0 auto and the heading is the flexible one, so on a phone the
+     badges kept their 177px and the title was squeezed to "T…" with the incident id wrapping
+     one character per line. Drop the badges to their own row instead. */
+  .review-header { flex-wrap: wrap; }
+  .review-header-badges { flex: 1 1 100%; }
+  .review-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .review-actions { padding: 10px 12px; }
+  .review-reason { flex: 1 1 100%; min-height: 44px; }
+  .review-buttons { flex: 1 1 100%; margin-left: 0; }
+  .review-buttons button { flex: 1 1 0; min-height: 44px; justify-content: center; }
+}

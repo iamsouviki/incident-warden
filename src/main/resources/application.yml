@@ -1,6 +1,6 @@
 spring:
   application:
-    name: mcp-incident-automation
+    name: incident-warden
 
   # ── Multipart file upload limits (SOP document import: PDF, DOCX, TXT) ──────
   servlet:
@@ -11,9 +11,9 @@ spring:
       file-size-threshold: 2MB
 
   datasource:
-    url: jdbc:postgresql://localhost:5432/mcp_db
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:incident_warden_db}
     driver-class-name: org.postgresql.Driver
-    username: mcp_user
+    username: ${DB_USER:warden_user}
     password: ${DB_PASSWORD:changeme}
     hikari:
       maximum-pool-size: 20
@@ -36,6 +36,7 @@ spring:
     enabled: true
     change-log: classpath:db/changelog/db.changelog-master.xml
     default-schema: mcp_rag
+    liquibase-schema: mcp_rag
 
   autoconfigure:
     exclude:
@@ -134,136 +135,93 @@ spring:
       ssl:
         enabled: ${REDIS_SSL_ENABLED:false}
 
-  security:
-    oauth2:
-      resourceserver:
-        jwt:
-          issuer-uri: ${KEYCLOAK_URL:http://localhost:8180}/realms/mcp
-          jwk-set-uri: ${KEYCLOAK_URL:http://localhost:8180}/realms/mcp/protocol/openid-connect/certs
-
   jackson:
     default-property-inclusion: non_null
     serialization:
       write-dates-as-timestamps: false
 
-  web:
-    cors:
-      allowed-origins: "*"
-      allowed-methods: GET,POST,PUT,DELETE,OPTIONS
-      allowed-headers: "*"
-      max-age: 3600
-
-spring.cloud.vault:
-  enabled: ${VAULT_ENABLED:false}
-  uri: ${VAULT_ADDR:http://localhost:8200}
-  token: ${VAULT_TOKEN}
-  kv.enabled: true
-  kv.backend: secret
-
 # MCP Application Specific Configuration
 mcp:
-  # ════════════════════════════════════════════════════════════
-  #  ENTERPRISE LLM CUSTOMIZATION — edit this block to wire in
-  #  your organisation's LLM.  This is the ONLY place you need
-  #  to change.  No code changes, no environment variables.
-  #
-  #  provider   : ollama | openai | anthropic | gemini
-  #  api-url    : base URL of the provider API
-  #  api-key    : secret key (leave blank for Ollama)
-  #  chat-model : model used for incident classification / SOP generation
-  #  embed-model: model used for pgvector RAG embeddings
-  # ════════════════════════════════════════════════════════════
-  llm:
-    # ════════════════════════════════════════════════════════════════
-    #  ENTERPRISE LLM CUSTOMIZATION — change only this one field to
-    #  switch provider.  All provider-specific settings live in the
-    #  spring.ai.* blocks above (filled in once per deployment).
-    #
-    #  provider: ollama | openai | anthropic | gemini | custom
-    #
-    #  ollama    → spring.ai.ollama.*       (local, no key needed)
-    #  openai    → spring.ai.openai.*       (set OPENAI_API_KEY)
-    #  anthropic → spring.ai.anthropic.*    (set ANTHROPIC_API_KEY)
-    #  gemini    → spring.ai.vertex.ai.*    (set GOOGLE_APPLICATION_CREDENTIALS)
-    #  custom    → mcp.llm.custom.*         (any OpenAI-compatible endpoint)
-    # ════════════════════════════════════════════════════════════════
-    provider: ollama
-
-    # ── Custom / other provider ──────────────────────────────────
-    # Only read when provider=custom.  Works with any OpenAI-compatible
-    # endpoint: LM Studio, vLLM, Azure OpenAI, LocalAI, Groq, Together AI…
-    # Leave these commented out when using one of the 4 known providers.
-    custom:
-      api-url:     ""     # ← e.g. http://my-vllm-server:8000/v1
-      api-key:     ""     # ← secret key (set any non-empty string if no auth needed)
-      chat-model:  ""     # ← model name accepted by the endpoint
-      embed-model: ""     # ← embedding model name (optional; leave blank to skip embeddings)
-
-  scheduler:
-    polling-interval-ms: 60000
-    processing-interval-ms: 10000
-    batch-size: 5
-    stale-job-timeout-minutes: 10
-    max-retries: 3
-    hitl-timeout:
-      p1-minutes: 15
-      p2-minutes: 30
-  
-  guardrails:
-    enabled: true
-    blast-radius-threshold: 0.40
-    max-blast-radius-pct: 40
-    rate-limit:
-      tool-calls-per-minute: 10
-      restarts-per-30min: 5
-      auto-resolutions-per-hour: 20
-    loop-detection:
-      max-attempts: 3
-      window-seconds: 1200
+  hitl:
+    # When true the analyst who requested a plan cannot approve their own plan.
+    # Only disable for a single-operator demo.
+    separation-of-duties: ${MCP_HITL_SEPARATION_OF_DUTIES:true}
+    # When true, an incident with no APPROVED procedure can still reach a reviewer with a
+    # script written from model knowledge alone. The script must scan clean (PASS, not
+    # WARN), it is labelled UNGROUNDED_LLM_SCRIPT, and a human still approves the exact
+    # text. Set false to restore the strict posture: no approved SOP, no plan, escalate.
+    allow-ungrounded-scripts: ${MCP_HITL_ALLOW_UNGROUNDED_SCRIPTS:true}
   
   confidence:
-    auto-resolve-threshold: 1.00
-    hitl-threshold: 0.80
-    enable-p1-auto-resolve: false
-  
-  tools:
-    health-check-interval-seconds: 60
-    timeout-ms: 30000
-    timeout-seconds: 30
-    url-check-timeout-ms: 5000
-    dry-run: false
-    default-definitions:
-      enabled: false
+    # Default HITL approval threshold (60%). When an approved SOP + tool is present,
+    # it routes to HITL approval.
+    hitl-threshold: 0.60
+    # Assumed success rate for a remediation with no execution history yet.
+    default-prior-success-rate: 0.85
+
+  # The remediation executor agent. Approved scripts are POSTed to <url>/execute as
+  # {"script","language","target"} rather than run in this process, so the control plane
+  # holding the approvals is never itself a shell.
+  #
+  # Named mcp.executor, not mcp.autonomy. The old namespace also carried enabled,
+  # poll-interval-ms, batch-size, allow-p1 and max-retries for a polling loop that could
+  # remediate on its own. That loop is deleted, and a config key named "autonomy" on a
+  # platform where every action is approved by a person is a question an auditor has to
+  # ask twice.
+  executor:
+    # The only switch that decides whether a script really leaves this process.
+    enabled: ${MCP_EXECUTOR_ENABLED:false}
+    # Empty means approved scripts simulate and change nothing.
+    url: ${MCP_EXECUTOR_URL:}
+    token: ${MCP_EXECUTOR_TOKEN:}
+    timeout-seconds: ${MCP_EXECUTOR_TIMEOUT_SECONDS:30}
+
+  telemetry:
+    auto-create-incidents: ${MCP_TELEMETRY_AUTO_CREATE_INCIDENTS:true}
 
   # ── Spring AI RAG configuration ────────────────────────────────────────────
   rag:
     enabled: true                        # ← set false to disable VectorStore entirely
     top-k: 5                             # ← max similar documents returned per query
-    similarity-threshold: 0.60           # ← minimum cosine similarity score (0.0–1.0)
+    similarity-threshold: 0.30           # ← lowered from 0.60; nomic-embed-text cosine scores run lower than hosted models
+
+  # ── Chat Session Retention (Max 30 days) ───────────────────────────────────
+  chat:
+    session-ttl-days: ${MCP_CHAT_SESSION_TTL_DAYS:30}
+    cleanup-cron: "0 0 3 * * *"          # daily at 3:00 AM
 
   # ─── JWT Configuration ──────────────────────────────────────────────────────
+  # MCP_JWT_SECRET must be set at deploy time (≥ 32 bytes). The application
+  # refuses to start if the variable is absent or too short — see JwtService.
   jwt:
-    secret: mcp-incident-automation-jwt-secret-key-32c
+    secret: ${MCP_JWT_SECRET}
     expiry-ms: 86400000   # 24 hours
 
-  # ─── HashiCorp Vault (credential store for remote servers) ───────────────
-  # VaultCredentialService reads credentials from this Vault instance.
-  # Set MCP_VAULT_TOKEN env-var in production; dev falls back to env-vars.
-  vault:
-    enabled: false               # set true when Vault is available
-    url: http://localhost:8200
-    token: ${MCP_VAULT_TOKEN:dev-root-token}
-    # KV v2 mount path — credentials stored at <mount>/<servers-prefix>/<hostname>
-    mount: secret
-    servers-prefix: mcp/servers  # e.g. secret/data/mcp/servers/app-server-01
-    # Fallback env-var credentials used when vault.enabled=false
-    fallback-ssh-user: ${MCP_SSH_USER:mcpagent}
-    fallback-ssh-password: ${MCP_SSH_PASSWORD:}
-    fallback-ssh-key-path: ${MCP_SSH_KEY_PATH:}   # path to PEM file on local disk
+  # ─── SSO / OIDC ──────────────────────────────────────────────────────────────
+  # Set mcp.sso.enabled=true and configure all four keys to activate the /api/auth/sso
+  # endpoint. With any key absent the endpoint returns 503 (fail-closed by design).
+  sso:
+    enabled: ${MCP_SSO_ENABLED:false}
+    jwk-set-uri: ${MCP_SSO_JWK_SET_URI:}          # e.g. https://accounts.google.com/.well-known/jwks.json
+    issuer: ${MCP_SSO_ISSUER:}                      # must match the "iss" claim in provider tokens
+    audience: ${MCP_SSO_AUDIENCE:}                  # must match the "aud" claim (your client_id)
+    allowed-email-domains: ${MCP_SSO_ALLOWED_DOMAINS:}  # comma-separated, empty = all domains permitted
+    default-tenant-id: ${MCP_SSO_DEFAULT_TENANT:tenant-1}
+
+  # ─── Rate limiting ───────────────────────────────────────────────────────────
+  security:
+    # Browser origins permitted to call the API. Never "*" — credentialed CORS
+    # with a wildcard origin is rejected by browsers and leaks the API surface.
+    cors:
+      allowed-origins: ${MCP_CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:8080}
+    rate-limit:
+      login-per-minute: ${MCP_RATE_LIMIT_LOGIN:10}   # per username and per source IP
+      llm-per-minute: ${MCP_RATE_LIMIT_LLM:20}       # per authenticated user
 
   # ─── ServiceNow Integration (ITSM alert source) ───────────────────────────
-  # When enabled, IncidentPollingScheduler polls ServiceNow every 60s for new incidents.
-  # Requires: instance-url, username, password.
+  # Read by IncidentService for on-demand import. There is no background poller: nothing
+  # in this application is @Scheduled, so a ticket arrives by an explicit import call or
+  # by POST /api/v1/intake. Add a poller only when someone asks for unattended intake.
   servicenow:
     enabled: ${MCP_SERVICENOW_ENABLED:false}
     instance-url: ${SERVICENOW_INSTANCE_URL:https://your-instance.service-now.com}
@@ -274,8 +232,7 @@ mcp:
     limit: 50                               # max tickets per poll cycle
 
   # ─── FreshService Integration (ITSM alert source) ────────────────────────
-  # When enabled, IncidentPollingScheduler polls FreshService every 60s for new tickets.
-  # Requires: domain, api-key.
+  # On-demand import, same as ServiceNow above. No background poller.
   freshservice:
     enabled: ${MCP_FRESHSERVICE_ENABLED:false}
     domain: ${FRESHSERVICE_DOMAIN:your-company}          # → https://your-company.freshservice.com
@@ -283,49 +240,18 @@ mcp:
     ticket-type: Incident
     limit: 50                               # max tickets per poll cycle
 
-  # ─── Remote Execution (SSH) ──────────────────────────────────────────────
-  # RemoteExecutionService uses these defaults; per-host overrides come from Vault.
-  remote:
-    ssh-connect-timeout-ms: 15000
-    ssh-channel-timeout-ms: 60000
-    # NONE | ASK | YES  (YES accepts all host keys — fine for internal networks)
-    strict-host-checking: NONE
-    # Temp script path on remote host (a UUID suffix is appended at runtime)
-    linux-script-dir: /tmp
-    windows-script-dir: C:\Windows\Temp
-    # Whether to delete the uploaded script after execution
-    cleanup-script: true
+  # ─── Integration HTTP Timeouts (Turned off by default) ───────────────────
+  integrations:
+    http:
+      timeout-enabled: ${MCP_INTEGRATIONS_HTTP_TIMEOUT_ENABLED:false}
+      connect-timeout-ms: ${MCP_INTEGRATIONS_HTTP_CONNECT_TIMEOUT_MS:5000}
+      read-timeout-ms: ${MCP_INTEGRATIONS_HTTP_READ_TIMEOUT_MS:10000}
 
-  # ─── LLM Script Generator ────────────────────────────────────────────────
+  # ─── Generated-script limits ─────────────────────────────────────────────
   script-gen:
-    # Ollama-compatible endpoint (OpenAI-compatible API)
-    api-url: http://localhost:11434/v1/chat/completions
-    # No API key needed for Ollama — set a dummy value so the service doesn't fall back to templates
-    api-key: ${OPENAI_API_KEY:ollama}
-    model: qwen2.5:latest
-    max-tokens: 768
-    temperature: 0.1
-    api-timeout-ms: 0
-    # Max script lines — go beyond this and the script is BLOCKED
+    # A script longer than this is BLOCKED rather than truncated: a reviewer who has to
+    # scroll past 100 lines is not really reviewing it. Read by RemediationScriptService.
     max-lines: 100
-    # Max distinct commands — go beyond this and a WARN is raised
-    max-distinct-commands: 15
-    # When true, WARN-level guardrail findings also block execution (forces HITL)
-    warn-requires-hitl: false
-    # Permanently banned patterns — matched case-insensitively anywhere in the script
-    blocklist: "rm -rf /,format c:,mkfs.,dd if=/dev/,dd if=,:(){:|:&};:,> /dev/sda,> /dev/hda"
-
-  # ─── SOP Parser LLM controls + cache ─────────────────────────────────────
-  sop-parser:
-    llm:
-      chunk-size: 100000      # chars per chunk — full doc sent if smaller (qwen2.5 handles ~100K chars)
-      chunk-overlap: 2000     # overlap between consecutive chunks
-      max-output-tokens: 2048 # cap LLM response size
-      num-ctx: 32768          # Ollama context window in tokens
-    cache:
-      enabled: true
-      ttl-minutes: 180          # reuse parsed result for repeated uploads
-      max-entries: 500
 
 # Resilience4J Circuit Breakers
 resilience4j:
@@ -385,7 +311,7 @@ logging:
     console: "%d{yyyy-MM-dd HH:mm:ss} - %logger{36} - %msg%n"
     file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
   file:
-    name: logs/mcp-incident-automation.log
+    name: logs/incident-warden.log
 
 server:
   port: 8080

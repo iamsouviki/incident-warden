@@ -17,7 +17,7 @@ public class RagFusionService {
 
     private static final Logger log = LoggerFactory.getLogger(RagFusionService.class);
 
-    @Autowired
+    @Autowired(required = false)
     private VectorStore vectorStore;
 
     /**
@@ -63,41 +63,36 @@ public class RagFusionService {
         }
     }
 
+    /**
+     * Retrieval, expanding the query only when the query itself came up short.
+     *
+     * Expansion is a whole extra model round trip before any answer starts — measured at
+     * seven seconds against a hosted provider, on every single question, which was roughly
+     * half the non-generation latency of a chat request. It earns that cost when the
+     * operator's wording misses the runbook's wording, and earns nothing when the direct
+     * search already returned a full page of documents. So: search first, expand only on a
+     * thin result.
+     *
+     * ponytail: "thin" is fewer than topK distinct documents. Crude, but it is the same
+     * number the caller already asked for, so there is no second threshold to tune. If
+     * recall turns out to suffer on full-but-poor result sets, gate on the top score
+     * instead of the count.
+     */
     public List<Document> retrieveFusedDocuments(ChatClient chatClient, String query, int topK, double threshold) {
-        List<String> expandedQueries = expandQuery(chatClient, query);
-
+        if (vectorStore == null) {
+            log.info("[RAG-FUSION] Vector store is unavailable; returning no local documents.");
+            return List.of();
+        }
         // Map to keep track of accumulated RRF scores per unique document content
         Map<String, DocumentScore> docScoreMap = new HashMap<>();
 
-        // Rank search results for each query variation
-        for (String q : expandedQueries) {
-            try {
-                // Vector similarity search
-                List<Document> retrieved = vectorStore.similaritySearch(
-                        SearchRequest.builder()
-                                .query(q)
-                                .topK(topK * 2) // retrieve slightly more to allow robust fusion ranking
-                                .similarityThreshold(threshold)
-                                .filterExpression("doc_type == 'SOP'")
-                                .build()
-                );
+        rankInto(docScoreMap, query, topK, threshold);
 
-                for (int rank = 0; rank < retrieved.size(); rank++) {
-                    Document doc = retrieved.get(rank);
-                    String contentKey = doc.getText();
-                    double rrfScore = 1.0 / (rank + RRF_K);
-
-                    docScoreMap.compute(contentKey, (k, existing) -> {
-                        if (existing == null) {
-                            return new DocumentScore(doc, rrfScore);
-                        } else {
-                            existing.addScore(rrfScore);
-                            return existing;
-                        }
-                    });
-                }
-            } catch (Exception e) {
-                log.error("[RAG-FUSION] Search failed for query variant '{}': {}", q, e.getMessage());
+        if (docScoreMap.size() >= topK) {
+            log.info("[RAG-FUSION] Direct search returned {} documents; skipping query expansion", docScoreMap.size());
+        } else {
+            for (String q : expandQuery(chatClient, query)) {
+                if (!q.equals(query)) rankInto(docScoreMap, q, topK, threshold);
             }
         }
 
@@ -107,6 +102,37 @@ public class RagFusionService {
                 .limit(topK)
                 .map(DocumentScore::getDocument)
                 .collect(Collectors.toList());
+    }
+
+    /** One similarity search, folded into the running RRF scores. Never throws. */
+    private void rankInto(Map<String, DocumentScore> docScoreMap, String q, int topK, double threshold) {
+        try {
+            List<Document> retrieved = vectorStore.similaritySearch(
+                    SearchRequest.builder()
+                            .query(q)
+                            .topK(topK * 2) // retrieve slightly more to allow robust fusion ranking
+                            .similarityThreshold(threshold)
+                            .filterExpression("doc_type == 'SOP'")
+                            .build()
+            );
+
+            for (int rank = 0; rank < retrieved.size(); rank++) {
+                Document doc = retrieved.get(rank);
+                String contentKey = doc.getText();
+                double rrfScore = 1.0 / (rank + RRF_K);
+
+                docScoreMap.compute(contentKey, (k, existing) -> {
+                    if (existing == null) {
+                        return new DocumentScore(doc, rrfScore);
+                    } else {
+                        existing.addScore(rrfScore);
+                        return existing;
+                    }
+                });
+            }
+        } catch (Exception e) {
+            log.error("[RAG-FUSION] Search failed for query variant '{}': {}", q, e.getMessage());
+        }
     }
 
     private static class DocumentScore {

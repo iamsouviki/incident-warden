@@ -1,0 +1,67 @@
+# Local development profile: real PostgreSQL + pgvector, dev-only secrets.
+#
+# This profile used to run on an in-memory H2 database with a fake VectorStore. Both are
+# gone: the fake store's similaritySearch returned every document unranked, so RAG
+# "worked" locally while proving nothing about retrieval. Local now runs the same
+# datastore as production — one database engine, one set of migrations, one set of bugs.
+#
+# Requires PostgreSQL on localhost:5432 with the vector extension. See README.
+spring:
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:incident_warden_db}
+    driver-class-name: org.postgresql.Driver
+    username: ${DB_USER:warden_user}
+    password: ${DB_PASSWORD:changeme}
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 1
+      connection-timeout: 10000
+  jpa:
+    show-sql: false
+  data:
+    redis:
+      repositories:
+        enabled: false
+  cache:
+    type: simple
+  cloud:
+    vault:
+      enabled: false
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
+
+mcp:
+  poc:
+    role-selection-enabled: true
+  # Dev-only signing key. It is committed deliberately so `--spring.profiles.active=local`
+  # starts with no setup. Every other profile inherits ${MCP_JWT_SECRET} from
+  # application.yml and refuses to start without it. Never reuse this value anywhere real.
+  jwt:
+    secret: local-development-only-jwt-signing-key-not-for-any-real-deployment
+  security:
+    cors:
+      # Any port on the loopback interface. Vite picks 5174 (or 5175…) whenever 5173 is
+      # already taken, and pinning three exact origins turned that into a 403 "Invalid CORS
+      # request" on login. Loopback only — this is the local profile; every other profile
+      # still lists exact origins.
+      allowed-origins: http://localhost:*,http://127.0.0.1:*
+  telemetry:
+    auto-create-incidents: true
+  confidence:
+    hitl-threshold: 0.70
+  hitl:
+    # The local demo seeds a single 'admin' account, which must be able to both
+    # request and approve a plan. Never disable this in a shared environment.
+    separation-of-duties: false
+
+server:
+  port: ${PORT:8080}
+
+logging:
+  level:
+    org.springframework: WARN
+    com.company.mcp: INFO
+    org.hibernate.SQL: WARN
+    liquibase: INFO
