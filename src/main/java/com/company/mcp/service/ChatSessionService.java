@@ -7,6 +7,8 @@ import com.company.mcp.repository.ChatSessionRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,29 +19,60 @@ import java.util.*;
 public class ChatSessionService {
 
     private static final Logger log = LoggerFactory.getLogger(ChatSessionService.class);
+    public static final int MAX_TTL_DAYS = 30;
 
     private final ChatSessionRepository sessionRepository;
     private final ChatMessageRepository messageRepository;
     private final ObjectMapper objectMapper;
+    private final int sessionTtlDays;
 
     public ChatSessionService(ChatSessionRepository sessionRepository,
                               ChatMessageRepository messageRepository,
-                              ObjectMapper objectMapper) {
+                              ObjectMapper objectMapper,
+                              @Value("${mcp.chat.session-ttl-days:30}") int sessionTtlDays) {
         this.sessionRepository = sessionRepository;
         this.messageRepository = messageRepository;
         this.objectMapper = objectMapper;
+        // Max session TTL is 30 days
+        this.sessionTtlDays = Math.min(Math.max(sessionTtlDays, 1), MAX_TTL_DAYS);
     }
 
     public List<ChatSession> listSessions(String tenantId, String username) {
-        return sessionRepository.findByTenantIdAndUsernameAndIsArchivedFalseOrderByUpdatedAtDesc(tenantId, username);
+        OffsetDateTime cutoff = OffsetDateTime.now().minusDays(sessionTtlDays);
+        return sessionRepository.findByTenantIdAndUsernameAndIsArchivedFalseAndUpdatedAtAfterOrderByUpdatedAtDesc(tenantId, username, cutoff);
     }
 
     public Optional<ChatSession> getSession(UUID sessionId, String tenantId, String username) {
-        return sessionRepository.findByIdAndTenantIdAndUsername(sessionId, tenantId, username);
+        Optional<ChatSession> opt = sessionRepository.findByIdAndTenantIdAndUsername(sessionId, tenantId, username);
+        if (opt.isPresent()) {
+            OffsetDateTime cutoff = OffsetDateTime.now().minusDays(sessionTtlDays);
+            if (opt.get().getUpdatedAt() != null && opt.get().getUpdatedAt().isBefore(cutoff)) {
+                return Optional.empty();
+            }
+        }
+        return opt;
     }
 
     public List<ChatMessage> getSessionMessages(UUID sessionId) {
         return messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
+    }
+
+    /**
+     * Purge sessions older than the max 30 days TTL every 24 hours.
+     */
+    @Scheduled(cron = "${mcp.chat.cleanup-cron:0 0 3 * * *}")
+    @Transactional
+    public void purgeExpiredSessions() {
+        OffsetDateTime cutoff = OffsetDateTime.now().minusDays(sessionTtlDays);
+        try {
+            int deleted = sessionRepository.deleteSessionsOlderThan(cutoff);
+            int orphaned = messageRepository.deleteOrphanedMessages();
+            if (deleted > 0 || orphaned > 0) {
+                log.info("[CHAT-TTL] Purged {} expired sessions and {} orphaned messages older than {} days", deleted, orphaned, sessionTtlDays);
+            }
+        } catch (Exception e) {
+            log.warn("[CHAT-TTL] Failed to purge expired chat sessions: {}", e.getMessage());
+        }
     }
 
     @Transactional

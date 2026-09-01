@@ -166,7 +166,7 @@ const SopPage: React.FC = () => {
           formData.append('file', file);
           formData.append('title', title.trim() || file.name);
 
-          const response = await fetch('/api/v1/rag/upload', {
+          const response = await authFetch('/api/v1/rag/upload', {
             method: 'POST',
             body: formData
           });
@@ -182,6 +182,7 @@ const SopPage: React.FC = () => {
         } else {
           const res = await authFetch(`/api/v1/rag/sops/${selectedSop.id}`, {
             method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ title, description })
           });
           const data = await res.json();
@@ -199,12 +200,12 @@ const SopPage: React.FC = () => {
           formData.append('file', file);
           if (title.trim()) formData.append('title', title.trim());
 
-          response = await fetch('/api/v1/rag/upload', {
+          response = await authFetch('/api/v1/rag/upload', {
             method: 'POST',
             body: formData
           });
         } else {
-          response = await fetch('/api/v1/rag/ingest', {
+          response = await authFetch('/api/v1/rag/ingest', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ title, description })

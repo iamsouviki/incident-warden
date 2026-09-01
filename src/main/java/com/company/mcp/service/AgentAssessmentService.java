@@ -92,7 +92,9 @@ public class AgentAssessmentService {
                 (0.20 * sopReliability) + (0.15 * systemHealth) - riskPenalty));
 
         double threshold = hitlBandPercent();
-        String route = evidence.approvedEvidencePresent() && !classification.action().isBlank() && score >= threshold ? "HITL_REQUIRED" : "ESCALATE";
+        String route = evidence.approvedEvidencePresent() && !classification.action().isBlank() && score >= threshold
+                ? "HITL_REQUIRED"
+                : "ESCALATE";
         return new Assessment(classification.category(), classification.action(), target(incident), patternSimilarity,
                 historicalSuccess, sopReliability, systemHealth, riskPenalty, score, route,
                 Map.of("classification", classification.category(), "evidenceReason", evidence.reason(),

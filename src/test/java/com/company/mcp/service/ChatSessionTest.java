@@ -56,6 +56,14 @@ class ChatSessionTest {
         when(sessionRepo.findByTenantIdAndUsernameAndIsArchivedFalseOrderByUpdatedAtDesc(anyString(), anyString()))
                 .thenAnswer(inv -> new ArrayList<>(sessionTable.values()));
 
+        when(sessionRepo.findByTenantIdAndUsernameAndIsArchivedFalseAndUpdatedAtAfterOrderByUpdatedAtDesc(anyString(), anyString(), any(OffsetDateTime.class)))
+                .thenAnswer(inv -> {
+                    OffsetDateTime cutoff = inv.getArgument(2);
+                    return sessionTable.values().stream()
+                            .filter(s -> s.getUpdatedAt() != null && s.getUpdatedAt().isAfter(cutoff))
+                            .toList();
+                });
+
         when(sessionRepo.findByIdAndTenantIdAndUsername(any(UUID.class), anyString(), anyString()))
                 .thenAnswer(inv -> Optional.ofNullable(sessionTable.get(inv.getArgument(0))));
 
@@ -86,7 +94,7 @@ class ChatSessionTest {
                     return messageList.stream().filter(m -> sId.equals(m.getSessionId())).toList();
                 });
 
-        sessionService = new ChatSessionService(sessionRepo, messageRepo, objectMapper);
+        sessionService = new ChatSessionService(sessionRepo, messageRepo, objectMapper, 30);
         controller = new ChatSessionController(sessionService, currentUser);
     }
 

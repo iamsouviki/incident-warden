@@ -1304,14 +1304,16 @@
 }
 
 .chat-session-actions {
-  display: none;
+  display: flex;
   align-items: center;
   gap: 4px;
+  opacity: 0.6;
+  transition: opacity 0.15s ease;
 }
 
 .chat-session-item:hover .chat-session-actions,
 .chat-session-item.active .chat-session-actions {
-  display: flex;
+  opacity: 1;
 }
 
 .chat-session-action-btn {

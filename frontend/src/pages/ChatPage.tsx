@@ -233,9 +233,10 @@ const ACTIVE_SESSION_KEY = 'iw_active_session_id';
 
 const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
   const navigate = useNavigate();
-  const activeUser = user || getStoredUser();
+  const activeUser = user;
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>(() => {
+    if (!user) return [];
     try {
       const saved = sessionStorage.getItem(STORAGE_KEY);
       return saved ? JSON.parse(saved) : [];
@@ -245,7 +246,7 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
   });
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(() => {
-    return sessionStorage.getItem(ACTIVE_SESSION_KEY) || null;
+    return user ? (sessionStorage.getItem(ACTIVE_SESSION_KEY) || null) : null;
   });
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
@@ -270,13 +271,15 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    try {
-      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
-    } catch {}
-  }, [messages]);
+    if (user) {
+      try {
+        sessionStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
+      } catch {}
+    }
+  }, [messages, user]);
 
   const loadSessions = async () => {
-    if (!activeUser) return;
+    if (!user) return;
     try {
       const res = await authFetch('/api/v1/chat/sessions');
       if (res.ok) {
@@ -287,16 +290,26 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
   };
 
   useEffect(() => {
-    if (activeUser) {
+    if (!user) {
+      setMessages([]);
+      setActiveSessionId(null);
+      setSessions([]);
+      setDrawerOpen(false);
+      try {
+        sessionStorage.removeItem(STORAGE_KEY);
+        sessionStorage.removeItem(ACTIVE_SESSION_KEY);
+      } catch {}
+    } else {
       loadSessions();
     }
-  }, [activeUser]);
+  }, [user]);
 
   useEffect(() => {
     const handleLogoutEvent = () => {
       setMessages([]);
       setActiveSessionId(null);
       setSessions([]);
+      setDrawerOpen(false);
       try {
         sessionStorage.removeItem(STORAGE_KEY);
         sessionStorage.removeItem(ACTIVE_SESSION_KEY);
@@ -1227,10 +1240,10 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
 
   return (
     <div className="chat-page">
-      {/* Sessions Toolbar */}
-      <div className="chat-toolbar">
-        <div className="chat-toolbar-left">
-          {activeUser && (
+      {/* Sessions Toolbar (Only for signed-in users) */}
+      {activeUser && (
+        <div className="chat-toolbar">
+          <div className="chat-toolbar-left">
             <button
               className="chat-toolbar-btn"
               onClick={() => {
@@ -1241,13 +1254,21 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
             >
               <History size={14} /> History {sessions.length > 0 && `(${sessions.length})`}
             </button>
-          )}
-          <div className="chat-toolbar-title">
-            <span>Session:</span> <strong>{activeTitle}</strong>
+            <div className="chat-toolbar-title">
+              <span>Session:</span> <strong>{activeTitle}</strong>
+              {activeSessionId && (
+                <button
+                  className="chat-session-action-btn danger"
+                  onClick={e => deleteSession(e, activeSessionId)}
+                  title="Delete current session"
+                  style={{ marginLeft: 6 }}
+                >
+                  <Trash2 size={13} />
+                </button>
+              )}
+            </div>
           </div>
-        </div>
 
-        {activeUser && (
           <button
             className="chat-toolbar-btn"
             onClick={createNewSession}
@@ -1255,109 +1276,111 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
           >
             <Plus size={14} /> New Chat
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* Sessions Slide-over Drawer */}
-      {drawerOpen && (
+      {/* Sessions Slide-over Drawer (Only for signed-in users) */}
+      {activeUser && drawerOpen && (
         <div className="chat-sessions-backdrop" onClick={() => setDrawerOpen(false)} />
       )}
-      <aside className={`chat-sessions-drawer ${drawerOpen ? 'open' : ''}`} aria-label="Conversation history">
-        <div className="chat-sessions-head">
-          <h3><MessageSquare size={16} /> Chat History</h3>
+      {activeUser && (
+        <aside className={`chat-sessions-drawer ${drawerOpen ? 'open' : ''}`} aria-label="Conversation history">
+          <div className="chat-sessions-head">
+            <h3><MessageSquare size={16} /> Chat History</h3>
+            <button
+              className="chat-session-action-btn"
+              onClick={() => setDrawerOpen(false)}
+              aria-label="Close drawer"
+            >
+              <X size={16} />
+            </button>
+          </div>
+
           <button
-            className="chat-session-action-btn"
-            onClick={() => setDrawerOpen(false)}
-            aria-label="Close drawer"
+            className="chat-sessions-new-btn"
+            onClick={createNewSession}
           >
-            <X size={16} />
+            <Plus size={15} /> + New Conversation
           </button>
-        </div>
 
-        <button
-          className="chat-sessions-new-btn"
-          onClick={createNewSession}
-        >
-          <Plus size={15} /> + New Conversation
-        </button>
-
-        <div className="chat-sessions-list">
-          {sessions.length === 0 ? (
-            <div style={{ padding: '24px 12px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
-              No saved sessions yet. Start asking questions to build your history.
-            </div>
-          ) : (
-            sessionGroups.map(group => (
-              <div key={group.title} className="chat-sessions-group">
-                <div className="chat-sessions-group-title">{group.title}</div>
-                {group.items.map(s => (
-                  <div
-                    key={s.id}
-                    className={`chat-session-item ${s.id === activeSessionId ? 'active' : ''}`}
-                    onClick={() => selectSession(s.id)}
-                  >
-                    {editingSessionId === s.id ? (
-                      <div
-                        style={{ display: 'flex', alignItems: 'center', gap: '4px', width: '100%' }}
-                        onClick={e => e.stopPropagation()}
-                      >
-                        <input
-                          type="text"
-                          className="chat-session-edit-input"
-                          value={editingTitle}
-                          onChange={e => setEditingTitle(e.target.value)}
-                          onKeyDown={e => {
-                            if (e.key === 'Enter') saveSessionTitle(s.id);
-                            if (e.key === 'Escape') setEditingSessionId(null);
-                          }}
-                          autoFocus
-                        />
-                        <button
-                          className="chat-session-action-btn"
-                          onClick={() => saveSessionTitle(s.id)}
-                          title="Save title"
+          <div className="chat-sessions-list">
+            {sessions.length === 0 ? (
+              <div style={{ padding: '24px 12px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
+                No saved sessions yet. Start asking questions to build your history.
+              </div>
+            ) : (
+              sessionGroups.map(group => (
+                <div key={group.title} className="chat-sessions-group">
+                  <div className="chat-sessions-group-title">{group.title}</div>
+                  {group.items.map(s => (
+                    <div
+                      key={s.id}
+                      className={`chat-session-item ${s.id === activeSessionId ? 'active' : ''}`}
+                      onClick={() => selectSession(s.id)}
+                    >
+                      {editingSessionId === s.id ? (
+                        <div
+                          style={{ display: 'flex', alignItems: 'center', gap: '4px', width: '100%' }}
+                          onClick={e => e.stopPropagation()}
                         >
-                          <Check size={13} style={{ color: 'var(--green, #22c55e)' }} />
-                        </button>
-                        <button
-                          className="chat-session-action-btn"
-                          onClick={() => setEditingSessionId(null)}
-                          title="Cancel"
-                        >
-                          <X size={13} />
-                        </button>
-                      </div>
-                    ) : (
-                      <>
-                        <span className="chat-session-title" title={s.title}>{s.title}</span>
-                        <div className="chat-session-actions" onClick={e => e.stopPropagation()}>
+                          <input
+                            type="text"
+                            className="chat-session-edit-input"
+                            value={editingTitle}
+                            onChange={e => setEditingTitle(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') saveSessionTitle(s.id);
+                              if (e.key === 'Escape') setEditingSessionId(null);
+                            }}
+                            autoFocus
+                          />
                           <button
                             className="chat-session-action-btn"
-                            onClick={() => {
-                              setEditingSessionId(s.id);
-                              setEditingTitle(s.title);
-                            }}
-                            title="Rename"
+                            onClick={() => saveSessionTitle(s.id)}
+                            title="Save title"
                           >
-                            <Edit2 size={12} />
+                            <Check size={13} style={{ color: 'var(--green, #22c55e)' }} />
                           </button>
                           <button
-                            className="chat-session-action-btn danger"
-                            onClick={e => deleteSession(e, s.id)}
-                            title="Delete"
+                            className="chat-session-action-btn"
+                            onClick={() => setEditingSessionId(null)}
+                            title="Cancel"
                           >
-                            <Trash2 size={12} />
+                            <X size={13} />
                           </button>
                         </div>
-                      </>
-                    )}
-                  </div>
-                ))}
-              </div>
-            ))
-          )}
-        </div>
-      </aside>
+                      ) : (
+                        <>
+                          <span className="chat-session-title" title={s.title}>{s.title}</span>
+                          <div className="chat-session-actions" onClick={e => e.stopPropagation()}>
+                            <button
+                              className="chat-session-action-btn"
+                              onClick={() => {
+                                setEditingSessionId(s.id);
+                                setEditingTitle(s.title);
+                              }}
+                              title="Rename"
+                            >
+                              <Edit2 size={12} />
+                            </button>
+                            <button
+                              className="chat-session-action-btn danger"
+                              onClick={e => deleteSession(e, s.id)}
+                              title="Delete"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ))
+            )}
+          </div>
+        </aside>
+      )}
 
       <div className="chat-stream">
         <div className="chat-column">

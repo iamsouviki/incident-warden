@@ -63,6 +63,7 @@ export function clearAuth(): void {
 export async function logoutUser(): Promise<void> {
   const token = getToken();
   const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
+  clearAuth();
   if (token) {
     try {
       await fetch('/api/auth/logout', {
@@ -77,7 +78,6 @@ export async function logoutUser(): Promise<void> {
       // Best effort server notification
     }
   }
-  clearAuth();
 }
 
 export function getToken(): string | null {

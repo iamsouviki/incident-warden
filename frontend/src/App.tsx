@@ -29,7 +29,7 @@ import IncidentManagementPage from './pages/IncidentManagementPage';
 import ToolsPage from './pages/ToolsPage';
 import HitlPage from './pages/HitlPage';
 import AccountPage from './pages/AccountPage';
-import { AuthUser, authFetch, clearAuth, getStoredUser, setAuth } from './services/api';
+import { AuthUser, authFetch, clearAuth, getStoredUser, logoutUser, setAuth } from './services/api';
 
 const DEFAULT_TENANT_ID = 'tenant-1';
 
@@ -333,7 +333,7 @@ function AppContent({ user, onLogin, onLogout, theme, toggleTheme }: { user: Aut
                   </div>
                   <button className="user-menu-item" onClick={() => go('/account')}><User size={14} /> My account</button>
                   {isAdmin && <button className="user-menu-item" onClick={() => go('/settings/ai')}><Settings size={14} /> Settings</button>}
-                  <button className="user-menu-item danger" onClick={onLogout}><LogOut size={14} /> Sign out</button>
+                  <button className="user-menu-item danger" onClick={() => { setUserMenuOpen(false); onLogout(); }}><LogOut size={14} /> Sign out</button>
                 </div>
               )}
             </div>
@@ -398,6 +398,7 @@ const App: React.FC = () => {
       sessionStorage.removeItem('iw_chat_history');
       sessionStorage.removeItem('iw_active_session_id');
     } catch {}
+    clearAuth();
     logoutUser();
     setUser(null);
   };

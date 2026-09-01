@@ -153,10 +153,9 @@ mcp:
     allow-ungrounded-scripts: ${MCP_HITL_ALLOW_UNGROUNDED_SCRIPTS:true}
   
   confidence:
-    # Read by AgentAssessmentService and AiConfigService. The score decides only how a plan
-    # is presented — whether it may be offered for approval at all. Every run is approved
-    # individually regardless of score, so there is no threshold above which one is not.
-    hitl-threshold: 0.80
+    # Default HITL approval threshold (60%). When an approved SOP + tool is present,
+    # it routes to HITL approval.
+    hitl-threshold: 0.60
     # Assumed success rate for a remediation with no execution history yet.
     default-prior-success-rate: 0.85
 
@@ -184,7 +183,12 @@ mcp:
   rag:
     enabled: true                        # ← set false to disable VectorStore entirely
     top-k: 5                             # ← max similar documents returned per query
-    similarity-threshold: 0.60           # ← minimum cosine similarity score (0.0–1.0)
+    similarity-threshold: 0.30           # ← lowered from 0.60; nomic-embed-text cosine scores run lower than hosted models
+
+  # ── Chat Session Retention (Max 30 days) ───────────────────────────────────
+  chat:
+    session-ttl-days: ${MCP_CHAT_SESSION_TTL_DAYS:30}
+    cleanup-cron: "0 0 3 * * *"          # daily at 3:00 AM
 
   # ─── JWT Configuration ──────────────────────────────────────────────────────
   # MCP_JWT_SECRET must be set at deploy time (≥ 32 bytes). The application
