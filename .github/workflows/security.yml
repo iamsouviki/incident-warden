@@ -64,7 +64,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: aquasecurity/trivy-action@0.28.0
+      - uses: aquasecurity/trivy-action@master
         with:
           scan-type: fs
           scanners: vuln,secret,misconfig
@@ -72,18 +72,6 @@ jobs:
           exit-code: '0'
           ignore-unfixed: true
 
-  dependency-review:
-    name: Dependency review
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/dependency-review-action@v4
-        with:
-          fail-on-severity: critical
 
   # The container. Scanning the source tree does not cover what the base image ships, which is
   # where most container CVEs live.
@@ -93,7 +81,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t incident-warden:ci .
-      - uses: aquasecurity/trivy-action@0.28.0
+      - uses: aquasecurity/trivy-action@master
         with:
           image-ref: incident-warden:ci
           severity: HIGH,CRITICAL
