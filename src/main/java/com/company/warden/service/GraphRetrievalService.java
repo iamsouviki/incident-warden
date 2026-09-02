@@ -120,10 +120,15 @@ public class GraphRetrievalService {
                 incidents.findByExternalId(reference).ifPresent(found::add);
             } catch (Exception e) {
                 // A retrieval lane must never take the answer down with it.
-                log.warn("[RAG-GRAPH] Seed lookup failed for {}: {}", reference, e.getMessage());
+                log.warn("[RAG-GRAPH] Seed lookup failed for {}: {}", sanitizeForLog(reference), sanitizeForLog(e.getMessage()));
             }
         }
         return found;
+    }
+
+    private static String sanitizeForLog(String value) {
+        if (value == null) return null;
+        return value.replace('\n', '_').replace('\r', '_');
     }
 
     /**
