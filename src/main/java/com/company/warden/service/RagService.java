@@ -752,8 +752,27 @@ public class RagService {
         String t = text == null ? "" : text.trim().toLowerCase(Locale.ROOT);
         // A phrase has structure worth taking at face value, and short strings are ambiguous
         // ("dns", "sso"). Anything with a digit or a dash is likely a reference, not a mash.
-        if (t.length() < 4 || !t.matches("[a-z]+")) return false;
-        return !t.matches(".*[aeiou].*") || t.matches(".*[^aeiou]{5,}.*");
+        if (t.length() < 4) return false;
+        
+        boolean hasVowel = false;
+        int maxConsecutiveConsonants = 0;
+        int currentConsonants = 0;
+
+        for (int i = 0; i < t.length(); i++) {
+            char ch = t.charAt(i);
+            if (ch < 'a' || ch > 'z') return false; // Contains non-lowercase ascii letters
+
+            if (ch == 'a' || ch == 'e' || ch == 'i' || ch == 'o' || ch == 'u') {
+                hasVowel = true;
+                currentConsonants = 0;
+            } else {
+                currentConsonants++;
+                if (currentConsonants > maxConsecutiveConsonants) {
+                    maxConsecutiveConsonants = currentConsonants;
+                }
+            }
+        }
+        return !hasVowel || maxConsecutiveConsonants >= 5;
     }
 
     /**
