@@ -55,13 +55,8 @@ class ChatSessionTest {
         when(sessionRepo.findByUsernameAndIsArchivedFalseOrderByUpdatedAtDesc(anyString()))
                 .thenAnswer(inv -> new ArrayList<>(sessionTable.values()));
 
-        when(sessionRepo.findByUsernameAndIsArchivedFalseAndUpdatedAtAfterOrderByUpdatedAtDesc(anyString(), any(OffsetDateTime.class)))
-                .thenAnswer(inv -> {
-                    OffsetDateTime cutoff = inv.getArgument(1);
-                    return sessionTable.values().stream()
-                            .filter(s -> s.getUpdatedAt() != null && s.getUpdatedAt().isAfter(cutoff))
-                            .toList();
-                });
+        when(sessionRepo.findByUsernameAndIsArchivedFalseOrderByUpdatedAtDesc(anyString()))
+            .thenAnswer(inv -> new ArrayList<>(sessionTable.values()));
 
         when(sessionRepo.findByIdAndUsername(any(UUID.class), anyString()))
                 .thenAnswer(inv -> Optional.ofNullable(sessionTable.get(inv.getArgument(0))));
@@ -180,5 +175,13 @@ class ChatSessionTest {
         ResponseEntity<?> delResp = controller.deleteSession(sessionId);
         assertThat(delResp.getStatusCode().value()).isEqualTo(200);
         assertThat(sessionTable).doesNotContainKey(sessionId);
+    }
+
+    @Test
+    void retainedHistoricalSessionsRemainVisible() {
+        ChatSession historical = sessionService.createSession("analyst.user", "Older investigation");
+        historical.setUpdatedAt(OffsetDateTime.now().minusDays(31));
+
+        assertThat(sessionService.listSessions("analyst.user")).containsExactly(historical);
     }
 }

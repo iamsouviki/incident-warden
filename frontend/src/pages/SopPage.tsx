@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Trash2, Plus, Upload, Save, FileText, X } from 'lucide-react';
+import { Search, Trash2, Plus, Upload, Save, FileText, X, Loader2 } from 'lucide-react';
 import { authFetch } from '../services/api';
 
 interface SopItem {
@@ -106,14 +106,21 @@ const SopPage: React.FC = () => {
     }
   };
 
+  const [modalError, setModalError] = useState<string | null>(null);
+
   const handleSaveOrIngest = async () => {
+    setLoadingAction(true);
+    setModalError(null);
+    setMessage(null);
+
+    // Brief delay to trigger the round loading animation on the button
+    await new Promise(resolve => setTimeout(resolve, 300));
+
     if (!file && (!title.trim() || (!selectedSop && !description.trim()))) {
-      setMessage({ type: 'error', text: 'Please select a file OR provide a Title + Description.' });
+      setModalError('Please select a document file OR provide a Title + SOP Text.');
+      setLoadingAction(false);
       return;
     }
-
-    setLoadingAction(true);
-    setMessage(null);
 
     try {
       if (selectedSop) {
@@ -134,7 +141,7 @@ const SopPage: React.FC = () => {
             setShowIngestModal(false);
             fetchSops();
           } else {
-            setMessage({ type: 'error', text: data.error || 'Failed to update SOP document' });
+            setModalError(data.error || 'Failed to update SOP document');
           }
         } else {
           const res = await authFetch(`/api/v1/rag/sops/${selectedSop.id}`, {
@@ -148,7 +155,7 @@ const SopPage: React.FC = () => {
             setShowIngestModal(false);
             fetchSops();
           } else {
-            setMessage({ type: 'error', text: data.error || 'Failed to update SOP' });
+            setModalError(data.error || 'Failed to update SOP');
           }
         }
       } else {
@@ -176,11 +183,11 @@ const SopPage: React.FC = () => {
           setShowIngestModal(false);
           fetchSops();
         } else {
-          setMessage({ type: 'error', text: data.error || 'Failed to ingest SOP' });
+          setModalError(data.error || 'Failed to ingest SOP');
         }
       }
     } catch (e) {
-      setMessage({ type: 'error', text: 'Network error occurred' });
+      setModalError('Network error occurred. Check inputs.');
     } finally {
       setLoadingAction(false);
     }
@@ -315,10 +322,20 @@ const SopPage: React.FC = () => {
             </div>
 
             <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              {modalError && (
+                <div style={{
+                  padding: '10px 14px', borderRadius: '6px',
+                  background: 'var(--crit-dim)', color: 'var(--crit)',
+                  border: '1px solid rgba(239,68,68,0.3)', fontSize: '12.5px', fontWeight: 600
+                }}>
+                  ⚠️ {modalError}
+                </div>
+              )}
+
               {/* Title input */}
               <div>
                 <label style={{ display: 'block', fontSize: '11px', fontWeight: 800, color: 'var(--text-3)', textTransform: 'uppercase', marginBottom: '6px' }}>
-                  SOP Document Title
+                  SOP Document Title <span style={{ color: 'var(--crit)' }}>*</span>
                 </label>
                 <input
                   type="text"
@@ -393,7 +410,8 @@ const SopPage: React.FC = () => {
                   className="btn-primary"
                   style={{ padding: '8px 18px', fontSize: '12.5px', display: 'flex', alignItems: 'center', gap: '6px' }}
                 >
-                  <Save size={14} /> {loadingAction ? 'Processing...' : selectedSop ? 'Save & Re-embed' : 'Ingest SOP'}
+                  {loadingAction ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Save size={14} />}
+                  {loadingAction ? 'Processing...' : selectedSop ? 'Save & Re-embed' : 'Ingest SOP'}
                 </button>
               </div>
             </div>

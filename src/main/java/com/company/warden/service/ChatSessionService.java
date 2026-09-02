@@ -38,18 +38,11 @@ public class ChatSessionService {
     }
 
     public List<ChatSession> listSessions(String username) {
-        OffsetDateTime cutoff = OffsetDateTime.now().minusDays(sessionTtlDays);
-        return sessionRepository.findByUsernameAndIsArchivedFalseAndUpdatedAtAfterOrderByUpdatedAtDesc(username, cutoff);
+        return sessionRepository.findByUsernameAndIsArchivedFalseOrderByUpdatedAtDesc(username);
     }
 
     public Optional<ChatSession> getSession(UUID sessionId, String username) {
         Optional<ChatSession> opt = sessionRepository.findByIdAndUsername(sessionId, username);
-        if (opt.isPresent()) {
-            OffsetDateTime cutoff = OffsetDateTime.now().minusDays(sessionTtlDays);
-            if (opt.get().getUpdatedAt() != null && opt.get().getUpdatedAt().isBefore(cutoff)) {
-                return Optional.empty();
-            }
-        }
         return opt;
     }
 

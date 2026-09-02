@@ -27,7 +27,7 @@ import IncidentManagementPage from './pages/IncidentManagementPage';
 import ToolsPage from './pages/ToolsPage';
 import HitlPage from './pages/HitlPage';
 import AccountPage from './pages/AccountPage';
-import { AuthUser, authFetch, clearAuth, getStoredUser, logoutUser, setAuth } from './services/api';
+import { AuthUser, authFetch, getStoredUser, logoutUser, setAuth } from './services/api';
 
 type NavItem = { path: string; label: string; icon: React.ReactNode; group: 'Operate' | 'Manage' };
 
@@ -394,8 +394,7 @@ const App: React.FC = () => {
       sessionStorage.removeItem('iw_chat_history');
       sessionStorage.removeItem('iw_active_session_id');
     } catch {}
-    clearAuth();
-    logoutUser();
+    void logoutUser();
     setUser(null);
   };
 
@@ -410,8 +409,15 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const handleAuthExpired = () => setUser(null);
+    const handleAuthChanged = (event: Event) => {
+      setUser((event as CustomEvent<AuthUser | null>).detail || null);
+    };
     window.addEventListener('mcp:auth-expired', handleAuthExpired);
-    return () => window.removeEventListener('mcp:auth-expired', handleAuthExpired);
+    window.addEventListener('mcp:auth-changed', handleAuthChanged);
+    return () => {
+      window.removeEventListener('mcp:auth-expired', handleAuthExpired);
+      window.removeEventListener('mcp:auth-changed', handleAuthChanged);
+    };
   }, []);
 
   return (

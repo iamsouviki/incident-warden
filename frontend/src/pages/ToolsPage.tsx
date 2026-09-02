@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { authFetch } from '../services/api';
-import { Plus, Save, Trash2, Sparkles, X } from 'lucide-react';
+import { authFetch, extractApiError } from '../services/api';
+import { Plus, Save, Trash2, Sparkles, X, Loader2 } from 'lucide-react';
+import { Modal, Button } from '../components/ui';
 
 import './ScriptEditorPage.css';
 
@@ -14,10 +15,6 @@ interface SavedScript {
   requiredInputData?: string;
   validatedInDryRun?: boolean;
 }
-
-const CATEGORIES = [
-  'POG_ISSUE', 'APPLICATION', 'PERFORMANCE', 'INFRASTRUCTURE', 'DATABASE', 'DEPLOYMENT', 'NETWORK',
-];
 
 const ToolsPage: React.FC = () => {
   const [savedScripts, setSavedScripts] = useState<SavedScript[]>([]);
@@ -109,25 +106,38 @@ const ToolsPage: React.FC = () => {
     } catch { /* The modal remains usable; save validation explains what is missing. */ }
   };
 
-  const handleDeleteScript = async (id: string, e: React.MouseEvent) => {
+  const [pendingDelete, setPendingDelete] = useState<SavedScript | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const requestDelete = (script: SavedScript, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!window.confirm('Delete this tool from workspace registry?')) return;
+    setPendingDelete(script);
+  };
+
+  const confirmDelete = async () => {
+    if (!pendingDelete) return;
+    setDeleting(true);
     try {
-      const res = await authFetch(`/api/v1/scripts/${id}`, { method: 'DELETE' });
+      const res = await authFetch(`/api/v1/scripts/${pendingDelete.id}`, { method: 'DELETE' });
       if (res.ok) {
-        setSavedScripts(prev => prev.filter(s => s.id !== id));
+        setSavedScripts(prev => prev.filter(s => s.id !== pendingDelete.id));
         setMessage({ type: 'success', text: 'Tool deleted successfully' });
+        setPendingDelete(null);
       } else {
-        setMessage({ type: 'error', text: 'Failed to delete tool' });
+        const detail = await extractApiError(res);
+        setMessage({ type: 'error', text: `Failed to delete tool: ${detail}` });
       }
-    } catch {
-      setMessage({ type: 'error', text: 'Network error deleting tool' });
+    } catch (err) {
+      setMessage({ type: 'error', text: `Network error deleting tool: ${err instanceof Error ? err.message : 'unknown'}` });
+    } finally {
+      setDeleting(false);
     }
   };
 
   const handleGenerateScript = async () => {
     if (!promptDescription.trim()) return;
     setGenerating(true);
+    setMessage(null);
     try {
       const res = await authFetch('/api/v1/scripts/generate', {
         method: 'POST',
@@ -136,14 +146,49 @@ const ToolsPage: React.FC = () => {
       const data = await res.json();
       if (data.script) {
         setScriptContent(data.script);
-        if (data.name && !scriptName) setScriptName(data.name);
-        if (data.description && !scriptDesc) setScriptDesc(data.description);
+      }
+      if (data.name) setScriptName(data.name);
+      if (data.description) setScriptDesc(data.description);
+      // Map "inputs" -> Section 2 (Information required). Convert the LLM
+      // string into a stable JSON envelope {fields:[...]} so the runtime
+      // EXTRACTION skill can index each input independently.
+      if (data.inputs) {
+        const fields = parseInputsString(data.inputs);
+        setExtractionRules(JSON.stringify({ fields }, null, 2));
+        setRequiredInputData(data.inputs);
+      }
+      if (data.resolution) {
+        setResolutionRules(typeof data.resolution === 'string'
+          ? data.resolution
+          : JSON.stringify(data.resolution, null, 2));
+      }
+      // Map "issues" -> Section 1 (Issues this tool handles). One phrase per
+      // line keeps the textarea readable.
+      if (data.issues) {
+        const issues = data.issues
+          .split(/[,;]+/)
+          .map((v: string) => v.trim())
+          .filter(Boolean);
+        if (issues.length) setClassificationRules(issues.join('\n'));
       }
     } catch (e) {
       console.error(e);
+      setMessage({ type: 'error', text: 'AI generation failed. Please write the script manually.' });
     } finally {
       setGenerating(false);
     }
+  };
+
+  // Parse the LLM "inputs" string into structured {name,type,required} fields.
+  const parseInputsString = (raw: string): { name: string; type: string; required: boolean }[] => {
+    if (!raw) return [];
+    const out: { name: string; type: string; required: boolean }[] = [];
+    for (const part of raw.split(/[,;]+/)) {
+      const m = /^\s*([A-Za-z_][A-Za-z0-9_\-]*)\s*(?::\s*([A-Za-z_][A-Za-z0-9_\-]*))?\s*\(\s*(Required|Optional)\s*\)\s*$/i.exec(part);
+      if (!m) continue;
+      out.push({ name: m[1], type: (m[2] || 'string').toLowerCase(), required: m[3].toLowerCase() === 'required' });
+    }
+    return out;
   };
 
   const handleSaveScript = async () => {
@@ -161,6 +206,8 @@ const ToolsPage: React.FC = () => {
       return;
     }
     const name = scriptName.trim() || promptDescription.trim().substring(0, 40) || 'Untitled Remediation';
+    // Never send an empty category — DB column is NOT NULL. Fall back to a safe default.
+    const safeCategory = (category || '').trim() || 'POG_ISSUE';
     setSaving(true);
     setMessage(null);
     try {
@@ -169,11 +216,11 @@ const ToolsPage: React.FC = () => {
         description: scriptDesc.trim() || promptDescription.trim(),
         scriptContent,
         language,
-        category,
+        category: safeCategory,
         requiredInputData: requiredInputData.trim(),
         validatedInDryRun,
       };
-      
+
       const endpoint = activeScriptId ? `/api/v1/scripts/${activeScriptId}` : '/api/v1/scripts';
       const method = activeScriptId ? 'PUT' : 'POST';
 
@@ -181,54 +228,57 @@ const ToolsPage: React.FC = () => {
         method,
         body: JSON.stringify(payload)
       });
-      
-      if (res.ok) {
-        // Save all three required skills as one tool definition.
-        try {
-          const toolSkillKey = name.toUpperCase().replace(/[^A-Z0-9]/g, '_');
-          const saves = [authFetch('/api/v1/skills', {
-            method: 'POST',
-            body: JSON.stringify({
-              kind: 'EXECUTION',
-              skillKey: toolSkillKey,
-              argCount: requiredInputData.split(',').filter(Boolean).length || 2,
-              mutating: true,
-              enabled: true,
-              description: `Remediation tool script for ${category}: ${name}`,
-            }),
-          }), authFetch('/api/v1/skills', {
-            method: 'POST',
-            body: JSON.stringify({
-              kind: 'CATEGORIZATION',
-              skillKey: category,
-              pattern: classificationRules.split('\n').map(v => v.trim()).filter(Boolean).join(', '),
-              actionKey: toolSkillKey,
-              enabled: true,
-              description: `Issues that use ${name}`,
-              definitionJson: resolutionRules,
-            }),
-          }), authFetch('/api/v1/skills', {
-            method: 'POST',
-            body: JSON.stringify({
-              kind: 'EXTRACTION', skillKey: category, pattern: '', enabled: true,
-              description: `Required and optional inputs for ${name}`,
-              definitionJson: extractionRules,
-            }),
-          })];
-          const skillResults = await Promise.all(saves);
-          if (skillResults.some(result => !result.ok)) throw new Error('Tool skill validation failed');
-        } catch (skillErr) {
-          throw skillErr;
-        }
 
-        setMessage({ type: 'success', text: 'Tool & LLM Skills saved to DB successfully' });
-        setShowToolModal(false);
-        loadSavedScripts();
-      } else {
-        setMessage({ type: 'error', text: 'Failed to save tool' });
+      if (!res.ok) {
+        const detail = await extractApiError(res);
+        setMessage({ type: 'error', text: `Failed to save tool: ${detail}` });
+        return;
       }
-    } catch {
-      setMessage({ type: 'error', text: 'Network error saving tool' });
+
+      // Save all three required skills as one tool definition.
+      const toolSkillKey = name.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+      const skillPayloads = [
+        {
+          kind: 'EXECUTION',
+          skillKey: toolSkillKey,
+          argCount: (extractionRules.match(/"name"\s*:/g) || []).length || 2,
+          mutating: true,
+          enabled: true,
+          description: `Remediation tool script for ${safeCategory}: ${name}`,
+        },
+        {
+          kind: 'CATEGORIZATION',
+          skillKey: toolSkillKey,
+          pattern: classificationRules.split('\n').map(v => v.trim()).filter(Boolean).join(', '),
+          actionKey: toolSkillKey,
+          enabled: true,
+          description: `Issues that use ${name}`,
+          definitionJson: resolutionRules,
+        },
+        {
+          kind: 'EXTRACTION',
+          skillKey: toolSkillKey,
+          pattern: '',
+          enabled: true,
+          description: `Required and optional inputs for ${name}`,
+          definitionJson: extractionRules,
+        },
+      ];
+      const skillResults = await Promise.all(
+        skillPayloads.map(body => authFetch('/api/v1/skills', { method: 'POST', body: JSON.stringify(body) }))
+      );
+      const firstFail = skillResults.find(r => !r.ok);
+      if (firstFail) {
+        const detail = await extractApiError(firstFail);
+        setMessage({ type: 'error', text: `Tool saved, but skill registration failed: ${detail}` });
+        return;
+      }
+
+      setMessage({ type: 'success', text: 'Tool & LLM Skills saved to DB successfully' });
+      setShowToolModal(false);
+      loadSavedScripts();
+    } catch (e) {
+      setMessage({ type: 'error', text: `Network error saving tool: ${e instanceof Error ? e.message : 'unknown'}` });
     } finally {
       setSaving(false);
     }
@@ -322,9 +372,10 @@ const ToolsPage: React.FC = () => {
                       {script.name}
                     </span>
                     <button
-                      onClick={(e) => handleDeleteScript(script.id, e)}
+                      onClick={(e) => requestDelete(script, e)}
                       style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--crit)', padding: '2px' }}
                       title="Delete Tool"
+                      aria-label={`Delete tool ${script.name}`}
                     >
                       <Trash2 size={14} />
                     </button>
@@ -350,19 +401,19 @@ const ToolsPage: React.FC = () => {
       {/* ── CREATE / EDIT TOOL MODAL ── */}
       {showToolModal && (
         <div className="modal-backdrop" onClick={() => setShowToolModal(false)}>
-          <div className="modal-panel" onClick={e => e.stopPropagation()} style={{ width: '840px', maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto' }}>
-            <div className="modal-header" style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div className="modal-panel" onClick={e => e.stopPropagation()} style={{ width: '840px', maxWidth: '95vw', maxHeight: '90vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <div className="modal-header" style={{ position: 'sticky', top: 0, zIndex: 5, padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <h2 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--text-1)', margin: 0 }}>
                   {activeScriptId ? `Editing Tool: ${scriptName}` : 'Create New Remediation Tool'}
                 </h2>
               </div>
-              <button className="close-btn" onClick={() => setShowToolModal(false)} style={{ background: 'transparent', border: 'none', color: 'var(--text-3)', cursor: 'pointer' }}>
+              <button className="close-btn" onClick={() => setShowToolModal(false)} aria-label="Close" style={{ background: 'transparent', border: 'none', color: 'var(--text-3)', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '4px', borderRadius: '6px' }}>
                 <X size={18} />
               </button>
             </div>
 
-            <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div style={{ padding: '20px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>
 
                 <div style={{ padding: '12px 14px', background: 'var(--accent-dim)', borderRadius: '6px', fontSize: '12px', color: 'var(--text-2)', border: '1px solid var(--border)' }}>
                   <strong>Tool behavior rules</strong><br />These three sections are required. They tell the LLM when to use this tool, what to collect, and how to interpret the result.
@@ -467,13 +518,13 @@ const ToolsPage: React.FC = () => {
                 </span>
               </div>
 
-              {/* Modal Save Footer */}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px', borderTop: '1px solid var(--border)', paddingTop: '14px' }}>
+              {/* Modal Save Footer (sticky bottom) */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', borderTop: '1px solid var(--border)', padding: '14px 20px', background: 'var(--surface-1)', position: 'sticky', bottom: 0, marginTop: 'auto', zIndex: 4 }}>
                 <button type="button" onClick={() => setShowToolModal(false)} className="btn-secondary" style={{ padding: '8px 16px', fontSize: '12.5px' }}>
                   Cancel
                 </button>
                 <button type="button" onClick={handleSaveScript} disabled={saving || !scriptContent.trim()} className="btn-primary" style={{ padding: '8px 18px', fontSize: '12.5px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <Save size={14} /> {saving ? 'Saving...' : 'Save Tool'}
+                  {saving ? <Loader2 size={14} className="spin" /> : <Save size={14} />} {saving ? 'Saving...' : 'Save Tool'}
                 </button>
               </div>
 
@@ -481,6 +532,36 @@ const ToolsPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* ── DELETE CONFIRMATION MODAL ── */}
+      <Modal
+        open={!!pendingDelete}
+        title="Delete tool?"
+        onClose={() => !deleting && setPendingDelete(null)}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setPendingDelete(null)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={confirmDelete} disabled={deleting} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              {deleting ? <Loader2 size={14} className="spin" /> : <Trash2 size={14} />}
+              {deleting ? 'Deleting…' : 'Delete tool'}
+            </Button>
+          </>
+        }
+      >
+        {pendingDelete && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <p style={{ margin: 0, color: 'var(--text-2)', fontSize: '13px' }}>
+              This will remove <strong style={{ color: 'var(--text-1)' }}>{pendingDelete.name}</strong> from the
+              workspace registry, along with its CATEGORIZATION, EXTRACTION, and EXECUTION skills.
+            </p>
+            <p style={{ margin: 0, color: 'var(--text-3)', fontSize: '12px' }}>
+              Any plan that already references this tool will need to be re-approved.
+            </p>
+          </div>
+        )}
+      </Modal>
 
     </div>
   );

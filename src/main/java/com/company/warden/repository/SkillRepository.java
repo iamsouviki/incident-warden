@@ -17,4 +17,7 @@ public interface SkillRepository extends JpaRepository<Skill, UUID> {
     List<Skill> findByKindAndEnabledTrueOrderBySkillKeyAsc(String kind);
 
     Optional<Skill> findByKindAndSkillKey(String kind, String skillKey);
+
+    /** Every skill row tied to a tool key, regardless of kind. Used by the script-delete handler. */
+    List<Skill> findBySkillKey(String skillKey);
 }

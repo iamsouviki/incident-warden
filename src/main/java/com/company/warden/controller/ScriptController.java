@@ -141,10 +141,22 @@ public class ScriptController {
                 "The task category is %s.\n" +
                 "Requirements:\n" +
                 "- Write strictly in %s.\n" +
-                "- Do not include markdown code block syntax (like ```python or ```sh).\n" +
-                "- Output only the raw, executable script contents.\n" +
-                "- Include comments explaining the steps.\n" +
-                "- Never include destructive commands, credential access, or commands that affect more than the single named target.",
+                "- Do not wrap the script in code fences (no ```python, no ```sh, no triple-quoted strings).\n" +
+                "- The `script` field must be the raw, executable script body on a single JSON string.\n" +
+                "- Inside that string, ordinary newlines must be encoded as \\n (the JSON parser will decode them).\n" +
+                "- Output a single JSON object, no prose outside the JSON, no markdown fences.\n" +
+                "- Include comments inside the script explaining the steps.\n" +
+                "- Never include destructive commands, credential access, or commands that affect more than the single named target.\n" +
+                "\n" +
+                "JSON shape (strict):\n" +
+                "{\n" +
+                "  \"name\": \"<short kebab/snake-case identifier, e.g. 'restart-tomcat-service'>\",\n" +
+                "  \"description\": \"<one-sentence operational purpose>\",\n" +
+                "  \"script\": \"<raw executable script body, newlines as \\\\n inside this JSON string>\",\n" +
+                "  \"inputs\": \"<comma-separated list of '<param>[:<type>] (Required|Optional)', e.g. 'hostname (Required), port:int (Optional)'>\",\n" +
+                "  \"issues\": \"<comma-separated phrases the LLM should use to recognise incidents that need this tool>\",\n" +
+                "  \"resolution\": {\"script_path\": \"<path>\", \"success_status\": \"<success condition>\", \"failure_status\": \"<failure condition>\"}\n" +
+                "}",
                 targetFormat, description, category, targetFormat
             );
 
@@ -154,12 +166,27 @@ public class ScriptController {
                     .content();
 
             if (generated == null || generated.isBlank()) {
-                return ResponseEntity.ok(Map.of("script", "# Failed to generate script contents. Please write manually."));
+                return ResponseEntity.ok(Map.of(
+                        "script", "# Failed to generate script contents. Please write manually.",
+                        "name", "",
+                        "description", "",
+                        "inputs", "",
+                        "issues", "",
+                        "resolution", "{}"));
             }
 
-            generated = generated.replaceAll("```[a-zA-Z]*", "").replaceAll("```", "").trim();
+            // Strip markdown fences and try to extract JSON envelope.
+            String cleaned = generated.replaceAll("```[a-zA-Z]*", "").replaceAll("```", "").trim();
+            Map<String, String> parsed = extractJsonEnvelope(cleaned);
 
-            GuardrailService.ScriptScan scan = guardrails.scanScript(generated);
+            String script = parsed.getOrDefault("script", cleaned);
+            String name = parsed.getOrDefault("name", "");
+            String toolDescription = parsed.getOrDefault("description", "");
+            String inputs = parsed.getOrDefault("inputs", "");
+            String issues = parsed.getOrDefault("issues", "");
+            String resolution = parsed.getOrDefault("resolution", "{}");
+
+            GuardrailService.ScriptScan scan = guardrails.scanScript(script);
             if (scan.blocked()) {
                 log.warn("[SCRIPT] Generated script blocked by guardrails: {}", scan.findings());
                 return ResponseEntity.unprocessableEntity().body(Map.of(
@@ -167,11 +194,72 @@ public class ScriptController {
                         "findings", scan.findings()));
             }
 
-            return ResponseEntity.ok(Map.of("script", generated, "level", scan.level(), "findings", scan.findings()));
+            return ResponseEntity.ok(Map.of(
+                    "script", script,
+                    "name", name,
+                    "description", toolDescription,
+                    "inputs", inputs,
+                    "issues", issues,
+                    "resolution", resolution,
+                    "level", scan.level(),
+                    "findings", scan.findings()));
         } catch (Exception e) {
             log.error("[SCRIPT] AI generation failed", e);
-            return ResponseEntity.ok(Map.of("script", "# Error generating script: " + e.getMessage() + "\n# Please write script manually."));
+            return ResponseEntity.ok(Map.of(
+                    "script", "# Error generating script: " + e.getMessage() + "\n# Please write script manually.",
+                    "name", "",
+                    "description", "",
+                    "inputs", "",
+                    "issues", "",
+                    "resolution", "{}"));
         }
+    }
+
+    /**
+     * Best-effort JSON envelope extractor. Tolerant: if the model returned a
+     * script without a JSON envelope (older prompts) it returns the raw text
+     * under "script" and leaves the other fields empty so the UI can keep the
+     * user-flow going.
+     */
+    private Map<String, String> extractJsonEnvelope(String text) {
+        Map<String, String> out = new HashMap<>();
+        if (text == null) return out;
+        // Find the outermost { ... } that contains a "script" key.
+        int start = text.indexOf('{');
+        if (start < 0) {
+            out.put("script", text.trim());
+            return out;
+        }
+        int depth = 0;
+        int end = -1;
+        for (int i = start; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '{') depth++;
+            else if (c == '}') { depth--; if (depth == 0) { end = i; break; } }
+        }
+        if (end < 0) {
+            out.put("script", text.trim());
+            return out;
+        }
+        String json = text.substring(start, end + 1);
+        try {
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            @SuppressWarnings("unchecked")
+            Map<String, Object> raw = mapper.readValue(json, Map.class);
+            for (String key : new String[]{"name", "description", "script", "inputs", "issues", "resolution"}) {
+                Object v = raw.get(key);
+                if (v != null) {
+                    String value = v instanceof Map || v instanceof List
+                            ? new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(v)
+                            : v.toString();
+                    out.put(key, value.trim());
+                }
+            }
+        } catch (Exception e) {
+            log.debug("[SCRIPT] Could not parse generated JSON envelope: {}", e.getMessage());
+            out.put("script", text.trim());
+        }
+        return out;
     }
 
     @PostMapping("/validate")

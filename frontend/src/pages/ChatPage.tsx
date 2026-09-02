@@ -342,6 +342,8 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
   // Session Delete Confirmation Modal state
   const [sessionToDelete, setSessionToDelete] = useState<{ id: string; title: string } | null>(null);
   const [deletingSession, setDeletingSession] = useState(false);
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const actionLocks = useRef(new Set<string>());
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -653,6 +655,18 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
       const stages = m.run.stages.map((s, i) => (i === index ? { ...s, ...patch } : s));
       return { ...m, run: { ...m.run, stages } };
     }));
+
+  const claimAction = (key: string): boolean => {
+    if (actionLocks.current.has(key)) return false;
+    actionLocks.current.add(key);
+    setPendingAction(key);
+    return true;
+  };
+
+  const releaseAction = (key: string) => {
+    actionLocks.current.delete(key);
+    setPendingAction(current => current === key ? null : current);
+  };
 
   // ── Anonymous tier ────────────────────────────────────────────────────────────
 
@@ -980,6 +994,8 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
    * granularity is not enough.
    */
   const runPlan = async (messageId: string, plan: ToolPlan) => {
+    const actionKey = `run:${messageId}`;
+    if (!claimAction(actionKey)) return;
     const stages: RunStage[] = [
       { label: `Running ${plan.tool} on ${plan.target}`, state: 'pending' },
     ];
@@ -1005,6 +1021,7 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
           ...(body ? { body: JSON.stringify(body) } : {}),
         });
         if (!res.ok) {
+        releaseAction(actionKey);
           patchStage(messageId, index, { state: 'fail', detail: await extractApiError(res) });
           return null;
         }
@@ -1279,19 +1296,24 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
 
         <div className="chat-missing-actions" style={{ display: 'flex', gap: '10px', marginTop: '12px' }}>
           <button
-            className="chat-btn chat-btn-ghost"
+            className="chat-btn chat-btn-secondary"
             style={{ padding: '8px 16px', fontSize: '12px' }}
-            disabled={spent}
-            onClick={() => updateMessage(msg.id, {
-              missingInfo: undefined,
-              text: `**Cancelled — nothing was run against ${missing.incidentRef}.**\n`
-                + `I did not have every detail the script needs, and without them there was no `
-                + `plan to approve, so no change of any kind reached the ticket or the host.\n`
-                + `Ask me to fix ${missing.incidentRef} again whenever you have the missing `
-                + `values, or work it by hand from the Incidents page.`,
-            })}
+            disabled={spent || pendingAction === `cancel:missing:${msg.id}`}
+            onClick={() => {
+              const actionKey = `cancel:missing:${msg.id}`;
+              if (!claimAction(actionKey)) return;
+              updateMessage(msg.id, {
+                missingInfo: undefined,
+                text: `**Cancelled — nothing was run against ${missing.incidentRef}.**\n`
+                  + `I did not have every detail the script needs, and without them there was no `
+                  + `plan to approve, so no change of any kind reached the ticket or the host.\n`
+                  + `Ask me to fix ${missing.incidentRef} again whenever you have the missing `
+                  + `values, or work it by hand from the Incidents page.`,
+              });
+              releaseAction(actionKey);
+            }}
           >
-            Cancel
+            {pendingAction === `cancel:missing:${msg.id}` ? 'Cancelling…' : 'Cancel'}
           </button>
           <button
             className="chat-btn chat-btn-primary"
@@ -1376,19 +1398,24 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
 
         <div className="chat-plan-actions" style={{ display: 'flex', gap: '10px', marginTop: '14px' }}>
           <button
-            className="chat-btn chat-btn-ghost"
+            className="chat-btn chat-btn-secondary"
             style={{ padding: '8px 16px', fontSize: '12.5px' }}
-            disabled={spent}
-            onClick={() => updateMessage(msg.id, {
-              plan: undefined,
-              text: `**Cancelled — nothing was run against ${plan.incidentRef}.**\n`
-                + `The approval request stays open in the Approvals queue, so the plan is not `
-                + `lost: another reviewer can pick it up, or you can ask me to fix `
-                + `${plan.incidentRef} again and I will rebuild it from the same SOP.\n`
-                + `The ticket itself is untouched — still open, still assigned where it was.`,
-            })}
+            disabled={spent || pendingAction === `cancel:plan:${msg.id}`}
+            onClick={() => {
+              const actionKey = `cancel:plan:${msg.id}`;
+              if (!claimAction(actionKey)) return;
+              updateMessage(msg.id, {
+                plan: undefined,
+                text: `**Cancelled — nothing was run against ${plan.incidentRef}.**\n`
+                  + `The approval request stays open in the Approvals queue, so the plan is not `
+                  + `lost: another reviewer can pick it up, or you can ask me to fix `
+                  + `${plan.incidentRef} again and I will rebuild it from the same SOP.\n`
+                  + `The ticket itself is untouched — still open, still assigned where it was.`,
+              });
+              releaseAction(actionKey);
+            }}
           >
-            Cancel
+            {pendingAction === `cancel:plan:${msg.id}` ? 'Cancelling…' : 'Cancel'}
           </button>
           <button
             className="chat-btn chat-btn-primary"
@@ -1880,16 +1907,18 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
             </div>
 
             <footer className="chat-modal-foot">
-              <button className="chat-btn chat-btn-ghost" onClick={() => setReview(null)}>Cancel</button>
+              <button className="chat-btn chat-btn-secondary" onClick={() => setReview(null)}>Cancel</button>
               <button
                 className="chat-btn chat-btn-danger"
+                disabled={pendingAction === `run:${review.messageId}`}
                 onClick={() => {
                   const target = review;
                   setReview(null);
                   runPlan(target.messageId, target.plan);
                 }}
               >
-                <Play size={14} /> Review done — run it
+                {pendingAction === `run:${review.messageId}` ? <Loader2 size={14} className="is-spin" /> : <Play size={14} />}
+                {pendingAction === `run:${review.messageId}` ? 'Starting…' : 'Review done — run it'}
               </button>
             </footer>
           </div>

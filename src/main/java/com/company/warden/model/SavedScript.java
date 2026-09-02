@@ -24,7 +24,7 @@ public class SavedScript {
     @Column(name = "language", nullable = false)
     private String language;
 
-    @Column(name = "category", nullable = false)
+    @Column(name = "category")
     private String category;
 
     @Column(name = "target_host")
