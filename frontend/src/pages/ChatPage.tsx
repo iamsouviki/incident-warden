@@ -9,6 +9,14 @@ import { AuthUser, authFetch, extractApiError, login } from '../services/api';
 import Markdown from '../components/Markdown';
 import './ChatPage.css';
 
+const maskSensitiveText = (value: string): string => value
+  .replace(/(\b(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key)\b\s*[:=]\s*)[^\s,;]+/gi, '$1[REDACTED]')
+  .replace(/(\b(?:username|user|login)\b\s*[:=]\s*)[^\s,;]+/gi, '$1[REDACTED]')
+  .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[REDACTED]')
+  .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[REDACTED]')
+  .replace(/\bbearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
+  .replace(/\bAKIA[0-9A-Z]{16}\b/g, '[REDACTED]');
+
 /**
  * The product's front door. One surface, three trust levels:
  *
@@ -294,7 +302,7 @@ interface MissingParamField {
   placeholder: string;
   required: boolean;
   defaultValue?: string;
-  type?: 'text' | 'number';
+  type?: 'text' | 'number' | 'boolean';
 }
 
 // ponytail: MissingInfoCardState is the live type; this duplicate is removed
@@ -342,6 +350,8 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
   // Session Delete Confirmation Modal state
   const [sessionToDelete, setSessionToDelete] = useState<{ id: string; title: string } | null>(null);
   const [deletingSession, setDeletingSession] = useState(false);
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const actionLocks = useRef(new Set<string>());
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -395,6 +405,7 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
       const data = await res.json();
       setActiveSessionId(data.id);
       sessionStorage.setItem(ACTIVE_SESSION_KEY, data.id);
+      loadSessions();
       return data.id;
     } catch {
       return null;
@@ -653,6 +664,18 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
       return { ...m, run: { ...m.run, stages } };
     }));
 
+  const claimAction = (key: string): boolean => {
+    if (actionLocks.current.has(key)) return false;
+    actionLocks.current.add(key);
+    setPendingAction(key);
+    return true;
+  };
+
+  const releaseAction = (key: string) => {
+    actionLocks.current.delete(key);
+    setPendingAction(current => current === key ? null : current);
+  };
+
   // ── Anonymous tier ────────────────────────────────────────────────────────────
 
   /** Guarded public RAG chat assistant for unauthenticated queries. */
@@ -791,78 +814,6 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
     return all.slice(0, 5).map(choice);
   };
 
-  const extractIncidentParameters = (detail: any, incident: IncidentChoice) => {
-    const combinedText = `${incident.subject} ${incident.ref} ${detail.action?.actionKey || ''} ${detail.script?.script || ''} ${detail.plan?.target || ''}`.toLowerCase();
-    
-    const values: Record<string, string> = {};
-    
-    // Extract store
-    const storeMatch = combinedText.match(/store[- ]?(\d+)/i);
-    if (storeMatch) {
-      values['store'] = `store-${storeMatch[1].padStart(4, '0')}`;
-    }
-
-    // Extract POS terminal / host
-    const posMatch = combinedText.match(/(?:pos|terminal)[- ]?(\d+)/i);
-    if (posMatch) {
-      values['posTerminal'] = `pos-${posMatch[1].padStart(2, '0')}`;
-    }
-    const hostMatch = combinedText.match(/([a-z0-9-]+(?:\.corp|\.internal|\.local|-[a-z0-9]+-[0-9]+))/i);
-    if (hostMatch && !hostMatch[1].includes('store-')) {
-      values['targetHost'] = hostMatch[1];
-    } else if (values['store']) {
-      values['targetHost'] = `${values['store']}-${values['posTerminal'] || 'pos-01'}`;
-    }
-
-    // Extract SKU / POG / Item
-    const skuMatch = combinedText.match(/(?:sku|item)[- #:]*([0-9]{4,10})/i);
-    if (skuMatch) values['skuOrPog'] = `SKU-${skuMatch[1]}`;
-    const pogMatch = combinedText.match(/pog[- #:]*([0-9]{4,10})/i);
-    if (pogMatch) values['skuOrPog'] = `POG-${pogMatch[1]}`;
-
-    // Extract service
-    const serviceMatch = combinedText.match(/(pos-service|tomcat|postgres|nginx|redis|payment-agent)/i);
-    if (serviceMatch) values['serviceName'] = serviceMatch[1];
-
-    // Decide needed fields based on action / tool
-    const actionKey = (detail.action?.actionKey || '').toLowerCase();
-    const toolName = (detail.action?.tool || '').toLowerCase();
-    const scriptContent = (detail.script?.script || '').toLowerCase();
-
-    let fields: MissingParamField[] = [];
-
-    if (actionKey.includes('print') || toolName.includes('print') || combinedText.includes('pog') || combinedText.includes('sku') || combinedText.includes('printflag') || combinedText.includes('item')) {
-      fields = [
-        { key: 'store', label: 'Store Identifier', placeholder: 'e.g. store-0042', required: true },
-        { key: 'skuOrPog', label: 'Item / SKU / POG Number', placeholder: 'e.g. POG-8821 or 491023', required: true },
-        { key: 'printFlag', label: 'Print Flag / Mode', placeholder: 'e.g. NORMAL or REPRINT (default: NORMAL)', required: false },
-        { key: 'printerQueue', label: 'Printer Queue / Terminal', placeholder: 'e.g. lp_receipt_01', required: false },
-      ];
-    } else if (actionKey.includes('restart') || actionKey.includes('service') || combinedText.includes('service') || combinedText.includes('pos')) {
-      fields = [
-        { key: 'targetHost', label: 'Target Server / POS Terminal', placeholder: 'e.g. store-0042-pos-01', required: true },
-        { key: 'serviceName', label: 'Service Name', placeholder: 'e.g. pos-service, tomcat', required: true },
-      ];
-    } else if (actionKey.includes('cache') || toolName.includes('cache')) {
-      fields = [
-        { key: 'targetHost', label: 'Target Host / Gateway', placeholder: 'e.g. cache-node-01.internal', required: true },
-        { key: 'tier', label: 'Cache Tier', placeholder: 'e.g. redis, varnish', required: false },
-      ];
-    } else if (actionKey.includes('url') || toolName.includes('http') || scriptContent.includes('curl')) {
-      fields = [
-        { key: 'targetHost', label: 'Target Host / Gateway', placeholder: 'e.g. api-gateway.internal', required: true },
-        { key: 'endpointUrl', label: 'Target Health URL', placeholder: 'e.g. https://store-0042.internal/health', required: true },
-      ];
-    } else {
-      fields = [
-        { key: 'targetHost', label: 'Target Hostname / IP', placeholder: 'e.g. store-0042-app-01', required: true },
-        { key: 'parameters', label: 'Command Arguments', placeholder: 'e.g. --force --timeout=30', required: false },
-      ];
-    }
-
-    return { fields, values };
-  };
-
   /**
    * No tool to run, so the answer is words: what is wrong, where the advice came from, and
    * the steps to take by hand.
@@ -899,16 +850,35 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
   };
 
   /** Plans against one incident and renders whichever of the two outcomes the server chose. */
-  const planFor = async (incident: IncidentChoice, botId: string) => {
+  const planFor = async (incident: IncidentChoice, botId: string, suppliedFields: Record<string, string> = {}) => {
     updateMessage(botId, { loading: true, text: undefined, choices: undefined });
     try {
-      const res = await authFetch(`/api/v1/hitl/incidents/${incident.id}/plan`, { method: 'POST' });
+      const res = await authFetch(`/api/v1/hitl/incidents/${incident.id}/plan`, {
+        method: 'POST', body: JSON.stringify(suppliedFields),
+      });
       let body: any = null;
       let requestId = '';
 
       if (res.ok) {
         body = await res.json();
         requestId = body.hitlRequest?.id || '';
+      }
+
+      if (body?.route === 'NEEDS_INPUT') {
+        const fields: MissingParamField[] = (body.fields || []).map((field: any) => ({
+          key: String(field.key), label: field.label || field.key,
+          placeholder: field.placeholder || '', required: Boolean(field.required), type: field.type,
+        }));
+        updateMessage(botId, {
+          loading: false,
+          missingInfo: {
+            requestId: '', incidentId: incident.id, incidentRef: incident.ref,
+            actionKey: body.resolution?.action_key || 'remediation_script',
+            tool: body.resolution?.script_path || 'configured automation',
+            detail: null, fields, values: body.values || {},
+          },
+        });
+        return;
       }
 
       // If already awaiting decision, locate the existing open request instead of erroring
@@ -970,29 +940,7 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
       }
       const detail = await detailRes.json();
 
-      // Extract and check parameter completeness
-      const { fields, values } = extractIncidentParameters(detail, incident);
-      const missingRequired = fields.filter(f => f.required && (!values[f.key] || !values[f.key].trim()));
-
-      if (missingRequired.length > 0) {
-        // Render dynamic missing parameters card
-        updateMessage(botId, {
-          loading: false,
-          missingInfo: {
-            requestId,
-            incidentId: incident.id,
-            incidentRef: incident.ref,
-            actionKey: detail.action?.actionKey || 'remediation_script',
-            tool: detail.action?.tool || 'generated script',
-            detail,
-            fields,
-            values,
-          },
-        });
-        return;
-      }
-
-      updateMessage(botId, { loading: false, plan: planFrom(detail, incident, requestId, values) });
+      updateMessage(botId, { loading: false, plan: planFrom(detail, incident, requestId, suppliedFields) });
     } catch (e) {
       updateMessage(botId, {
         loading: false, error: true,
@@ -1054,6 +1002,8 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
    * granularity is not enough.
    */
   const runPlan = async (messageId: string, plan: ToolPlan) => {
+    const actionKey = `run:${messageId}`;
+    if (!claimAction(actionKey)) return;
     const stages: RunStage[] = [
       { label: `Running ${plan.tool} on ${plan.target}`, state: 'pending' },
     ];
@@ -1079,6 +1029,7 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
           ...(body ? { body: JSON.stringify(body) } : {}),
         });
         if (!res.ok) {
+        releaseAction(actionKey);
           patchStage(messageId, index, { state: 'fail', detail: await extractApiError(res) });
           return null;
         }
@@ -1170,7 +1121,7 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
     const q = (question ?? input).trim();
     if (!q || loading) return;
     setInput('');
-    addMessage({ role: 'user', text: q });
+    addMessage({ role: 'user', text: maskSensitiveText(q) });
     const botId = addMessage({ role: 'bot', loading: true });
     setLoading(true);
 
@@ -1251,7 +1202,7 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
 
   const renderRows = (msg: Message) => (
     <div className="chat-rows">
-      <div className="chat-note">Matching “{msg.matched}” · most recent first</div>
+      <div className="chat-note">Matching “{maskSensitiveText(msg.matched || '')}” · most recent first</div>
       <div className="chat-table-scroll">
         <table className="chat-table">
           <thead>
@@ -1268,8 +1219,8 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
               <tr key={row.externalId}>
                 <td><code>{row.externalId}</code></td>
                 <td>
-                  <strong>{row.subject}</strong>
-                  {row.description && <p>{row.description}</p>}
+                  <strong>{maskSensitiveText(row.subject)}</strong>
+                  {row.description && <p>{maskSensitiveText(row.description)}</p>}
                 </td>
                 <td><span className={`chat-status-badge status-${row.status.toLowerCase()}`}>{row.status}</span></td>
                 <td><span className={`chat-priority-badge priority-${row.priority.toLowerCase()}`}>{row.priority}</span></td>
@@ -1305,18 +1256,13 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
       ));
       return;
     }
-    // The form stays on screen as the record of what was supplied, but read-only: the plan
-    // below it was built from these values, so editing them afterwards would be a lie.
+    // Re-plan server-side so supplied values are validated, hashed, and included in the script.
     const incident: IncidentChoice = {
       id: missing.incidentId, ref: missing.incidentRef, subject: '', status: '',
     };
-    setMessages(prev => prev.map(m => (m.id === msgId && m.missingInfo
-      ? {
-          ...m,
-          missingInfo: { ...m.missingInfo, submitted: true, validationError: undefined },
-          plan: planFrom(missing.detail, incident, missing.requestId, m.missingInfo.values),
-        }
-      : m)));
+    setMessages(prev => prev.map(m => m.id === msgId && m.missingInfo
+      ? { ...m, missingInfo: { ...m.missingInfo, submitted: true, validationError: undefined } } : m));
+    void planFor(incident, msgId, missing.values);
   };
 
   const renderMissingInfoCard = (msg: Message, missing: MissingInfoCardState) => {
@@ -1358,19 +1304,24 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
 
         <div className="chat-missing-actions" style={{ display: 'flex', gap: '10px', marginTop: '12px' }}>
           <button
-            className="chat-btn chat-btn-ghost"
+            className="chat-btn chat-btn-secondary"
             style={{ padding: '8px 16px', fontSize: '12px' }}
-            disabled={spent}
-            onClick={() => updateMessage(msg.id, {
-              missingInfo: undefined,
-              text: `**Cancelled — nothing was run against ${missing.incidentRef}.**\n`
-                + `I did not have every detail the script needs, and without them there was no `
-                + `plan to approve, so no change of any kind reached the ticket or the host.\n`
-                + `Ask me to fix ${missing.incidentRef} again whenever you have the missing `
-                + `values, or work it by hand from the Incidents page.`,
-            })}
+            disabled={spent || pendingAction === `cancel:missing:${msg.id}`}
+            onClick={() => {
+              const actionKey = `cancel:missing:${msg.id}`;
+              if (!claimAction(actionKey)) return;
+              updateMessage(msg.id, {
+                missingInfo: undefined,
+                text: `**Cancelled — nothing was run against ${missing.incidentRef}.**\n`
+                  + `I did not have every detail the script needs, and without them there was no `
+                  + `plan to approve, so no change of any kind reached the ticket or the host.\n`
+                  + `Ask me to fix ${missing.incidentRef} again whenever you have the missing `
+                  + `values, or work it by hand from the Incidents page.`,
+              });
+              releaseAction(actionKey);
+            }}
           >
-            Cancel
+            {pendingAction === `cancel:missing:${msg.id}` ? 'Cancelling…' : 'Cancel'}
           </button>
           <button
             className="chat-btn chat-btn-primary"
@@ -1455,19 +1406,24 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
 
         <div className="chat-plan-actions" style={{ display: 'flex', gap: '10px', marginTop: '14px' }}>
           <button
-            className="chat-btn chat-btn-ghost"
+            className="chat-btn chat-btn-secondary"
             style={{ padding: '8px 16px', fontSize: '12.5px' }}
-            disabled={spent}
-            onClick={() => updateMessage(msg.id, {
-              plan: undefined,
-              text: `**Cancelled — nothing was run against ${plan.incidentRef}.**\n`
-                + `The approval request stays open in the Approvals queue, so the plan is not `
-                + `lost: another reviewer can pick it up, or you can ask me to fix `
-                + `${plan.incidentRef} again and I will rebuild it from the same SOP.\n`
-                + `The ticket itself is untouched — still open, still assigned where it was.`,
-            })}
+            disabled={spent || pendingAction === `cancel:plan:${msg.id}`}
+            onClick={() => {
+              const actionKey = `cancel:plan:${msg.id}`;
+              if (!claimAction(actionKey)) return;
+              updateMessage(msg.id, {
+                plan: undefined,
+                text: `**Cancelled — nothing was run against ${plan.incidentRef}.**\n`
+                  + `The approval request stays open in the Approvals queue, so the plan is not `
+                  + `lost: another reviewer can pick it up, or you can ask me to fix `
+                  + `${plan.incidentRef} again and I will rebuild it from the same SOP.\n`
+                  + `The ticket itself is untouched — still open, still assigned where it was.`,
+              });
+              releaseAction(actionKey);
+            }}
           >
-            Cancel
+            {pendingAction === `cancel:plan:${msg.id}` ? 'Cancelling…' : 'Cancel'}
           </button>
           <button
             className="chat-btn chat-btn-primary"
@@ -1558,7 +1514,7 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
       <div className="chat-avatar"><BotMessageSquare size={16} /></div>
       <div className={`chat-bubble chat-bubble-bot${hasRichCard ? ' chat-bubble-bot--rich' : ''}`}>
         {msg.loading && <span className="chat-typing"><span /><span /><span /></span>}
-        {msg.text && <Markdown text={msg.text} />}
+        {msg.text && <Markdown text={maskSensitiveText(msg.text)} />}
         {msg.stats && renderStats(msg.stats)}
         {msg.rows && msg.rows.length > 0 && renderRows(msg)}
         {msg.choices && (
@@ -1566,7 +1522,7 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
             {msg.choices.map(choice => (
               <button key={choice.id} className="chat-choice" onClick={() => planFor(choice, msg.id)}>
                 <code>{choice.ref}</code>
-                <span>{choice.subject}</span>
+                <span>{maskSensitiveText(choice.subject)}</span>
                 <em>{choice.status}</em>
               </button>
             ))}
@@ -1959,16 +1915,18 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
             </div>
 
             <footer className="chat-modal-foot">
-              <button className="chat-btn chat-btn-ghost" onClick={() => setReview(null)}>Cancel</button>
+              <button className="chat-btn chat-btn-secondary" onClick={() => setReview(null)}>Cancel</button>
               <button
                 className="chat-btn chat-btn-danger"
+                disabled={pendingAction === `run:${review.messageId}`}
                 onClick={() => {
                   const target = review;
                   setReview(null);
                   runPlan(target.messageId, target.plan);
                 }}
               >
-                <Play size={14} /> Review done — run it
+                {pendingAction === `run:${review.messageId}` ? <Loader2 size={14} className="is-spin" /> : <Play size={14} />}
+                {pendingAction === `run:${review.messageId}` ? 'Starting…' : 'Review done — run it'}
               </button>
             </footer>
           </div>

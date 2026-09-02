@@ -48,12 +48,14 @@ export function setAuth(user: AuthUser): void {
   if (user.refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, user.refreshToken);
   else localStorage.removeItem(REFRESH_TOKEN_KEY);
   localStorage.setItem(USER_KEY, JSON.stringify(user));
+  window.dispatchEvent(new CustomEvent('mcp:auth-changed', { detail: user }));
 }
 
 export function clearAuth(): void {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(REFRESH_TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
+  window.dispatchEvent(new CustomEvent('mcp:auth-changed', { detail: null }));
 }
 
 export async function logoutUser(): Promise<void> {
@@ -89,7 +91,7 @@ export function getStoredUser(): AuthUser | null {
     // from it — initials, "requested by", the assignee filter — so a half-written or stale
     // record has to present as signed-out here, at the one reader, rather than white-screening
     // the app inside whichever component touches it first. Every caller already handles null.
-    return parsed && parsed.username ? parsed : null;
+    return parsed && parsed.username && getToken() ? parsed : null;
   } catch {
     return null;
   }

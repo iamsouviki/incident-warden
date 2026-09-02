@@ -62,6 +62,9 @@ public class RagService {
     private SopProcedureService sopProcedureService;
 
     @Autowired
+    private SensitiveDataRedactionService sensitiveData;
+
+    @Autowired
     private GraphRetrievalService graphContext;
 
     /**
@@ -97,7 +100,10 @@ public class RagService {
         + "• *\"How many incidents are open?\"* — I'll read the current board.\n"
         + "• *\"Fix FS-1001\"* — I'll build a remediation plan for that ticket.\n\n"
         + "A ticket reference on its own works too, if you have one to hand.";
-    private static final String NO_EVIDENCE_MESSAGE = "I couldn’t find supporting content in the current SOPs or incident records. Please upload the relevant SOP or ask a more specific operational question.";
+    private static final String NO_EVIDENCE_MESSAGE =
+        "Currently, there are **0 matching incidents or SOP procedures** recorded in your workspace database for this request.\n\n"
+        + "• **Incident Data**: You can sync active tickets from your ITSM integrations (ServiceNow, Freshservice, Jira) or import incidents from CSV/XLSX on the **Incidents** page.\n"
+        + "• **SOP Procedures**: You can upload operational runbooks (.pdf, .docx) or add standard operating procedures on the **SOP Library** page.";
 
     private ChatClient chatClient;
     private String cachedProvider;
@@ -486,7 +492,7 @@ public class RagService {
             log.info("[RAG] Routing chat query to model: {}", activeModel);
  
             String answer = activeClient.prompt()
-                    .user(prompt)
+                    .user(sensitiveData.redactForLlm(prompt))
                     .call()
                     .content();
             
@@ -573,7 +579,7 @@ public class RagService {
                     "- Structure your response with clean markdown headings and bullet points for high legibility.";
 
             String answer = activeClient.prompt()
-                    .user(prompt)
+                    .user(sensitiveData.redactForLlm(prompt))
                     .call()
                     .content();
 

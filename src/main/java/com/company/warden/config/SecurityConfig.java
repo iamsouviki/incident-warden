@@ -79,13 +79,14 @@ public class SecurityConfig {
                         .requestMatchers("/api/v1/public/**", "/api/v1/public").permitAll()
 
                         // ── Operator surface: read for everyone signed in ───────────────────
-                        .requestMatchers(HttpMethod.GET, "/api/auth/me", "/api/auth/users",
+                        .requestMatchers(HttpMethod.GET, "/api/auth/me",
                                 "/api/v1/statuses/**",
                                 "/api/v1/incidents", "/api/v1/incidents/**", "/api/v1/scripts", "/api/v1/scripts/**",
                                 "/api/v1/rag/**", "/api/v1/skills", "/api/v1/skills/**",
                                 "/api/v1/integrations/**",
                                 "/api/v1/hitl/**", "/api/v1/telemetry/**")
                         .authenticated()
+                        .requestMatchers(HttpMethod.GET, "/api/auth/users").hasAnyRole("ADMIN", "OWNER")
                         .requestMatchers(HttpMethod.GET, "/api/v1/chat/**").authenticated()
                         .requestMatchers(HttpMethod.POST, "/api/v1/rag/chat", "/api/v1/chat/**").authenticated()
                         .requestMatchers(HttpMethod.PUT, "/api/v1/chat/**").authenticated()
@@ -102,6 +103,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/v1/incidents", "/api/v1/incidents/**")
                         .hasAnyRole("ANALYST", "ADMIN", "OWNER")
                         .requestMatchers(HttpMethod.PUT, "/api/v1/incidents/**").hasAnyRole("ANALYST", "ADMIN", "OWNER")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/scripts/bundle").hasAnyRole("ADMIN", "OWNER")
                         .requestMatchers(HttpMethod.POST, "/api/v1/scripts", "/api/v1/scripts/**")
                         .hasAnyRole("ANALYST", "ADMIN", "OWNER")
                         .requestMatchers(HttpMethod.PUT, "/api/v1/scripts/**").hasAnyRole("ANALYST", "ADMIN", "OWNER")
@@ -120,7 +122,7 @@ public class SecurityConfig {
                         // ── Admin surface: execution, config, deletion, user management ─────
                         .requestMatchers(HttpMethod.PUT, "/api/auth/users/**").hasAnyRole("ADMIN", "OWNER")
                         .requestMatchers(HttpMethod.POST, "/api/auth/users/*/reset-password").hasAnyRole("ADMIN", "OWNER")
-                        .requestMatchers(HttpMethod.POST, "/api/v1/hitl/requests/*/execute").hasAnyRole("ADMIN", "OWNER")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/hitl/requests/*/execute").hasAnyRole("ANALYST", "ADMIN", "OWNER")
                         .requestMatchers("/api/v1/ai/config/**", "/api/v1/integrations/settings",
                                 "/api/v1/integrations/test", "/actuator/**")
                         .hasAnyRole("ADMIN", "OWNER")

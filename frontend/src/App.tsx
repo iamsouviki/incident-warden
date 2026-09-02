@@ -12,7 +12,6 @@ import {
   Moon,
   Search,
   Settings,
-  SlidersHorizontal,
   Sun,
   UploadCloud,
   User,
@@ -28,7 +27,7 @@ import IncidentManagementPage from './pages/IncidentManagementPage';
 import ToolsPage from './pages/ToolsPage';
 import HitlPage from './pages/HitlPage';
 import AccountPage from './pages/AccountPage';
-import { AuthUser, authFetch, clearAuth, getStoredUser, logoutUser, setAuth } from './services/api';
+import { AuthUser, authFetch, getStoredUser, logoutUser, setAuth } from './services/api';
 
 type NavItem = { path: string; label: string; icon: React.ReactNode; group: 'Operate' | 'Manage' };
 
@@ -38,9 +37,9 @@ type NavItem = { path: string; label: string; icon: React.ReactNode; group: 'Ope
 const NAV_ITEMS: NavItem[] = [
   { path: '/', label: 'Assistant', icon: <MessageSquare size={16} />, group: 'Operate' },
   { path: '/incidents', label: 'Incident Dump', icon: <UploadCloud size={16} />, group: 'Operate' },
-  { path: '/tools', label: 'Skills & Tools', icon: <FileCode2 size={16} />, group: 'Operate' },
+  { path: '/tools', label: 'Tools', icon: <FileCode2 size={16} />, group: 'Manage' },
   { path: '/sops', label: 'SOP library', icon: <BookOpen size={16} />, group: 'Manage' },
-  { path: '/settings/ai', label: 'Settings', icon: <SlidersHorizontal size={16} />, group: 'Manage' },
+  { path: '/settings/ai', label: 'Settings', icon: <Settings size={16} />, group: 'Manage' },
 ];
 
 const PAGE_META: Record<string, { title: string; subtitle: string }> = {
@@ -105,7 +104,12 @@ function ForcePasswordReset({ user, onDone, onLogout }: { user: AuthUser; onDone
       });
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error || 'That password could not be set.');
-      const updated = { ...user, mustChangePassword: false };
+      const updated = {
+        ...user,
+        mustChangePassword: false,
+        token: body?.token || user.token,
+        refreshToken: body?.refreshToken || user.refreshToken,
+      };
       setAuth(updated);
       onDone(updated);
     } catch (e) {
@@ -390,8 +394,7 @@ const App: React.FC = () => {
       sessionStorage.removeItem('iw_chat_history');
       sessionStorage.removeItem('iw_active_session_id');
     } catch {}
-    clearAuth();
-    logoutUser();
+    void logoutUser();
     setUser(null);
   };
 
@@ -406,8 +409,15 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const handleAuthExpired = () => setUser(null);
+    const handleAuthChanged = (event: Event) => {
+      setUser((event as CustomEvent<AuthUser | null>).detail || null);
+    };
     window.addEventListener('mcp:auth-expired', handleAuthExpired);
-    return () => window.removeEventListener('mcp:auth-expired', handleAuthExpired);
+    window.addEventListener('mcp:auth-changed', handleAuthChanged);
+    return () => {
+      window.removeEventListener('mcp:auth-expired', handleAuthExpired);
+      window.removeEventListener('mcp:auth-changed', handleAuthChanged);
+    };
   }, []);
 
   return (

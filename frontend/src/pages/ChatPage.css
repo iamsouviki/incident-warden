@@ -531,6 +531,9 @@
 .chat-btn-ghost { background: transparent; color: var(--text-dim); }
 .chat-btn-ghost:hover:not(:disabled) { background: var(--surface3); color: var(--text); }
 
+.chat-btn-secondary { background: var(--surface2); border-color: var(--border); color: var(--text); }
+.chat-btn-secondary:hover:not(:disabled) { background: var(--surface3); border-color: var(--text-dim); }
+
 .chat-btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .chat-btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
 

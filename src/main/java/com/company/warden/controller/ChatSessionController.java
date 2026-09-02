@@ -69,6 +69,9 @@ public class ChatSessionController {
         if (body.containsKey("messages") && body.get("messages") instanceof List<?> list) {
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> turns = (List<Map<String, Object>>) list;
+            if (chatSessionService.getSession(id, currentUser.username()).isEmpty()) {
+                return ResponseEntity.notFound().build();
+            }
             List<ChatMessage> saved = chatSessionService.syncMessages(id, currentUser.username(), turns);
             return ResponseEntity.ok(Map.of("savedCount", saved.size(), "messages", saved));
         }

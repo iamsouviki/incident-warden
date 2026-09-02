@@ -47,6 +47,12 @@ public class AgentAssessmentService {
     /** The configured prior, for callers that pass a precedent score alongside it. */
     public double defaultPrior() { return defaultPriorSuccessRate; }
 
+    public SkillService.RuleResolution resolveFields(String category, String text,
+                                                     Map<String, String> overrides) {
+        return skills == null ? SkillService.RuleResolution.empty()
+                : skills.resolve(category, text, overrides);
+    }
+
     /**
      * @param historicalSuccess observed success rate for this remediation, in [0,1].
      */

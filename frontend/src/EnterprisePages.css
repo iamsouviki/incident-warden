@@ -67,6 +67,9 @@ input::placeholder, textarea::placeholder {
 /* Enterprise Buttons */
 button {
   font-family: var(--font-sans);
+  position: relative;
+  overflow: hidden;
+  user-select: none;
 }
 
 .btn-primary, .btn-sync {
@@ -97,6 +100,54 @@ button {
   background: var(--surface-3) !important;
   border-color: var(--border-bright) !important;
   color: var(--text-1) !important;
+}
+
+button:disabled, button.is-busy {
+  opacity: 0.7 !important;
+  cursor: not-allowed !important;
+  pointer-events: none !important;
+}
+
+/* Universal round spinning animation for any active/disabled button process */
+@keyframes buttonSpin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.spin-icon, .btn-spinner, .spin {
+  animation: buttonSpin 0.8s linear infinite !important;
+  display: inline-block;
+}
+
+/* Round Click Ripple Effect */
+button::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 120%;
+  height: 0;
+  padding-bottom: 120%;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.25);
+  transform: translate(-50%, -50%) scale(0);
+  opacity: 0;
+  pointer-events: none;
+}
+
+button:active:not(:disabled)::after {
+  animation: buttonRipple 0.4s ease-out;
+}
+
+@keyframes buttonRipple {
+  0% {
+    transform: translate(-50%, -50%) scale(0);
+    opacity: 0.5;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(2.2);
+    opacity: 0;
+  }
 }
 
 /* Workflow Rail */

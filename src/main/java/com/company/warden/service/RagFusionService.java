@@ -20,6 +20,9 @@ public class RagFusionService {
     @Autowired(required = false)
     private VectorStore vectorStore;
 
+    @Autowired
+    private SensitiveDataRedactionService sensitiveData;
+
     /**
      * Reciprocal Rank Fusion (RRF)
      * Constant k = 60 is standard in research (e.g. Cormack et al.)
@@ -35,7 +38,7 @@ public class RagFusionService {
                     "Query: " + query;
 
             String response = chatClient.prompt()
-                    .user(prompt)
+                    .user(sensitiveData.redactForLlm(prompt))
                     .call()
                     .content();
 
@@ -55,7 +58,8 @@ public class RagFusionService {
                 queries.add(0, query);
             }
 
-            log.info("[RAG-FUSION] Expanded original query into: {}", queries);
+                log.info("[RAG-FUSION] Expanded original query into: {}", queries.stream()
+                    .map(sensitiveData::redact).toList());
             return queries;
         } catch (Exception e) {
             log.warn("[RAG-FUSION] Query expansion failed: {}. Using original query.", e.getMessage());

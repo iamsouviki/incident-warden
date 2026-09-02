@@ -3,6 +3,8 @@ package com.company.warden.service;
 import com.company.warden.config.CurrentUser;
 import com.company.warden.model.Skill;
 import com.company.warden.repository.SkillRepository;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,6 +18,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
@@ -57,11 +60,13 @@ public class SkillService {
     private final SkillRepository skills;
     private final CurrentUser currentUser;
     private final AuditService audit;
+    private final ObjectMapper json;
 
-    public SkillService(SkillRepository skills, CurrentUser currentUser, AuditService audit) {
+    public SkillService(SkillRepository skills, CurrentUser currentUser, AuditService audit, ObjectMapper json) {
         this.skills = skills;
         this.currentUser = currentUser;
         this.audit = audit;
+        this.json = json;
     }
 
     /**
@@ -162,8 +167,10 @@ public class SkillService {
         skill.setPattern(trim(submitted.getPattern()));
         skill.setActionKey(trim(submitted.getActionKey()));
         skill.setDescription(clip(submitted.getDescription()));
+        skill.setDefinitionJson(submitted.getDefinitionJson());
         skill.setEnabled(submitted.isEnabled());
         validateShape(skill);
+        validateDefinition(skill);
 
         // The privilege boundary. Everything else on this row widens recognition; this field
         // decides whether a plan is treated as a mutation at all, so downgrading it needs the
@@ -213,21 +220,96 @@ public class SkillService {
                 }
             }
             case EXTRACTION -> {
-                if (skill.getPattern().isBlank()) {
-                    throw new IllegalArgumentException("An extraction skill needs a regular expression");
-                }
-                try {
-                    if (Pattern.compile(skill.getPattern()).matcher("").groupCount() < 1) {
-                        throw new IllegalArgumentException(
-                                "The pattern needs one capturing group around the value to extract");
-                    }
-                } catch (PatternSyntaxException e) {
-                    throw new IllegalArgumentException("The pattern is not a valid regular expression: "
-                            + e.getDescription());
-                }
+                if (skill.getPattern().isBlank() && !hasFields(skill.getDefinitionJson()))
+                    throw new IllegalArgumentException("An extraction skill needs fields with capturing patterns");
+                if (!skill.getPattern().isBlank()) validatePattern(skill.getPattern());
             }
             default -> throw new IllegalArgumentException("Unknown kind: " + skill.getKind());
         }
+    }
+
+    private void validatePattern(String raw) {
+        try {
+            if (Pattern.compile(raw).matcher("").groupCount() < 1)
+                throw new IllegalArgumentException("The pattern needs one capturing group around the value to extract");
+        } catch (PatternSyntaxException e) {
+            throw new IllegalArgumentException("The pattern is not a valid regular expression: " + e.getDescription());
+        }
+    }
+
+    private boolean hasFields(String definition) {
+        try { return !json.readTree(definition).path("fields").isEmpty(); }
+        catch (Exception e) { return false; }
+    }
+
+    private void validateDefinition(Skill skill) {
+        if (skill.getDefinitionJson() == null || skill.getDefinitionJson().isBlank()) return;
+        if (skill.getDefinitionJson().length() > 50000) throw new IllegalArgumentException("Rule definition is too large");
+        try {
+            Map<String, Object> root = json.readValue(skill.getDefinitionJson(), new TypeReference<>() {});
+            Object path = root.get("script_path");
+            if (path != null && (!String.valueOf(path).startsWith("scripts/") || String.valueOf(path).contains("..")))
+                throw new IllegalArgumentException("script_path must stay under scripts/ and cannot contain '..'");
+            if (EXTRACTION.equals(skill.getKind())) {
+                Object rawFields = root.get("fields");
+                if (!(rawFields instanceof List<?> fields) || fields.isEmpty())
+                    throw new IllegalArgumentException("Extraction definition needs a non-empty fields array");
+                for (Object rawField : fields) {
+                    if (!(rawField instanceof Map<?, ?> field) || field.get("key") == null)
+                        throw new IllegalArgumentException("Every extraction field needs a key");
+                    Object rawPattern = field.get("pattern");
+                    String pattern = rawPattern == null ? "" : String.valueOf(rawPattern);
+                    if (!pattern.isBlank()) validatePattern(pattern);
+                }
+            }
+        } catch (IllegalArgumentException e) { throw e;
+        } catch (Exception e) { throw new IllegalArgumentException("Rule definition must be valid JSON"); }
+    }
+
+    /** Extracts the category-owned fields; defaults are values, not prompts. */
+    public RuleResolution resolve(String category, String text, Map<String, String> overrides) {
+        Skill extraction = skills.findByKindAndSkillKey(EXTRACTION, category).filter(Skill::isEnabled).orElse(null);
+        if (extraction == null || extraction.getDefinitionJson() == null) return RuleResolution.empty();
+        try {
+            Map<String, Object> root = json.readValue(extraction.getDefinitionJson(), new TypeReference<>() {});
+            List<Map<String, Object>> definitions = (List<Map<String, Object>>) root.getOrDefault("fields", List.of());
+            Map<String, String> values = new LinkedHashMap<>();
+            String source = text == null ? "" : text;
+            for (Map<String, Object> field : definitions) {
+                String key = String.valueOf(field.get("key"));
+                String value = overrides == null ? null : overrides.get(key);
+                boolean booleanField = "boolean".equalsIgnoreCase(String.valueOf(field.get("type")));
+                if (value != null && (value.length() > 300 || value.chars().anyMatch(Character::isISOControl)))
+                    throw new IllegalArgumentException("Invalid value for extraction field " + key);
+                if (booleanField && value != null && !value.isBlank()
+                        && !Set.of("true", "false").contains(value.trim().toLowerCase(Locale.ROOT)))
+                    throw new IllegalArgumentException("Boolean extraction field " + key + " must be true or false");
+                if (booleanField && (value == null || value.isBlank())) {
+                    String pattern = String.valueOf(field.getOrDefault("pattern", ""));
+                    value = (!pattern.isBlank() && Pattern.compile(pattern, Pattern.CASE_INSENSITIVE).matcher(source).find())
+                            ? "true" : String.valueOf(field.getOrDefault("default", "false"));
+                } else if (value == null || value.isBlank()) {
+                    String pattern = String.valueOf(field.getOrDefault("pattern", ""));
+                    if (!pattern.isBlank()) {
+                        Matcher matcher = Pattern.compile(pattern, Pattern.CASE_INSENSITIVE).matcher(source);
+                        if (matcher.find()) value = matcher.groupCount() > 0 ? matcher.group(1) : matcher.group();
+                    }
+                }
+                if ((value == null || value.isBlank()) && field.get("default") != null) value = String.valueOf(field.get("default"));
+                if (value != null && !value.isBlank()) values.put(key, value.trim());
+            }
+            List<Map<String, Object>> missing = definitions.stream()
+                    .filter(field -> Boolean.TRUE.equals(field.get("required")) && !values.containsKey(String.valueOf(field.get("key"))))
+                    .toList();
+            return new RuleResolution(definitions, values, missing, root);
+        } catch (Exception e) {
+            log.warn("[SKILL] Invalid extraction definition for {}: {}", category, e.getMessage());
+            return RuleResolution.empty();
+        }
+    }
+
+    public RuleResolution resolve(String category, String text) {
+        return resolve(category, text, Map.of());
     }
 
     private Skill fresh(String kind) {
@@ -263,4 +345,9 @@ public class SkillService {
 
     /** What {@link RemediationToolRegistry} needs from a row, without exposing the entity. */
     public record ToolRow(String name, int segments, boolean mutating, String description) {}
+
+    public record RuleResolution(List<Map<String, Object>> fields, Map<String, String> values,
+                                 List<Map<String, Object>> missing, Map<String, Object> resolution) {
+        public static RuleResolution empty() { return new RuleResolution(List.of(), Map.of(), List.of(), Map.of()); }
+    }
 }

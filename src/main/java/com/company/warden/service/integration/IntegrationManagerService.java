@@ -39,6 +39,9 @@ public class IntegrationManagerService {
 
     public Map<String, Object> getAllIntegrationSettings() {
         Map<String, Object> settings = new HashMap<>();
+        // Master toggle
+        settings.put("integrationEnabled", getBooleanConfig("integration_enabled", false));
+
         // ServiceNow
         settings.put("serviceNowEnabled", getBooleanConfig("servicenow_enabled", true));
         settings.put("serviceNowUrl", getConfig("servicenow_url", "https://dev-instance.service-now.com"));
@@ -80,6 +83,7 @@ public class IntegrationManagerService {
     }
 
     public void updateIntegrationSettings(Map<String, Object> payload) {
+        if (payload.containsKey("integrationEnabled")) setConfig("integration_enabled", String.valueOf(payload.get("integrationEnabled")));
         if (payload.containsKey("serviceNowEnabled")) setConfig("servicenow_enabled", String.valueOf(payload.get("serviceNowEnabled")));
         if (payload.containsKey("serviceNowUrl")) setConfig("servicenow_url", String.valueOf(payload.get("serviceNowUrl")));
         if (payload.containsKey("serviceNowUsername")) setConfig("servicenow_username", String.valueOf(payload.get("serviceNowUsername")));
@@ -135,6 +139,9 @@ public class IntegrationManagerService {
      */
     @Scheduled(fixedDelay = 300000, initialDelay = 10000)
     public void scheduledSync() {
+        if (!getBooleanConfig("integration_enabled", false)) {
+            return;
+        }
         distributedLockService.executeWithLock("itsm-scheduled-sync", java.time.Duration.ofMinutes(15), () -> {
             int intervalHours = getIntConfig("integration_sync_interval_hours", 1);
             OffsetDateTime last = lastSyncTime();
@@ -151,6 +158,14 @@ public class IntegrationManagerService {
      * others, and a disabled provider is reported as disabled rather than as a success.
      */
     public Map<String, Object> syncAllEnabled() {
+        if (!getBooleanConfig("integration_enabled", false)) {
+            Map<String, Object> disabledSummary = new LinkedHashMap<>();
+            disabledSummary.put("status", "INTEGRATIONS_DISABLED");
+            disabledSummary.put("error", "Integrations are disabled in settings. Enable integrations first.");
+            disabledSummary.put("totalSynced", 0);
+            return disabledSummary;
+        }
+
         Map<String, Object> summary = new LinkedHashMap<>();
         Map<String, Object> providers = new LinkedHashMap<>();
         int total = 0, enabled = 0, failed = 0;

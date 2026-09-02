@@ -22,40 +22,85 @@ interface Skill {
   mutating?: boolean;
   enabled?: boolean;
   description?: string;
+  definitionJson?: string;
   updatedBy?: string;
   updatedAt?: string;
 }
 
 type Kind = Skill['kind'];
 
-/** The 3 Core Agent Skills */
-const KINDS: Array<{ kind: Kind; badge: string; title: string; what: string; field: string }> = [
+/** The 3 Core Agent Skills with default hardcoded operational rules */
+const KINDS: Array<{ kind: Kind; badge: string; title: string; what: string; field: string; sample: string }> = [
   {
     kind: 'CATEGORIZATION',
     badge: 'Skill 1',
-    title: 'Categorization',
-    what: 'Categorizes incoming incidents from ServiceNow & Freshservice by matching symptoms, keywords, and phrases to incident categories and remediation actions.',
-    field: 'Keywords to match (comma-separated)',
+    title: 'Categorization Skill Rules',
+    what: 'Maps incoming incident symptom keywords, title phrases, and log messages to operational incident categories.',
+    field: 'Incident Classification Rules (Markdown / YAML)',
+    sample: `# Incident Classification Rules
+
+## Categories
+
+### POG_ISSUE
+- **Patterns / Keywords**:
+  - \`POG MISSING\`
+  - \`NOT ABLE PRINT LEBELS\`
+  - \`NOT ABLE TO PRINT LABELS\`
+  - \`PLANOGRAM ISSUE\`
+  - \`SHELF TAG NOT GENERATING\`
+- **Description**: Planogram and shelf label generation/printing errors.`,
   },
   {
     kind: 'EXTRACTION',
     badge: 'Skill 2',
-    title: 'Extraction of Required Details',
-    what: 'Extracts critical remediation parameters (target hostname, store number, IP address, server name) from raw incident descriptions using regex patterns with capturing groups.',
-    field: 'Regex pattern (must have 1 capturing group)',
+    title: 'Extraction Skill Rules',
+    what: 'Defines mandatory and optional parameter extraction rules from ticket text before triggering remediation tools.',
+    field: 'Extraction Rules by Category (Markdown / YAML)',
+    sample: `# Extraction Rules by Category
+
+Define the mandatory and optional fields to extract from incident descriptions.
+
+## POG_ISSUE
+- **StoreNumber**: (Required) Store or branch number/identifier (e.g. \`4022\`, \`105\`).
+- **PogLocation**: (Required) Planogram location code in Department-Number-Level format (e.g. \`4-800-U\` or \`4/800/U\`) or POG layout identifier.
+- **LabelPrintIssueFlag**: (Required Boolean: \`true\` or \`false\`)
+  - Set to \`true\` if the ticket mentions problems with printing labels, "unable to print labels", "label queue stuck", "labels not generating", or printer errors.
+  - Defaults to \`false\` if label printing is not explicitly mentioned as failing.
+- **OldPogFlag**: (Required Boolean: \`true\` or \`false\`)
+  - Set to \`true\` if the ticket mentions "old POG", "previous planogram", "discontinued layout", "reset old version", or outdated POG references.
+  - Defaults to \`false\` if it is a standard active planogram issue.
+- **Skulist**: (Optional) Specific SKU or comma-separated list of product IDs affected (e.g. \`123456,789012\`).`,
   },
   {
     kind: 'EXECUTION',
     badge: 'Skill 3',
-    title: 'Skill Mapping & Remediation Tools',
-    what: 'Maps incident categories to safe, approved tools and automated scripts (e.g. RESTART_SERVICE, CLEAR_CACHE, CHECK_URL) along with parameter counts and safety levels.',
-    field: 'Tool parameters & configuration',
+    title: 'Resolution & Automation Rules',
+    what: 'Maps incident categories to execution scripts, mandatory parameters, and escalation routing rules.',
+    field: 'Resolution & Automation Rules (Markdown / YAML)',
+    sample: `# Resolution and Automation Rules
+
+Map categories to resolution scripts, expected outcomes, and reassignment routing.
+
+Only a **script_path** declared here may be executed: the pipeline builds its
+automation allowlist from these values, so removing the line disables automation
+for that category.
+
+## POG_ISSUE
+- **can_automate**: true
+- **script_path**: "scripts/POGISSUEINCIDENTS.PS1"
+- **mandatory_args**: ["StoreNumber", "PogLocation", "LabelPrintIssueFlag", "OldPogFlag"]
+- **optional_args**: ["Skulist"]
+- **success_status**: "Resolved"
+- **failure_status**: "Escalated"
+- **failure_route**: "ESCALATE_L2_STORE_OPS"
+- **duplicate_route**: "ESCALATE_L3_MERCHANDISING_DEV"
+- **file_missing_route**: "ESCALATE_L2_STORE_OPS"`,
   },
 ];
 
 const empty = (kind: Kind): Skill => ({
   kind, skillKey: '', pattern: '', actionKey: '', argCount: 2,
-  mutating: true, enabled: true, description: '',
+  mutating: true, enabled: true, description: '', definitionJson: kind === 'EXTRACTION' ? '{"fields":[]}' : '{}',
 });
 
 const SkillsPanel: React.FC = () => {
@@ -170,6 +215,21 @@ const SkillsPanel: React.FC = () => {
                          ? '\\b(\\d{2,6}-(?:till|lane|pos)-\\d{1,3})\\b'
                          : 'printer, print queue, print job'}
                        onChange={e => setDraft({ ...draft, pattern: e.target.value })} />
+              </div>
+            )}
+
+            {draft.kind !== 'EXECUTION' && (
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={label} htmlFor="skill-definition">Structured rule definition (JSON)</label>
+                <textarea id="skill-definition" style={{ ...input, minHeight: '130px', fontFamily: 'var(--font-mono, monospace)', resize: 'vertical' }}
+                          value={draft.definitionJson || '{}'}
+                          placeholder={draft.kind === 'EXTRACTION'
+                            ? '{"fields":[{"key":"StoreNumber","required":true,"pattern":"..."}]}'
+                            : '{"script_path":"scripts/example.ps1","can_automate":true}' }
+                          onChange={e => setDraft({ ...draft, definitionJson: e.target.value })} />
+                <div style={{ marginTop: '4px', fontSize: '11px', color: 'var(--text-muted)' }}>
+                  Extraction rules define dynamic fields. Categorization rules carry resolution metadata such as script_path and escalation routes.
+                </div>
               </div>
             )}
 

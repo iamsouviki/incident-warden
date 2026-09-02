@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { authFetch } from '../services/api';
-import { Play, Trash2, Plus, Save, Sparkles, AlertTriangle } from 'lucide-react';
-import SkillsPanel from '../components/SkillsPanel';
+import { authFetch, extractApiError } from '../services/api';
+import { Plus, Save, Trash2, Sparkles, X, Loader2 } from 'lucide-react';
+import { Modal, Button } from '../components/ui';
 
-import './ScriptEditorPage.css'; // Reuse or import editor styles
+import './ScriptEditorPage.css';
 
 interface SavedScript {
   id: string;
@@ -12,63 +12,39 @@ interface SavedScript {
   scriptContent: string;
   language: string;
   category: string;
-  targetHost: string;
+  requiredInputData?: string;
+  validatedInDryRun?: boolean;
 }
-
-interface ExecutionLog {
-  id: string;
-  scriptId?: string;
-  name: string;
-  timestamp: string;
-  scriptContent: string;
-  status: string;
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-}
-
-interface Finding {
-  level: string;
-  layer: string;
-  message: string;
-}
-
-const CATEGORIES = [
-  'APPLICATION', 'PERFORMANCE', 'INFRASTRUCTURE', 'DATABASE', 'DEPLOYMENT', 'NETWORK',
-];
 
 const ToolsPage: React.FC = () => {
-
-  // Skills default: Categorization, Extraction, and Skill Mapping define what actions the platform takes.
-  const [mode, setMode] = useState<'skills' | 'scripts'>('skills');
-
   const [savedScripts, setSavedScripts] = useState<SavedScript[]>([]);
   const [loadingList, setLoadingList] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
-  // Right editor workspace state
+  // Tool Authoring / Edit Modal State
+  const [showToolModal, setShowToolModal] = useState(false);
   const [activeScriptId, setActiveScriptId] = useState<string | null>(null);
+  const [existingSkillKey, setExistingSkillKey] = useState<string | null>(null);
   const [promptDescription, setPromptDescription] = useState('');
   const [scriptName, setScriptName] = useState('');
   const [scriptDesc, setScriptDesc] = useState('');
   const [scriptContent, setScriptContent] = useState('');
-  const [language, setLanguage] = useState<'bash' | 'powershell'>('bash');
-  const [category, setCategory] = useState('APPLICATION');
-  const [targetHost, setTargetHost] = useState('localhost');
-  const [dryRun, setDryRun] = useState(true);
+  const [language, setLanguage] = useState<'python' | 'sh' | 'ps1'>('python');
+  const [category, setCategory] = useState('POG_ISSUE');
+  const [requiredInputData, setRequiredInputData] = useState('');
+  const [validatedInDryRun, setValidatedInDryRun] = useState(true);
+  const [classificationRules, setClassificationRules] = useState('');
+  const [extractionRules, setExtractionRules] = useState('');
+  const [resolutionRules, setResolutionRules] = useState('');
 
   // Status & outputs
-  const [validating, setValidating] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [executing, setExecuting] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [validationLevel, setValidationLevel] = useState('');
-  const [findings, setFindings] = useState<Finding[]>([]);
-  const [execOutput, setExecOutput] = useState<{ stdout: string; stderr: string; exitCode: number } | null>(null);
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const lineNumRef = useRef<HTMLDivElement>(null);
 
-  // Load left-hand side list data
   const loadSavedScripts = async () => {
     setLoadingList(true);
     try {
@@ -88,316 +64,326 @@ const ToolsPage: React.FC = () => {
     loadSavedScripts();
   }, []);
 
-  // Parse query parameters to pre-fill prompt description
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const descParam = params.get('desc');
-    if (descParam) {
-      setPromptDescription(descParam);
-    }
-  }, []);
-
-  // Sync editor line scrolling
-  const handleEditorScroll = () => {
-    if (textareaRef.current && lineNumRef.current) {
-      lineNumRef.current.scrollTop = textareaRef.current.scrollTop;
-    }
-  };
-
-  const lineCount = scriptContent ? scriptContent.split('\n').length : 1;
-  const lineNumbers = Array.from({ length: lineCount }, (_, i) => i + 1).join('\n');
-
-  // Handle Tab spaces
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Tab') {
-      e.preventDefault();
-      const ta = e.currentTarget;
-      const start = ta.selectionStart;
-      const end = ta.selectionEnd;
-      const val = ta.value;
-      setScriptContent(val.substring(0, start) + '    ' + val.substring(end));
-      setTimeout(() => { ta.selectionStart = ta.selectionEnd = start + 4; }, 0);
-    }
-  };
-
-  // Reset workspace for new script creation
-  const handleNewTool = () => {
+  const openNewToolModal = () => {
     setActiveScriptId(null);
+    setExistingSkillKey(null);
     setScriptName('');
     setScriptDesc('');
-    setScriptContent('');
     setPromptDescription('');
-    setLanguage('bash');
-    setCategory('APPLICATION');
-    setTargetHost('localhost');
-    setFindings([]);
-    setExecOutput(null);
-    setValidationLevel('');
+    setScriptContent('# Python 3 Remediation Tool\n# Define remediation logic below\n');
+    setLanguage('python');
+    setCategory('POG_ISSUE');
+    setRequiredInputData('');
+    setValidatedInDryRun(true);
+    setClassificationRules('');
+    setExtractionRules('');
+    setResolutionRules('');
+    setMessage(null);
+    setShowToolModal(true);
   };
 
-  // Load selected script into workspace
-  const handleSelectScript = (script: SavedScript) => {
+  const openEditToolModal = async (script: SavedScript) => {
     setActiveScriptId(script.id);
+    setExistingSkillKey(null);
     setScriptName(script.name);
     setScriptDesc(script.description || '');
     setScriptContent(script.scriptContent);
-    setLanguage(script.language as 'bash' | 'powershell');
-    setCategory(script.category || 'APPLICATION');
-    setTargetHost(script.targetHost || 'localhost');
-    setPromptDescription(script.description || '');
-    setFindings([]);
-    setExecOutput(null);
-    setValidationLevel('');
+    setLanguage((script.language as any) || 'python');
+    setCategory(script.category || 'POG_ISSUE');
+    setRequiredInputData(script.requiredInputData || '');
+    setValidatedInDryRun(script.validatedInDryRun !== false);
+    setClassificationRules('');
+    setExtractionRules('');
+    setResolutionRules('');
+    setMessage(null);
+    setShowToolModal(true);
+    try {
+      const res = await authFetch('/api/v1/skills');
+      if (!res.ok) return;
+      const rows = await res.json();
+      const categorySkill = rows.find((row: any) => row.kind === 'CATEGORIZATION'
+        && (row.skillKey === script.category || row.actionKey === script.category
+          || row.actionKey?.split(':')[0] === script.category));
+      const actionKey = categorySkill?.actionKey || '';
+      setExistingSkillKey(actionKey ? actionKey.split(':')[0] : categorySkill?.skillKey || null);
+      const extractionSkill = rows.find((row: any) => row.kind === 'EXTRACTION' && row.skillKey === script.category);
+      setClassificationRules((categorySkill?.pattern || '').split(/[,;]+/).map((value: string) => value.trim()).filter(Boolean).join('\n'));
+      setExtractionRules(extractionSkill?.definitionJson || '{"fields":[]}');
+      setResolutionRules(categorySkill?.definitionJson || '{}');
+    } catch { /* The modal remains usable; save validation explains what is missing. */ }
   };
 
-  const handleDeleteScript = async (id: string, e: React.MouseEvent) => {
+  const [pendingDelete, setPendingDelete] = useState<SavedScript | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const requestDelete = (script: SavedScript, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!window.confirm('Delete this tool from database?')) return;
+    setPendingDelete(script);
+  };
+
+  const confirmDelete = async () => {
+    if (!pendingDelete) return;
+    setDeleting(true);
     try {
-      const res = await authFetch(`/api/v1/scripts/${id}`, { method: 'DELETE' });
+      const res = await authFetch(`/api/v1/scripts/${pendingDelete.id}`, { method: 'DELETE' });
       if (res.ok) {
-        if (activeScriptId === id) handleNewTool();
-        loadSavedScripts();
+        setSavedScripts(prev => prev.filter(s => s.id !== pendingDelete.id));
+        setMessage({ type: 'success', text: 'Tool deleted successfully' });
+        setPendingDelete(null);
+      } else {
+        const detail = await extractApiError(res);
+        setMessage({ type: 'error', text: `Failed to delete tool: ${detail}` });
       }
     } catch (err) {
-      console.error(err);
+      setMessage({ type: 'error', text: `Network error deleting tool: ${err instanceof Error ? err.message : 'unknown'}` });
+    } finally {
+      setDeleting(false);
     }
   };
 
-  // AI Code Generation
   const handleGenerateScript = async () => {
     if (!promptDescription.trim()) return;
     setGenerating(true);
-    setFindings([]);
-    setExecOutput(null);
-    setValidationLevel('');
+    setMessage(null);
     try {
-      const r = await authFetch('/api/v1/scripts/generate', {
+      const res = await authFetch('/api/v1/scripts/generate', {
         method: 'POST',
-        body: JSON.stringify({
-          description: promptDescription.trim(),
-          category,
-          targetHost,
-          os: language === 'powershell' ? 'windows' : 'linux',
-        }),
+        body: JSON.stringify({ prompt: promptDescription, language, category }),
       });
-      const data = await r.json();
-      if (r.ok && data.script) {
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'AI generation failed.');
+      if (data.script) {
         setScriptContent(data.script);
-        if (!scriptName) {
-          setScriptName(promptDescription.substring(0, 40));
-        }
+      }
+      if (data.name) setScriptName(data.name);
+      if (data.description) setScriptDesc(data.description);
+      // Map "inputs" -> Section 2 (Information required). Convert the LLM
+      // string into a stable JSON envelope {fields:[...]} so the runtime
+      // EXTRACTION skill can index each input independently.
+      if (data.inputs) {
+        const fields = parseInputsString(data.inputs);
+        setExtractionRules(JSON.stringify({ fields }, null, 2));
+        setRequiredInputData(data.inputs);
+      }
+      if (data.resolution) {
+        setResolutionRules(typeof data.resolution === 'string'
+          ? data.resolution
+          : JSON.stringify(data.resolution, null, 2));
+      }
+      // Map "issues" -> Section 1 (Issues this tool handles). One phrase per
+      // line keeps the textarea readable.
+      if (data.issues) {
+        const issues = data.issues
+          .split(/[,;]+/)
+          .map((v: string) => v.trim())
+          .filter(Boolean);
+        if (issues.length) setClassificationRules(issues.join('\n'));
       }
     } catch (e) {
       console.error(e);
+      setMessage({ type: 'error', text: 'AI generation failed. Please write the script manually.' });
     } finally {
       setGenerating(false);
     }
   };
 
-  // Guardrail validation
-  const handleValidateScript = async () => {
-    if (!scriptContent.trim()) return;
-    setValidating(true);
-    setFindings([]);
-    try {
-      const r = await authFetch('/api/v1/scripts/validate', {
-        method: 'POST',
-        body: JSON.stringify({ scriptContent, os: language === 'powershell' ? 'windows' : 'linux' }),
-      });
-      const data = await r.json();
-      setValidationLevel(data.level || 'PASS');
-      setFindings(data.findings || []);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setValidating(false);
+  // Parse the LLM "inputs" string into structured {name,type,required} fields.
+  const parseInputsString = (raw: string): { name: string; type: string; required: boolean }[] => {
+    if (!raw) return [];
+    const out: { name: string; type: string; required: boolean }[] = [];
+    for (const part of raw.split(/[,;]+/)) {
+      const m = /^\s*([A-Za-z_][A-Za-z0-9_\-]*)\s*(?::\s*([A-Za-z_][A-Za-z0-9_\-]*))?\s*\(\s*(Required|Optional)\s*\)\s*$/i.exec(part);
+      if (!m) continue;
+      out.push({ name: m[1], type: (m[2] || 'string').toLowerCase(), required: m[3].toLowerCase() === 'required' });
     }
+    return out;
   };
 
-  // Execute Script
-  const handleExecuteScript = async () => {
-    if (!scriptContent.trim()) return;
-    if (!dryRun && (validationLevel !== 'PASS' || findings.some(f => f.level === 'BLOCK'))) {
-      setValidationLevel('BLOCK');
-      setFindings(current => current.length ? current : [{ level: 'BLOCK', layer: 'EXECUTION GATE', message: 'Run Validate Guardrails and resolve all blocking findings before executing on a live host.' }]);
+  const handleSaveScript = async () => {
+    if (!scriptContent.trim() || !classificationRules.trim() || !extractionRules.trim() || !resolutionRules.trim()) {
+      setMessage({ type: 'error', text: 'Complete all three tool behavior sections before saving.' });
       return;
     }
-    setExecuting(true);
-    setExecOutput(null);
     try {
-      const name = scriptName.trim() || `Script Run: ${promptDescription.substring(0, 40) || 'Untitled'}`;
-      const r = await authFetch('/api/v1/scripts/execute', {
-        method: 'POST',
-        body: JSON.stringify({
-          scriptContent,
-          language,
-          dryRun,
-          category,
-          description: name,
-          targetHost
-        }),
-      });
-      const data = await r.json();
-      setExecOutput({
-        stdout: data.stdout || '',
-        stderr: data.stderr || '',
-        exitCode: data.exitCode ?? -1
-      });
-
-      // Save execution to local history
-      const logEntry: ExecutionLog = {
-        id: Math.random().toString(36).substring(2, 9),
-        scriptId: activeScriptId || undefined,
-        name: name,
-        timestamp: new Date().toISOString(),
-        scriptContent,
-        status: data.exitCode === 0 ? 'SUCCESS' : 'FAILURE',
-        exitCode: data.exitCode ?? -1,
-        stdout: data.stdout || '',
-        stderr: data.stderr || ''
-      };
-
-      const history = JSON.parse(localStorage.getItem('mcp_execution_history') || '[]');
-      history.push(logEntry);
-      localStorage.setItem('mcp_execution_history', JSON.stringify(history));
-      // ponytail: refresh localStorage-backed list inline — no separate function needed
-      setSavedScripts(JSON.parse(localStorage.getItem('mcp_execution_history') || '[]'));
+      const extraction = JSON.parse(extractionRules);
+      const resolution = JSON.parse(resolutionRules);
+      if (!Array.isArray(extraction.fields) || extraction.fields.length === 0) throw new Error('Add at least one extraction field.');
+      if (!resolution.script_path || !resolution.success_status || !resolution.failure_status) throw new Error('Add script_path, success_status, and failure_status.');
     } catch (e) {
-      console.error(e);
-    } finally {
-      setExecuting(false);
+      setMessage({ type: 'error', text: e instanceof Error ? e.message : 'Extraction and resolution rules must be valid JSON.' });
+      return;
     }
-  };
-
-  // Save/Update Script in DB
-  const handleSaveScript = async () => {
-    if (!scriptContent.trim()) return;
     const name = scriptName.trim() || promptDescription.trim().substring(0, 40) || 'Untitled Remediation';
+    // Never send an empty category — DB column is NOT NULL. Fall back to a safe default.
+    const safeCategory = (category || '').trim() || 'POG_ISSUE';
     setSaving(true);
+    setMessage(null);
     try {
       const payload = {
+        id: activeScriptId || undefined,
         name,
         description: scriptDesc.trim() || promptDescription.trim(),
         scriptContent,
         language,
-        category,
-        targetHost
+        category: safeCategory,
+        requiredInputData: requiredInputData.trim(),
+        validatedInDryRun,
       };
-      
-      const endpoint = activeScriptId ? `/api/v1/scripts/${activeScriptId}` : '/api/v1/scripts';
-      const method = activeScriptId ? 'PUT' : 'POST';
 
-      const res = await authFetch(endpoint, {
-        method,
-        body: JSON.stringify(payload)
+      // Save all three required skills as one tool definition.
+      const toolSkillKey = existingSkillKey || name.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+      const skillPayloads = [
+        {
+          kind: 'EXECUTION',
+          skillKey: toolSkillKey,
+          argCount: (extractionRules.match(/"key"\s*:/g) || []).length || 2,
+          mutating: true,
+          enabled: true,
+          description: `Remediation tool script for ${safeCategory}: ${name}`,
+        },
+        {
+          kind: 'CATEGORIZATION',
+          skillKey: toolSkillKey,
+          pattern: classificationRules.split('\n').map(v => v.trim()).filter(Boolean).join(', '),
+          actionKey: toolSkillKey,
+          enabled: true,
+          description: `Issues that use ${name}`,
+          definitionJson: resolutionRules,
+        },
+        {
+          kind: 'EXTRACTION',
+          skillKey: toolSkillKey,
+          pattern: '',
+          enabled: true,
+          description: `Required and optional inputs for ${name}`,
+          definitionJson: extractionRules,
+        },
+      ];
+      const res = await authFetch('/api/v1/scripts/bundle', {
+        method: 'POST',
+        body: JSON.stringify({ script: payload, skills: skillPayloads }),
       });
-      
-      if (res.ok) {
-        const data = await res.json();
-        if (data.id) setActiveScriptId(data.id);
-        setValidationLevel('PASS');
-        loadSavedScripts();
+      if (!res.ok) {
+        const detail = await extractApiError(res);
+        setMessage({ type: 'error', text: `Tool bundle was not saved: ${detail}` });
+        return;
       }
-    } catch (err) {
-      console.error(err);
+
+      setMessage({ type: 'success', text: 'Tool & LLM Skills saved to DB successfully' });
+      setShowToolModal(false);
+      loadSavedScripts();
+    } catch (e) {
+      setMessage({ type: 'error', text: `Network error saving tool: ${e instanceof Error ? e.message : 'unknown'}` });
     } finally {
       setSaving(false);
     }
   };
 
+  const syncScroll = () => {
+    if (textareaRef.current && lineNumRef.current) {
+      lineNumRef.current.scrollTop = textareaRef.current.scrollTop;
+    }
+  };
+
+  const lineCount = Math.max(1, scriptContent.split('\n').length);
+  const lineNumbers = Array.from({ length: lineCount }, (_, i) => i + 1);
+
+  const filteredScripts = savedScripts.filter(s => {
+    const q = searchQuery.toLowerCase().trim();
+    return !q || s.name.toLowerCase().includes(q) || (s.description && s.description.toLowerCase().includes(q)) || s.category.toLowerCase().includes(q);
+  });
+
   return (
-    <div style={{ display: 'grid', gap: '16px', width: '100%' }}>
-
-    {/* ── 3 Core Skills vs Custom Scripts ── */}
-    <div style={{ display: 'inline-grid', gridTemplateColumns: '1fr 1fr', gap: '6px', background: 'var(--surface2)', padding: '4px', borderRadius: '6px', maxWidth: '420px' }}>
-      <button
-        onClick={() => setMode('skills')}
-        style={{
-          border: 'none', background: mode === 'skills' ? 'var(--surface)' : 'transparent',
-          color: mode === 'skills' ? 'var(--text)' : 'var(--text-dim)',
-          minHeight: '36px', padding: '0 16px', borderRadius: '4px', cursor: 'pointer',
-          fontSize: '12px', fontWeight: 600,
-        }}
-      >
-        🎯 3 Core Skills Engine
-      </button>
-      <button
-        onClick={() => setMode('scripts')}
-        style={{
-          border: 'none', background: mode === 'scripts' ? 'var(--surface)' : 'transparent',
-          color: mode === 'scripts' ? 'var(--text)' : 'var(--text-dim)',
-          minHeight: '36px', padding: '0 16px', borderRadius: '4px', cursor: 'pointer',
-          fontSize: '12px', fontWeight: 600,
-        }}
-      >
-        🛠 Custom Scripts & Sandbox
-      </button>
-    </div>
-
-    {mode === 'skills' ? <SkillsPanel /> : (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr)) 1.2fr', gap: '20px', minHeight: 'calc(100vh - 160px)', width: '100%' }}>
+    <div style={{ maxWidth: '1000px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '20px', width: '100%' }}>
       
-      {/* ── LEFT PANEL: Saved Tools Directory and execution history ── */}
-      <div className="card" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-        <div className="card-header" style={{ display: 'flex', flexDirection: 'column', gap: '12px', borderBottom: '1px solid var(--border)', padding: '16px 20px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              Tools Navigator
-            </span>
-            {/* Create New Tool triggers styled state reset */}
-            <button
-              onClick={handleNewTool}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 12px',
-                background: 'var(--michaels-red)', color: 'white', border: 'none', borderRadius: '4px',
-                fontSize: '11px', fontWeight: 'bold', cursor: 'pointer', textTransform: 'uppercase'
-              }}
-            >
-              <Plus size={12} /> New Tool
-            </button>
-          </div>
+      {/* Header Card */}
+      <div className="card" style={{ padding: '20px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+        <div>
+          <h2 style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text-1)', margin: '0 0 4px' }}>
+            Remediation Tools & Scripts
+          </h2>
+          <p style={{ fontSize: '12.5px', color: 'var(--text-3)', margin: 0 }}>
+            Configure incident category skills, required input parameters, and executable scripts for human-approved remediation.
+          </p>
+        </div>
+        <button
+          onClick={openNewToolModal}
+          className="btn-primary"
+          style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '9px 18px', fontSize: '13px', fontWeight: 700 }}
+        >
+          <Plus size={15} /> New Tool
+        </button>
+      </div>
+
+      {message && (
+        <div style={{
+          padding: '12px 16px', borderRadius: '8px',
+          background: message.type === 'success' ? 'var(--ok-dim)' : 'var(--crit-dim)',
+          color: message.type === 'success' ? 'var(--ok)' : 'var(--crit)',
+          border: `1px solid ${message.type === 'success' ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)'}`,
+          fontSize: '13px', fontWeight: 600
+        }}>
+          {message.text}
+        </div>
+      )}
+
+      {/* Main Tool Grid Card */}
+      <div className="card" style={{ display: 'flex', flexDirection: 'column', minHeight: '400px' }}>
+        <div className="card-header" style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+          <span style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+            Tool Registry ({filteredScripts.length})
+          </span>
+          <input
+            type="text"
+            placeholder="Search tools by name or category..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            style={{ width: '280px', padding: '6px 12px', fontSize: '13px', height: '34px' }}
+          />
         </div>
 
-        <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+        <div style={{ padding: '20px', flex: 1 }}>
           {loadingList ? (
-            <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px', padding: '20px' }}>Loading tools...</div>
-          ) : savedScripts.length === 0 ? (
-            <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px', padding: '20px' }}>
-              No saved tools found. Write code on the right and click Save to store it.
+            <div style={{ textAlign: 'center', color: 'var(--text-3)', fontSize: '13px', padding: '40px' }}>Loading tools...</div>
+          ) : filteredScripts.length === 0 ? (
+            <div style={{ textAlign: 'center', color: 'var(--text-3)', fontSize: '13px', padding: '40px' }}>
+              No remediation tools found. Click <strong>"New Tool"</strong> above to create a custom script.
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {savedScripts.map(script => (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
+              {filteredScripts.map(script => (
                 <div
                   key={script.id}
-                  onClick={() => handleSelectScript(script)}
+                  onClick={() => openEditToolModal(script)}
                   style={{
-                    padding: '12px', border: '1px solid var(--border)', borderRadius: '8px', cursor: 'pointer',
-                    background: activeScriptId === script.id ? 'var(--surface3)' : 'var(--surface)',
-                    transition: 'all 0.2s', borderLeft: activeScriptId === script.id ? '4px solid var(--michaels-red)' : '1px solid var(--border)'
+                    padding: '16px', border: '1px solid var(--border)', borderRadius: '8px', cursor: 'pointer',
+                    background: 'var(--surface-1)', transition: 'all 0.2s', display: 'flex', flexDirection: 'column', gap: '8px'
                   }}
+                  onMouseEnter={e => (e.currentTarget.style.borderColor = 'var(--accent)')}
+                  onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--border)')}
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '240px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <span style={{ fontWeight: 700, fontSize: '14px', color: 'var(--text-1)', wordBreak: 'break-word' }}>
                       {script.name}
                     </span>
                     <button
-                      onClick={(e) => handleDeleteScript(script.id, e)}
-                      style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--red)', padding: '2px' }}
+                      onClick={(e) => requestDelete(script, e)}
+                      style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--crit)', padding: '2px' }}
+                      title="Delete Tool"
+                      aria-label={`Delete tool ${script.name}`}
                     >
-                      <Trash2 size={13} />
+                      <Trash2 size={14} />
                     </button>
                   </div>
-                  <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  <p style={{ fontSize: '12px', color: 'var(--text-3)', margin: 0, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: '1.5' }}>
                     {script.description || 'No description provided.'}
                   </p>
-                  <div style={{ display: 'flex', gap: '8px', marginTop: '8px', fontSize: '10px', color: 'var(--text-dim)' }}>
-                    <span style={{ background: 'var(--surface2)', padding: '2px 6px', borderRadius: '4px', fontFamily: 'monospace' }}>
-                      {script.targetHost}
+                  <div style={{ display: 'flex', gap: '8px', marginTop: 'auto', paddingTop: '6px', fontSize: '10.5px' }}>
+                    <span style={{ background: 'var(--surface-2)', color: 'var(--text-2)', padding: '2px 8px', borderRadius: '4px', fontWeight: 700 }}>
+                      {script.category}
                     </span>
-                    <span style={{ background: 'var(--accent-dim)', color: 'var(--accent)', padding: '2px 6px', borderRadius: '4px', textTransform: 'uppercase' }}>
-                      {script.language}
+                    <span style={{ background: 'var(--accent-dim)', color: 'var(--accent)', padding: '2px 8px', borderRadius: '4px', fontWeight: 700, textTransform: 'uppercase' }}>
+                      {script.language || 'python'}
                     </span>
                   </div>
                 </div>
@@ -407,209 +393,171 @@ const ToolsPage: React.FC = () => {
         </div>
       </div>
 
-      {/* ── RIGHT PANEL: Unified Script Editor Workspace ── */}
-      <div className="card" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-        <div className="card-header" style={{ borderBottom: '1px solid var(--border)', padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <span style={{ fontSize: '14px', fontWeight: 'bold', color: 'var(--text)' }}>
-              {activeScriptId ? `Editing Tool: ${scriptName}` : 'Create New Remediation Tool'}
-            </span>
-          </div>
-          <div style={{ display: 'flex', gap: '10px' }}>
-            <button
-              onClick={handleSaveScript}
-              disabled={saving || !scriptContent.trim()}
-              className="btn-primary"
-              style={{ padding: '8px 16px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}
-            >
-              <Save size={12} /> Save Tool
-            </button>
-          </div>
-        </div>
-
-        <div style={{ padding: '20px', flex: 1, display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto' }}>
-          
-          {/* AI Generator Block */}
-          <div style={{ display: 'flex', gap: '8px', background: 'var(--surface2)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border)' }}>
-            <input
-              type="text"
-              placeholder="Instruct AI to write code... e.g. 'Disk cleanup for tomcat server' or 'Reboot service'"
-              value={promptDescription}
-              onChange={e => setPromptDescription(e.target.value)}
-              style={{ flex: 1, fontSize: '13px', border: '1px solid var(--border)', background: 'var(--surface)', padding: '10px 12px', borderRadius: '4px' }}
-              onKeyDown={e => e.key === 'Enter' && handleGenerateScript()}
-            />
-            <button
-              onClick={handleGenerateScript}
-              disabled={generating || !promptDescription.trim()}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '4px', padding: '10px 16px',
-                background: 'var(--text)', color: 'white', border: 'none', borderRadius: '4px',
-                fontWeight: 'bold', cursor: 'pointer', fontSize: '12px'
-              }}
-            >
-              {generating ? <span className="se-spinner" /> : <Sparkles size={13} />} Generate
-            </button>
-          </div>
-
-          {/* Config row — clean 1-2 line parameter grid */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '10px', background: 'var(--surface-2)', padding: '12px 14px', borderRadius: '8px', border: '1px solid var(--border)' }}>
-            <div>
-              <label style={{ display: 'block', fontSize: '10.5px', fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.5px' }}>Tool Name</label>
-              <input
-                type="text"
-                value={scriptName}
-                onChange={e => setScriptName(e.target.value)}
-                placeholder="e.g. Server Cleanup"
-                style={{ height: '34px', padding: '0 10px', fontSize: '12.5px' }}
-              />
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '10.5px', fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.5px' }}>Language</label>
-              <select
-                value={language}
-                onChange={e => setLanguage(e.target.value as 'bash' | 'powershell')}
-                style={{ height: '34px', padding: '0 10px', fontSize: '12.5px', appearance: 'auto' }}
-              >
-                <option value="bash">Bash (Linux)</option>
-                <option value="powershell">PowerShell (Windows)</option>
-              </select>
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '10.5px', fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.5px' }}>Category</label>
-              <select
-                value={category}
-                onChange={e => setCategory(e.target.value)}
-                style={{ height: '34px', padding: '0 10px', fontSize: '12.5px', appearance: 'auto' }}
-              >
-                {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '10.5px', fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.5px' }}>Target Host</label>
-              <input
-                type="text"
-                value={targetHost}
-                onChange={e => setTargetHost(e.target.value)}
-                placeholder="localhost"
-                style={{ height: '34px', padding: '0 10px', fontSize: '12.5px' }}
-              />
-            </div>
-          </div>
-
-          {/* Script Code Area */}
-          <div style={{ flex: 1, minHeight: '220px', display: 'flex', flexDirection: 'column' }}>
-            <label style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '6px' }}>Script Code</label>
-            <div className="se-editor-wrap" style={{ flex: 1 }}>
-              <div className="se-line-numbers" ref={lineNumRef}>
-                {lineNumbers}
+      {/* ── CREATE / EDIT TOOL MODAL ── */}
+      {showToolModal && (
+        <div className="modal-backdrop" onClick={() => setShowToolModal(false)}>
+          <div className="modal-panel" onClick={e => e.stopPropagation()} style={{ width: '840px', maxWidth: '95vw', maxHeight: '90vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <div className="modal-header" style={{ position: 'sticky', top: 0, zIndex: 5, padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <h2 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--text-1)', margin: 0 }}>
+                  {activeScriptId ? `Editing Tool: ${scriptName}` : 'Create New Remediation Tool'}
+                </h2>
               </div>
-              <textarea
-                ref={textareaRef}
-                className="se-textarea"
-                value={scriptContent}
-                onChange={e => { setScriptContent(e.target.value); setValidationLevel(''); }}
-                onScroll={handleEditorScroll}
-                onKeyDown={handleKeyDown}
-                placeholder={`# Write code here...`}
-                spellCheck={false}
-              />
-            </div>
-          </div>
-
-          {/* Actions panel */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
-            <div style={{ display: 'flex', gap: '12px' }}>
-              <button
-                onClick={handleValidateScript}
-                disabled={validating || !scriptContent.trim()}
-                style={{
-                  padding: '10px 18px', background: 'var(--surface2)', color: 'var(--text)',
-                  border: '1px solid var(--border)', borderRadius: '6px', cursor: 'pointer',
-                  fontSize: '13px', fontWeight: 'bold'
-                }}
-              >
-                {validating ? 'Validating...' : '✓ Validate Guardrails'}
-              </button>
-
-              <button
-                onClick={handleExecuteScript}
-                disabled={executing || !scriptContent.trim()}
-                className="btn-primary"
-                style={{ padding: '10px 20px', fontSize: '13px' }}
-              >
-                <Play size={13} style={{ marginRight: '6px', verticalAlign: 'middle' }} />
-                {dryRun ? 'Simulate (Dry Run)' : 'Execute Action'}
+              <button className="close-btn" onClick={() => setShowToolModal(false)} aria-label="Close" style={{ background: 'transparent', border: 'none', color: 'var(--text-3)', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '4px', borderRadius: '6px' }}>
+                <X size={18} />
               </button>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <input
-                type="checkbox"
-                id="editorDryRun"
-                checked={dryRun}
-                onChange={e => setDryRun(e.target.checked)}
-                style={{ width: '16px', height: '16px', cursor: 'pointer' }}
-              />
-              <label htmlFor="editorDryRun" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-dim)', cursor: 'pointer' }}>
-                Safety Dry-Run Mode
-              </label>
+            <div style={{ padding: '20px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>
+
+                <div style={{ padding: '12px 14px', background: 'var(--accent-dim)', borderRadius: '6px', fontSize: '12px', color: 'var(--text-2)', border: '1px solid var(--border)' }}>
+                  <strong>Tool behavior rules</strong><br />These three sections are required. They tell the LLM when to use this tool, what to collect, and how to interpret the result.
+                </div>
+
+                <div style={{ display: 'grid', gap: '12px', padding: '14px', border: '1px solid var(--border)', borderRadius: '8px' }}>
+                  <strong style={{ fontSize: '13px' }}>1. Issues this tool handles <span style={{ color: 'var(--crit)' }}>*</span></strong>
+                  <span style={{ fontSize: '11.5px', color: 'var(--text-3)' }}>Describe the issues, symptoms, or error patterns in plain text. The AI handles free-form text or lists.</span>
+                  <textarea value={classificationRules} onChange={e => setClassificationRules(e.target.value)} placeholder="e.g. Printer offline, Label print missing, POG generation failure..." style={{ minHeight: '80px', padding: '9px 10px', fontSize: '12.5px', resize: 'vertical' }} />
+                </div>
+
+                <div style={{ display: 'grid', gap: '12px', padding: '14px', border: '1px solid var(--border)', borderRadius: '8px' }}>
+                  <strong style={{ fontSize: '13px' }}>2. Information required to run it <span style={{ color: 'var(--crit)' }}>*</span></strong>
+                  <span style={{ fontSize: '11.5px', color: 'var(--text-3)' }}>List required inputs in plain text (e.g. StoreNumber, PogLocation) or JSON. AI parses free-form text dynamically.</span>
+                  <textarea value={extractionRules} onChange={e => setExtractionRules(e.target.value)} placeholder="e.g. StoreNumber (Required), PogLocation (Required), LabelPrintIssueFlag (Boolean)" style={{ minHeight: '100px', padding: '9px 10px', fontSize: '12px', resize: 'vertical' }} />
+                </div>
+
+                <div style={{ display: 'grid', gap: '12px', padding: '14px', border: '1px solid var(--border)', borderRadius: '8px' }}>
+                  <strong style={{ fontSize: '13px' }}>3. How to interpret the result <span style={{ color: 'var(--crit)' }}>*</span></strong>
+                  <span style={{ fontSize: '11.5px', color: 'var(--text-3)' }}>Describe expected outcome and escalation paths in plain text or JSON. AI interprets free-form rules seamlessly.</span>
+                  <textarea value={resolutionRules} onChange={e => setResolutionRules(e.target.value)} placeholder="e.g. If success mark resolved; if failed escalate to L2 Store Ops" style={{ minHeight: '100px', padding: '9px 10px', fontSize: '12px', resize: 'vertical' }} />
+                </div>
+                  {/* AI prompt generator bar */}
+              <div style={{ display: 'flex', gap: '8px', background: 'var(--surface-2)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                <input
+                  type="text"
+                  placeholder={`Instruct AI to generate code in ${language === 'python' ? 'Python 3' : language === 'sh' ? 'Shell Script' : 'PowerShell'}... e.g. 'Disk cleanup for tomcat server'`}
+                  value={promptDescription}
+                  onChange={e => setPromptDescription(e.target.value)}
+                  style={{ flex: 1, fontSize: '13px', padding: '8px 12px' }}
+                  onKeyDown={e => e.key === 'Enter' && handleGenerateScript()}
+                />
+                <button
+                  type="button"
+                  onClick={handleGenerateScript}
+                  disabled={generating || !promptDescription.trim()}
+                  className="btn-primary"
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', fontSize: '12px' }}
+                >
+                  <Sparkles size={14} /> {generating ? 'Generating...' : 'Generate AI Code'}
+                </button>
+              </div>
+
+              {/* Tool metadata fields */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', fontWeight: 800, color: 'var(--text-3)', textTransform: 'uppercase', marginBottom: '4px' }}>
+                    Tool Name <span style={{ color: 'var(--crit)' }}>*</span>
+                  </label>
+                  <input type="text" placeholder="e.g. Restart Production Service" value={scriptName} onChange={e => setScriptName(e.target.value)} style={{ width: '100%', padding: '8px 10px', fontSize: '13px' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', fontWeight: 800, color: 'var(--text-3)', textTransform: 'uppercase', marginBottom: '4px' }}>
+                    Script Language <span style={{ color: 'var(--crit)' }}>*</span>
+                  </label>
+                  <select value={language} onChange={e => setLanguage(e.target.value as any)} style={{ width: '100%', padding: '8px 10px', fontSize: '13px' }}>
+                    <option value="python">Python 3 (.py)</option>
+                    <option value="sh">Shell Script (.sh)</option>
+                    <option value="ps1">PowerShell (.ps1)</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Description */}
+              <div>
+                <label style={{ display: 'block', fontSize: '11px', fontWeight: 800, color: 'var(--text-3)', textTransform: 'uppercase', marginBottom: '4px' }}>Description</label>
+                <input type="text" placeholder="Operational purpose of this tool..." value={scriptDesc} onChange={e => setScriptDesc(e.target.value)} style={{ width: '100%', padding: '8px 10px', fontSize: '13px' }} />
+              </div>
+
+              {/* Code Editor */}
+              <div>
+                <label style={{ display: 'block', fontSize: '11px', fontWeight: 800, color: 'var(--text-3)', textTransform: 'uppercase', marginBottom: '4px' }}>
+                  Script Code <span style={{ color: 'var(--crit)' }}>*</span>
+                </label>
+                <div style={{ border: '1px solid var(--border)', borderRadius: '8px', overflow: 'hidden', display: 'flex', height: '220px', background: '#0f172a' }}>
+                  <div ref={lineNumRef} style={{ width: '40px', background: '#1e293b', color: '#64748b', padding: '10px 0', textAlign: 'right', paddingRight: '10px', fontSize: '12px', fontFamily: 'var(--font-mono)', userSelect: 'none', overflowY: 'hidden' }}>
+                    {lineNumbers.map(n => <div key={n}>{n}</div>)}
+                  </div>
+                  <textarea
+                    ref={textareaRef}
+                    value={scriptContent}
+                    onChange={e => setScriptContent(e.target.value)}
+                    onScroll={syncScroll}
+                    style={{ flex: 1, background: 'transparent', color: '#e2e8f0', border: 'none', padding: '10px', fontSize: '12.5px', fontFamily: 'var(--font-mono)', resize: 'none', lineHeight: '1.5', outline: 'none' }}
+                  />
+                </div>
+              </div>
+
+              {/* Validated in Dry Run Checkbox */}
+              <div style={{ background: 'var(--surface-2)', padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontSize: '13px', fontWeight: 700, color: 'var(--text-1)' }}>
+                  <input
+                    type="checkbox"
+                    checked={validatedInDryRun}
+                    onChange={e => setValidatedInDryRun(e.target.checked)}
+                    style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                  />
+                  Script has been validated in dry-run system environment
+                </label>
+                <span style={{ fontSize: '11.5px', color: 'var(--text-3)', display: 'block', marginTop: '4px', marginLeft: '26px' }}>
+                  Confirms that the script syntax and parameter handling have been verified before offering to operators.
+                </span>
+              </div>
+
+              {/* Modal Save Footer (sticky bottom) */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', borderTop: '1px solid var(--border)', padding: '14px 20px', background: 'var(--surface-1)', position: 'sticky', bottom: 0, marginTop: 'auto', zIndex: 4 }}>
+                <button type="button" onClick={() => setShowToolModal(false)} className="btn-secondary" style={{ padding: '8px 16px', fontSize: '12.5px' }}>
+                  Cancel
+                </button>
+                <button type="button" onClick={handleSaveScript} disabled={saving || !scriptContent.trim()} className="btn-primary" style={{ padding: '8px 18px', fontSize: '12.5px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  {saving ? <Loader2 size={14} className="spin" /> : <Save size={14} />} {saving ? 'Saving...' : 'Save Tool'}
+                </button>
+              </div>
+
             </div>
           </div>
-
-          {/* Validation finding messages */}
-          {findings.length > 0 && (
-            <div style={{ background: 'rgba(239, 68, 68, 0.05)', border: '1px solid rgba(239, 68, 68, 0.2)', padding: '14px', borderRadius: '8px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--red)', fontWeight: 'bold', fontSize: '13px', marginBottom: '8px' }}>
-                <AlertTriangle size={15} /> Safety Findings Detected ({findings.length})
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                {findings.map((f, i) => (
-                  <div key={i} style={{ fontSize: '12px', color: 'var(--text-dim)', paddingLeft: '8px', borderLeft: '2px solid var(--red)' }}>
-                    <b>[{f.layer}]</b> {f.message}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Console / run logs output */}
-          {execOutput && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <div style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase' }}>
-                Run Output Console (Status: {execOutput.exitCode === 0 ? 'SUCCESS' : 'FAILED'} - Code: {execOutput.exitCode})
-              </div>
-              
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '10px' }}>
-                {execOutput.stdout && (
-                  <div>
-                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: '4px' }}>stdout</div>
-                    <pre style={{
-                      background: '#0f172a', color: '#38bdf8', padding: '12px', borderRadius: '6px',
-                      fontFamily: 'monospace', fontSize: '12px', overflowX: 'auto', maxHeight: '180px'
-                    }}>
-                      {execOutput.stdout}
-                    </pre>
-                  </div>
-                )}
-                {execOutput.stderr && (
-                  <div>
-                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: '4px' }}>stderr</div>
-                    <pre style={{
-                      background: '#0f172a', color: '#f87171', padding: '12px', borderRadius: '6px',
-                      fontFamily: 'monospace', fontSize: '12px', overflowX: 'auto', maxHeight: '180px'
-                    }}>
-                      {execOutput.stderr}
-                    </pre>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
         </div>
-      </div>
-    </div>
-    )}
+      )}
+
+      {/* ── DELETE CONFIRMATION MODAL ── */}
+      <Modal
+        open={!!pendingDelete}
+        title="Delete tool?"
+        onClose={() => !deleting && setPendingDelete(null)}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setPendingDelete(null)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={confirmDelete} disabled={deleting} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              {deleting ? <Loader2 size={14} className="spin" /> : <Trash2 size={14} />}
+              {deleting ? 'Deleting…' : 'Delete tool'}
+            </Button>
+          </>
+        }
+      >
+        {pendingDelete && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <p style={{ margin: 0, color: 'var(--text-2)', fontSize: '13px' }}>
+              This will remove <strong style={{ color: 'var(--text-1)' }}>{pendingDelete.name}</strong> from the
+              workspace registry, along with its CATEGORIZATION, EXTRACTION, and EXECUTION skills.
+            </p>
+            <p style={{ margin: 0, color: 'var(--text-3)', fontSize: '12px' }}>
+              Any plan that already references this tool will need to be re-approved.
+            </p>
+          </div>
+        )}
+      </Modal>
+
     </div>
   );
 };
