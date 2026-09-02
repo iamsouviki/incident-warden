@@ -31,7 +31,6 @@ interface ReviewDetail {
     actionName: string;
     target: string;
     sopEvidence?: string;
-    confidenceScore: number;
     riskScore: number;
     guardrailStatus: string;
     rollbackPlan?: string;
@@ -374,7 +373,6 @@ const HitlReviewConsole: React.FC<{ requestId: string; onBack: () => void; onCha
               <div><dt>Target</dt><dd>{plan.target || '—'}</dd></div>
               <div><dt>Action key</dt><dd>{action.actionKey || <em>none declared</em>}</dd></div>
               <div><dt>Tool</dt><dd>{action.valid ? `${action.tool}${action.mutating ? ' (mutating)' : ' (read-only)'}` : <span className="fact-bad">{action.reason || 'not runnable'}</span>}</dd></div>
-              <div><dt>Confidence</dt><dd>{Math.round(plan.confidenceScore || 0)}%</dd></div>
               <div><dt>Risk</dt><dd>{Math.round(plan.riskScore || 0)}%</dd></div>
               <div><dt>Plan status</dt><dd>{plan.status}</dd></div>
               <div><dt>Plan hash</dt><dd className="fact-hash" title={plan.planHash}>{plan.planHash ? `${plan.planHash.slice(0, 16)}…` : '—'}</dd></div>

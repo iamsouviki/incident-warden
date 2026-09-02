@@ -6,6 +6,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { AuthUser, authFetch, extractApiError, login } from '../services/api';
+import Markdown from '../components/Markdown';
 import './ChatPage.css';
 
 /**
@@ -17,9 +18,9 @@ import './ChatPage.css';
  *   solve       → a tool card, then a script the user reads, then a run with live stages.
  *
  * Why an anonymous question never reaches the model: an unauthenticated LLM route spends the
- * workspace's provider budget on whoever finds the URL, and the assistant needs a tenant from
- * the security context that a stranger does not have. So the anonymous tier answers from SQL
- * and says so, rather than pretending to be the same assistant with less to say.
+ * workspace's provider budget on whoever finds the URL, and the assistant needs a signed-in
+ * identity that a stranger does not have. So the anonymous tier answers from SQL and says so,
+ * rather than pretending to be the same assistant with less to say.
  *
  * The run flow adds no new approval mechanism. It drives the same three HITL endpoints the
  * review queue drives — decision, dry-run, execute — in the same order, with the same server
@@ -28,7 +29,6 @@ import './ChatPage.css';
 
 interface SessionItem {
   id: string;
-  tenantId?: string;
   username?: string;
   title: string;
   createdAt: string;
@@ -56,6 +56,8 @@ interface PublicStats {
 /** Everything the card and the review modal show, flattened out of GET /hitl/requests/{id}. */
 export interface ToolPlan {
   requestId: string;
+  /** The incident's own id. Needed to push the resolved status back to the source system. */
+  incidentId: string;
   incidentRef: string;
   actionKey: string;
   tool: string;
@@ -66,7 +68,6 @@ export interface ToolPlan {
   parameters: Record<string, any>;
   findings: Array<{ check: string; status: string; detail: string }>;
   planHash: string;
-  confidence: number;
   risk: number;
   canApprove: boolean;
   sodBlocked: boolean;
@@ -127,6 +128,24 @@ interface Message {
     reason: string;
     action: string;
   };
+  /** After a successful run: ask the operator to verify, then offer to close the ticket. */
+  resolve?: {
+    incidentId: string;
+    incidentRef: string;
+    answered?: 'yes' | 'no';
+    /** Set once the source system has been told, success or failure. */
+    result?: string;
+    failed?: boolean;
+  };
+  /** Nothing to run, so the answer is words: what is wrong and the steps to take by hand. */
+  analysis?: {
+    loading?: boolean;
+    team?: string;
+    sourceLabel?: string;
+    sourceDetail?: string;
+    steps?: string;
+    error?: string;
+  };
   /** When not signed in, remediation asks to sign in first. */
   signin?: string;
   /** Dynamic missing information inputs card */
@@ -134,6 +153,7 @@ interface Message {
 }
 
 interface MissingInfoCardState {
+  requestId: string;
   incidentId: string;
   incidentRef: string;
   actionKey: string;
@@ -142,6 +162,8 @@ interface MissingInfoCardState {
   fields: MissingParamField[];
   values: Record<string, string>;
   validationError?: string;
+  /** Set on submit: the form is spent, so its inputs and buttons go read-only. */
+  submitted?: boolean;
 }
 
 interface IncidentChoice {
@@ -149,6 +171,7 @@ interface IncidentChoice {
   ref: string;
   subject: string;
   status: string;
+  description?: string;
 }
 
 // ponytail: COUNT_TERMS removed — routing is now done server-side
@@ -192,11 +215,6 @@ const contentWords = (question: string): string[] =>
 
 // ponytail: pickKeyword removed — keyword selection moved to backend RAG
 
-const formatMarkdown = (text: string): string => text
-  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-  .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-  .replace(/\*(.+?)\*/g, '<em>$1</em>');
-
 const shortDate = (iso?: string | null) => {
   if (!iso) return '—';
   const date = new Date(iso);
@@ -204,7 +222,66 @@ const shortDate = (iso?: string | null) => {
     { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 };
 
+/**
+ * A failure the operator can act on: what was being attempted, what it means, what to try.
+ *
+ * The server's own message becomes the last line rather than the whole reply. A bare
+ * `Request failed with status 500` — or, against a stubbed dev backend, something like
+ * `not stubbed: /api/v1/rag/chat` — is a diagnostic, and shown alone it reads as the app
+ * talking to itself. Keeping it is still right: it is what makes a support ticket useful.
+ */
+const friendlyError = (attempt: string, detail: string, suggestion: string) =>
+  `**I could not ${attempt}.**\n`
+  + `${suggestion}\n`
+  + `If it keeps happening, quote this to whoever runs the platform — it names the exact step `
+  + `that failed: *${detail}*`;
+
+/** The suggestion half of `friendlyError`, for the two failures that dominate. */
+const RETRY_HINT = 'Nothing was changed, so it is safe to ask again. '
+  + 'The platform may be starting up, or its connection to the incident database may be down.';
+const OFFLINE_HINT = 'Nothing was changed. The platform did not answer at all, which usually '
+  + 'means the backend is not running or the network dropped between here and it. '
+  + 'Wait a few seconds and ask again.';
+
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * One HITL request detail → the plan card's state.
+ *
+ * Shared by both routes into the card: the direct one (the incident already carried every
+ * parameter) and the one through the missing-parameters form. They used to build it
+ * separately, and the form's copy did not exist — it merged into `msg.plan`, which the
+ * missing-info route never set, so submitting the form emptied the bubble.
+ */
+const planFrom = (
+  detail: any,
+  incident: IncidentChoice,
+  requestId: string,
+  values: Record<string, string>,
+): ToolPlan => ({
+  requestId,
+  incidentId: incident.id,
+  incidentRef: incident.ref,
+  actionKey: detail.action?.actionKey || '',
+  tool: detail.action?.tool || 'generated script',
+  mutating: Boolean(detail.action?.mutating),
+  target: values['targetHost'] || values['store'] || detail.plan?.target || 'store-0042-pos-01',
+  script: detail.script?.script || '',
+  language: detail.script?.language || '',
+  provenance: detail.script?.provenance || '',
+  what: detail.script?.explanation?.what || '',
+  how: Array.isArray(detail.script?.explanation?.how) ? detail.script.explanation.how : [],
+  scanLevel: detail.script?.scanLevel || '',
+  rollback: detail.plan?.rollbackPlan || '',
+  findings: Array.isArray(detail.guardrailFindings) ? detail.guardrailFindings : [],
+  planHash: detail.plan?.planHash || '',
+  risk: Number(detail.plan?.riskScore ?? 0),
+  canApprove: Boolean(detail.canApprove),
+  sodBlocked: Boolean(detail.separationOfDutiesBlocked),
+  riskLevel: (detail.plan?.riskLevel ?? detail.action?.riskLevel ?? 'MEDIUM') as ToolPlan['riskLevel'],
+  commandPreview: detail.script?.commandPreview ?? detail.action?.commandPreview ?? '',
+  parameters: { ...(detail.plan?.parameters ?? {}), ...values },
+});
 
 interface Props {
   user: AuthUser | null;
@@ -274,6 +351,55 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
       sessionStorage.setItem(user ? STORAGE_KEY : ANON_STORAGE_KEY, JSON.stringify(messages));
     } catch {}
   }, [messages, user]);
+
+  /**
+   * Mirror the settled conversation into the server session, so History replays it.
+   *
+   * The turn list is sent whole and the server replaces the session's rows with it
+   * (`ChatSessionService.syncMessages` deletes then inserts), which makes this idempotent —
+   * no append bookkeeping, and an edited/cancelled card corrects itself on the next sync.
+   * Cards travel as `metadata`, which is what `selectSession` spreads back onto the message,
+   * so a restored conversation still has its plan, run and resolve state and not just prose.
+   *
+   * Gated on `!loading` so a run in progress is written once, at rest, rather than once per
+   * revealed log line.
+   */
+  useEffect(() => {
+    if (!user || !activeSessionId || loading || messages.length === 0) return;
+    const turns = messages.map(({ id, role, text, loading: _l, ...card }) => ({
+      role: role === 'bot' ? 'assistant' : 'user',
+      content: text ?? '',
+      metadata: Object.keys(card).length ? card : undefined,
+    }));
+    authFetch(`/api/v1/chat/sessions/${activeSessionId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ messages: turns }),
+    }).catch(() => null);
+  }, [messages, activeSessionId, loading, user]);
+
+  /**
+   * Every signed-in question belongs to a session. This used to live inside the plain-chat
+   * branch of `handleSend`, so remediation questions — the ones that route to `startSolve`,
+   * and the reason most people open the app — created no session and left no history at all.
+   */
+  const ensureSession = async (question: string): Promise<string | null> => {
+    if (activeSessionId) return activeSessionId;
+    try {
+      const res = await authFetch('/api/v1/chat/sessions', {
+        method: 'POST',
+        body: JSON.stringify({
+          title: question.length > 40 ? `${question.substring(0, 37)}…` : question,
+        }),
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      setActiveSessionId(data.id);
+      sessionStorage.setItem(ACTIVE_SESSION_KEY, data.id);
+      return data.id;
+    } catch {
+      return null;
+    }
+  };
 
   const loadSessions = async () => {
     if (!user) return;
@@ -560,20 +686,26 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
         updateMessage(botId, {
           loading: false,
           error: true,
-          text: 'Too many public requests. Please wait a moment or sign in.',
+          text: '**That is more public questions than the preview allows in one minute.**\n'
+            + 'The anonymous tier is rate-limited per browser so it cannot be used to scrape '
+            + 'the incident data. Wait about a minute, or sign in — signed-in users get a much '
+            + 'higher limit and the full, unmasked ticket detail.',
         });
       } else {
+        // Not "I only answer incident questions": that is the guardrail's reply and it
+        // arrives with 200. Reaching here means the request itself failed, and blaming the
+        // question for a server fault sends the user off to rephrase something that was fine.
         updateMessage(botId, {
           loading: false,
           error: true,
-          text: 'Sorry, I can help you only with incident details.',
+          text: friendlyError('answer that', await extractApiError(res), RETRY_HINT),
         });
       }
     } catch {
       updateMessage(botId, {
         loading: false,
         error: true,
-        text: 'The public assistant service is not reachable right now.',
+        text: friendlyError('answer that', 'the request never completed', OFFLINE_HINT),
       });
     }
   };
@@ -597,10 +729,11 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
     const res = await authFetch('/api/v1/incidents');
     if (!res.ok) throw new Error(await extractApiError(res));
     const all = (await res.json()) as Array<{
-      id: string; externalId?: string; subject?: string; status?: string;
+      id: string; externalId?: string; subject?: string; status?: string; description?: string;
     }>;
     const choice = (i: typeof all[number]): IncidentChoice => ({
       id: i.id, ref: i.externalId || '—', subject: i.subject || '', status: i.status || '',
+      description: i.description || '',
     });
 
     if (!all.length) return [];
@@ -730,6 +863,41 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
     return { fields, values };
   };
 
+  /**
+   * No tool to run, so the answer is words: what is wrong, where the advice came from, and
+   * the steps to take by hand.
+   *
+   * ponytail: one card for both no-tool cases rather than two scenario renderers.
+   * /incidents/analyze already decides the source — an approved SOP when one matches, the
+   * model's own reasoning when none does — and returns that decision as a label the operator
+   * reads. Re-deciding it here would be a second opinion the UI has no business holding.
+   */
+  const explainFor = async (incident: IncidentChoice, botId: string) => {
+    const patch = (next: NonNullable<Message['analysis']>) =>
+      setMessages(prev => prev.map(m => (m.id === botId
+        ? { ...m, analysis: { ...m.analysis, ...next } } : m)));
+    try {
+      const res = await authFetch('/api/v1/incidents/analyze', {
+        method: 'POST',
+        body: JSON.stringify({ subject: incident.subject, description: incident.description || '' }),
+      });
+      if (!res.ok) {
+        patch({ loading: false, error: await extractApiError(res) });
+        return;
+      }
+      const analysis = await res.json();
+      patch({
+        loading: false,
+        team: analysis.suggestedTeam,
+        sourceLabel: analysis.sourceLabel,
+        sourceDetail: analysis.sourceDetail,
+        steps: analysis.suggestedResolution,
+      });
+    } catch (e) {
+      patch({ loading: false, error: e instanceof Error ? e.message : 'The platform did not answer.' });
+    }
+  };
+
   /** Plans against one incident and renders whichever of the two outcomes the server chose. */
   const planFor = async (incident: IncidentChoice, botId: string) => {
     updateMessage(botId, { loading: true, text: undefined, choices: undefined });
@@ -767,7 +935,9 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
             reason: body?.reason || 'No plan could be offered for this incident.',
             action: body?.action || 'A person works this one by hand.',
           },
+          analysis: { loading: true },
         });
+        await explainFor(incident, botId);
         return;
       }
 
@@ -775,13 +945,27 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
         updateMessage(botId, {
           loading: false,
           error: true,
-          text: 'Unable to load or create a review request for this incident.',
+          text: `**I could not open a review request for ${incident.ref}.**\n`
+            + 'Every remediation runs behind a human approval record, and this ticket has '
+            + 'neither an existing open request nor one the platform was willing to create — '
+            + 'usually because the ticket is already closed, or another reviewer is holding a '
+            + 'request against it.\n'
+            + 'Check the Approvals queue for this ticket; if there is nothing there, reopen the '
+            + 'ticket or work it by hand from the Incidents page.',
         });
         return;
       }
       const detailRes = await authFetch(`/api/v1/hitl/requests/${requestId}`);
       if (!detailRes.ok) {
-        updateMessage(botId, { loading: false, error: true, text: await extractApiError(detailRes) });
+        updateMessage(botId, {
+          loading: false, error: true,
+          text: friendlyError(
+            `read the approved plan for ${incident.ref}`,
+            await extractApiError(detailRes),
+            'The request exists but its details would not load, so there is nothing to review '
+              + 'and nothing has been run. It is also visible in the Approvals queue, which '
+              + 'reads the same record.'),
+        });
         return;
       }
       const detail = await detailRes.json();
@@ -795,6 +979,7 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
         updateMessage(botId, {
           loading: false,
           missingInfo: {
+            requestId,
             incidentId: incident.id,
             incidentRef: incident.ref,
             actionKey: detail.action?.actionKey || 'remediation_script',
@@ -807,39 +992,15 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
         return;
       }
 
-      const targetHost = values['targetHost'] || values['store'] || detail.plan?.target || 'store-0042-pos-01';
-
-      updateMessage(botId, {
-        loading: false,
-        plan: {
-          requestId,
-          incidentRef: incident.ref,
-          actionKey: detail.action?.actionKey || '',
-          tool: detail.action?.tool || 'generated script',
-          mutating: Boolean(detail.action?.mutating),
-          target: targetHost,
-          script: detail.script?.script || '',
-          language: detail.script?.language || '',
-          provenance: detail.script?.provenance || '',
-          what: detail.script?.explanation?.what || '',
-          how: Array.isArray(detail.script?.explanation?.how) ? detail.script.explanation.how : [],
-          scanLevel: detail.script?.scanLevel || '',
-          rollback: detail.plan?.rollbackPlan || '',
-          findings: Array.isArray(detail.guardrailFindings) ? detail.guardrailFindings : [],
-          planHash: detail.plan?.planHash || '',
-          confidence: Number(detail.plan?.confidenceScore ?? 0),
-          risk: Number(detail.plan?.riskScore ?? 0),
-          canApprove: Boolean(detail.canApprove),
-          sodBlocked: Boolean(detail.separationOfDutiesBlocked),
-          riskLevel: (detail.plan?.riskLevel ?? detail.action?.riskLevel ?? 'MEDIUM') as ToolPlan['riskLevel'],
-          commandPreview: detail.script?.commandPreview ?? detail.action?.commandPreview ?? '',
-          parameters: detail.plan?.parameters ?? {},
-        },
-      });
+      updateMessage(botId, { loading: false, plan: planFrom(detail, incident, requestId, values) });
     } catch (e) {
       updateMessage(botId, {
         loading: false, error: true,
-        text: e instanceof Error ? e.message : 'Could not reach the platform.',
+        text: friendlyError(
+          `build a remediation plan for ${incident.ref}`,
+          e instanceof Error ? e.message : 'the request never completed',
+          'Nothing was run and the ticket is unchanged. You can still work it by hand from '
+            + 'the Incidents page, where the same SOP and history are available.'),
       });
     }
   };
@@ -850,15 +1011,21 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
       if (!matches.length) {
         updateMessage(botId, {
           loading: false,
-          text: 'I could not find a ticket matching that. Name the ticket reference — for example '
-            + '**FS-1001** — or a word from its subject.',
+          text: '**I could not find a ticket matching that.**\n'
+            + 'I search open tickets by reference and by words in the subject, so the quickest '
+            + 'way through is to name the reference — for example **FS-1001** — or a distinctive '
+            + 'word from the subject such as *printer* or *terminal*.\n'
+            + 'If the ticket is already closed, or was raised in a system that has not synced '
+            + 'yet, it will not be here: check the Incidents page and run a sync if it is missing.',
         });
         return;
       }
       if (matches.length > 1) {
         updateMessage(botId, {
           loading: false,
-          text: `${matches.length} tickets match. Which one should I work on?`,
+          text: `**${matches.length} open tickets match that description.**\n`
+            + 'I will only plan a remediation against one ticket at a time, because the script '
+            + 'and the target host are derived from that ticket. Pick the one you mean:',
           choices: matches,
         });
         return;
@@ -867,7 +1034,8 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
     } catch (e) {
       updateMessage(botId, {
         loading: false, error: true,
-        text: e instanceof Error ? e.message : 'Could not reach the platform.',
+        text: friendlyError('look that ticket up',
+          e instanceof Error ? e.message : 'the request never completed', RETRY_HINT),
       });
     }
   };
@@ -875,9 +1043,11 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
   // ── Running ───────────────────────────────────────────────────────────────────
 
   /**
-   * Approve → dry run → execute, in that order, because the server enforces that order.
+   * Approve → execute. One stage, because the operator has already read the script in the
+   * Review & Run modal and pressed the button; a dry run here would be a second simulation
+   * they did not ask for. The dry run lives on the Tools page, where choosing it is the point.
    *
-   * Each stage is a real request whose spinner runs for exactly as long as the call does.
+   * The stage is a real request whose spinner runs for exactly as long as the call does.
    * ponytail: the executor's output arrives whole, at the end of its call, and is then
    * revealed a line at a time so a 40-line run reads as a run rather than a paste. Swap in
    * an SSE tail of the ActionExecution rows if a script ever runs long enough that per-call
@@ -885,7 +1055,6 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
    */
   const runPlan = async (messageId: string, plan: ToolPlan) => {
     const stages: RunStage[] = [
-      { label: 'Simulate Tool (Dry Run)', state: 'pending' },
       { label: `Running ${plan.tool} on ${plan.target}`, state: 'pending' },
     ];
     updateMessage(messageId, { answered: 'yes', run: { stages, done: false, failed: false } });
@@ -923,9 +1092,16 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
       }
     };
 
+    // A failed run gets no prompt: nothing was fixed, so asking whether to close the
+    // ticket would be asking the operator to confirm something untrue.
     const finish = (failed: boolean) => {
       setMessages(prev => prev.map(m => (m.id === messageId && m.run
-        ? { ...m, run: { ...m.run, done: true, failed } } : m)));
+        ? {
+            ...m,
+            run: { ...m.run, done: true, failed },
+            ...(failed ? {} : { resolve: { incidentId: plan.incidentId, incidentRef: plan.incidentRef } }),
+          }
+        : m)));
       setLoading(false);
     };
 
@@ -935,24 +1111,57 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
       body: JSON.stringify({ decision: 'APPROVE', reason: 'Confirmed by operator in chat' }),
     }).catch(() => null);
 
-    // Stage 1: Dry run / simulation
-    const dry = await step(0, `/api/v1/hitl/requests/${plan.requestId}/dry-run`);
-    if (!dry) { finish(true); return; }
-    const dryStatus = dry.execution?.status || 'DRY_RUN';
-    patchStage(messageId, 0, { state: 'ok', detail: dryStatus });
-    await revealLog(0, dry.execution?.output);
-
-    // Stage 2: Direct Execution
-    const run = await step(1, `/api/v1/hitl/requests/${plan.requestId}/execute`);
+    // Stage 1: Direct Execution
+    const run = await step(0, `/api/v1/hitl/requests/${plan.requestId}/execute`);
     if (!run) { finish(true); return; }
     const status = String(run.execution?.status || '');
     const failed = !status.toUpperCase().startsWith('SUCCE') && !status.toUpperCase().includes('OK');
-    patchStage(messageId, 1, {
+    patchStage(messageId, 0, {
       state: failed ? 'fail' : 'ok',
       detail: `${status}${run.execution?.mode ? ` · ${run.execution.mode}` : ''}`,
     });
-    await revealLog(1, run.execution?.output);
+    await revealLog(0, run.execution?.output);
     finish(failed);
+  };
+
+  /**
+   * The last rung of the loop: the operator verifies, then the source system is told.
+   * Reuses the integration endpoint that already pushes the status to ServiceNow /
+   * Freshservice / Jira and saves it locally — chat gets no second way to close a ticket.
+   */
+  const answerResolve = async (
+    messageId: string,
+    resolve: NonNullable<Message['resolve']>,
+    answer: 'yes' | 'no',
+  ) => {
+    const patch = (next: Partial<NonNullable<Message['resolve']>>) =>
+      setMessages(prev => prev.map(m => (m.id === messageId && m.resolve
+        ? { ...m, resolve: { ...m.resolve, ...next } } : m)));
+
+    patch({ answered: answer });
+    if (answer === 'no') return;
+    try {
+      const res = await authFetch(`/api/v1/integrations/incidents/${resolve.incidentId}/status`, {
+        method: 'POST',
+        body: JSON.stringify({ status: 'Resolved' }),
+      });
+      if (!res.ok) {
+        patch({ failed: true, result: await extractApiError(res) });
+        return;
+      }
+      const body = await res.json();
+      // `updated` is the vendor's answer, not ours: the local row is saved either way, so a
+      // false here means "closed here, still open there" — which the operator has to know.
+      patch({
+        failed: !body.updated,
+        result: body.updated
+          ? `${resolve.incidentRef} is now ${body.status} in the source system.`
+          : `${resolve.incidentRef} is now ${body.status} here, but the source system did not `
+            + 'confirm the update. Close it there by hand.',
+      });
+    } catch (e) {
+      patch({ failed: true, result: e instanceof Error ? e.message : 'The platform did not answer.' });
+    }
   };
 
   // ── Send ──────────────────────────────────────────────────────────────────────
@@ -970,55 +1179,47 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
         await answerAnonymously(q, botId);
         return;
       }
+      // Before the branch, not inside one: both routes are conversations worth keeping.
+      const currentSessionId = await ensureSession(q);
+
       if (includesAny(q.toLowerCase(), SOLVE_TERMS) || q.toLowerCase().includes('fix') || q.toLowerCase().includes('resolve') || q.toLowerCase().includes('remediate')) {
         await startSolve(q, botId);
         return;
-      }
-
-      let currentSessionId = activeSessionId;
-      if (!currentSessionId) {
-        try {
-          const sessionTitle = q.length > 40 ? q.substring(0, 37) + '…' : q;
-          const sRes = await authFetch('/api/v1/chat/sessions', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title: sessionTitle }),
-          });
-          if (sRes.ok) {
-            const sData = await sRes.json();
-            currentSessionId = sData.id;
-            setActiveSessionId(sData.id);
-            sessionStorage.setItem(ACTIVE_SESSION_KEY, sData.id);
-          }
-        } catch (e) {
-          console.warn('Could not initialize session:', e);
-        }
       }
 
       const res = await authFetch('/api/v1/rag/chat', {
         method: 'POST',
         body: JSON.stringify({
           question: q,
-          tenantId: activeUser.tenantId,
           sessionId: currentSessionId || undefined,
         }),
       });
       if (res.ok) {
         const data = await res.json();
         updateMessage(botId, { loading: false, text: data.answer });
-        loadSessions();
       } else if (res.status === 429) {
         updateMessage(botId, {
           loading: false, error: true,
-          text: 'Too many questions in the last minute. Try again shortly.',
+          text: '**That was a lot of questions in one minute.**\n'
+            + 'The platform rate-limits chat per user to keep one busy session from starving '
+            + 'the others. Give it about a minute and ask again — your history is untouched.',
         });
       } else {
-        updateMessage(botId, { loading: false, error: true, text: await extractApiError(res) });
+        updateMessage(botId, {
+          loading: false, error: true,
+          text: friendlyError('answer that', await extractApiError(res), RETRY_HINT),
+        });
       }
     } catch {
-      updateMessage(botId, { loading: false, error: true, text: 'Could not reach the platform.' });
+      updateMessage(botId, {
+        loading: false, error: true,
+        text: friendlyError('answer that', 'the request never completed', OFFLINE_HINT),
+      });
     } finally {
       setLoading(false);
+      // Both branches above can have created the session, so the drawer refreshes here
+      // rather than inside one of them.
+      loadSessions();
     }
   };
 
@@ -1093,7 +1294,7 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
   /** Re-submit plan with the filled-in param values. */
   const handleMissingParamsSubmit = (msgId: string) => {
     const msg = messages.find(m => m.id === msgId);
-    if (!msg?.missingInfo) return;
+    if (!msg?.missingInfo || msg.missingInfo.submitted) return;
     const missing = msg.missingInfo;
     const requiredMissing = missing.fields.filter(f => f.required && !missing.values[f.key]?.trim());
     if (requiredMissing.length > 0) {
@@ -1104,20 +1305,22 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
       ));
       return;
     }
-    // Clear the form and surface the plan card with the provided values merged into parameters
-    setMessages(prev => prev.map(m => {
-      if (m.id !== msgId || !m.missingInfo) return m;
-      const merged = { ...m.plan?.parameters, ...m.missingInfo.values };
-      return {
-        ...m,
-        missingInfo: undefined,
-        plan: m.plan ? { ...m.plan, parameters: merged } : undefined,
-        text: m.text,
-      };
-    }));
+    // The form stays on screen as the record of what was supplied, but read-only: the plan
+    // below it was built from these values, so editing them afterwards would be a lie.
+    const incident: IncidentChoice = {
+      id: missing.incidentId, ref: missing.incidentRef, subject: '', status: '',
+    };
+    setMessages(prev => prev.map(m => (m.id === msgId && m.missingInfo
+      ? {
+          ...m,
+          missingInfo: { ...m.missingInfo, submitted: true, validationError: undefined },
+          plan: planFrom(missing.detail, incident, missing.requestId, m.missingInfo.values),
+        }
+      : m)));
   };
 
   const renderMissingInfoCard = (msg: Message, missing: MissingInfoCardState) => {
+    const spent = Boolean(missing.submitted);
     return (
       <div className="chat-missing-card">
         <div className="chat-missing-head">
@@ -1147,6 +1350,7 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
                 value={missing.values[field.key] || ''}
                 onChange={e => handleMissingParamChange(msg.id, field.key, e.target.value)}
                 placeholder={field.placeholder}
+                disabled={spent}
               />
             </div>
           ))}
@@ -1156,15 +1360,24 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
           <button
             className="chat-btn chat-btn-ghost"
             style={{ padding: '8px 16px', fontSize: '12px' }}
-            onClick={() => updateMessage(msg.id, { missingInfo: undefined, text: 'Remediation request cancelled.' })}
+            disabled={spent}
+            onClick={() => updateMessage(msg.id, {
+              missingInfo: undefined,
+              text: `**Cancelled — nothing was run against ${missing.incidentRef}.**\n`
+                + `I did not have every detail the script needs, and without them there was no `
+                + `plan to approve, so no change of any kind reached the ticket or the host.\n`
+                + `Ask me to fix ${missing.incidentRef} again whenever you have the missing `
+                + `values, or work it by hand from the Incidents page.`,
+            })}
           >
             Cancel
           </button>
           <button
-            className="chat-btn-missing-submit"
+            className="chat-btn chat-btn-primary"
+            disabled={spent}
             onClick={() => handleMissingParamsSubmit(msg.id)}
           >
-            <Sparkles size={14} /> Update &amp; Review Remediation Plan
+            <Sparkles size={14} /> {spent ? 'Parameters submitted' : 'Update & Review Remediation Plan'}
           </button>
         </div>
       </div>
@@ -1173,6 +1386,9 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
 
   const renderPlanCard = (msg: Message) => {
     const plan = msg.plan!;
+    // Once a run exists the plan is spent: re-opening the modal would offer to execute an
+    // already-executed request, and Cancel would hide the card the run is reported under.
+    const spent = Boolean(msg.run);
     return (
       <div className="chat-plan-card">
         <div className="chat-plan-head">
@@ -1186,7 +1402,32 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
         </div>
 
         <p style={{ margin: '8px 0 12px', fontSize: '13px', color: 'var(--text)', lineHeight: 1.5 }}>
-          I found matching tool <strong><code>{plan.actionKey || plan.tool}</code></strong> to fix <strong>{plan.incidentRef}</strong> on target host <strong><code>{plan.target}</code></strong>. Would you like to review and run this tool?
+          I matched <strong>{plan.incidentRef}</strong> to the approved remediation{' '}
+          <strong><code>{plan.actionKey || plan.tool}</code></strong> and prepared it to run
+          against <strong><code>{plan.target}</code></strong>.
+          {plan.provenance
+            ? <> The steps come from <strong>{plan.provenance}</strong>, not from anything I
+              invented for this ticket.</>
+            : <> The steps were generated for this ticket and have been through the guardrail
+              scan.</>}
+        </p>
+
+        {plan.what && (
+          <p style={{ margin: '0 0 12px', fontSize: '13px', color: 'var(--text-2)', lineHeight: 1.5 }}>
+            <strong>What it does:</strong> {plan.what}
+          </p>
+        )}
+
+        <p style={{ margin: '0 0 12px', fontSize: '13px', color: 'var(--text-2)', lineHeight: 1.5 }}>
+          {plan.mutating
+            ? <><strong>This changes the system.</strong>{' '}
+              {plan.rollback
+                ? 'A rollback procedure is attached, and you can read it in full before anything runs.'
+                : 'No rollback procedure is attached, so read the script before approving.'}</>
+            : <><strong>This only reads state</strong> — it inspects{' '}
+              <code>{plan.target}</code> and reports back without changing anything.</>}
+          {' '}It is rated <strong>{plan.riskLevel}</strong> risk
+          {plan.language ? <> and runs as {plan.language}</> : null}.
         </p>
 
         <div className="chat-plan-body">
@@ -1206,22 +1447,37 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
           )}
         </div>
 
+        <p style={{ margin: '12px 0 0', fontSize: '12.5px', color: 'var(--text-2)', lineHeight: 1.5 }}>
+          Nothing has run yet. <strong>Review &amp; Run Tool</strong> opens the full script, the
+          ordered steps, the rollback plan and the guardrail findings, and the run starts only
+          when you confirm there.
+        </p>
+
         <div className="chat-plan-actions" style={{ display: 'flex', gap: '10px', marginTop: '14px' }}>
           <button
             className="chat-btn chat-btn-ghost"
             style={{ padding: '8px 16px', fontSize: '12.5px' }}
-            onClick={() => updateMessage(msg.id, { plan: undefined, text: `Remediation for ${plan.incidentRef} was cancelled.` })}
+            disabled={spent}
+            onClick={() => updateMessage(msg.id, {
+              plan: undefined,
+              text: `**Cancelled — nothing was run against ${plan.incidentRef}.**\n`
+                + `The approval request stays open in the Approvals queue, so the plan is not `
+                + `lost: another reviewer can pick it up, or you can ask me to fix `
+                + `${plan.incidentRef} again and I will rebuild it from the same SOP.\n`
+                + `The ticket itself is untouched — still open, still assigned where it was.`,
+            })}
           >
             Cancel
           </button>
           <button
-            className="chat-btn-review"
+            className="chat-btn chat-btn-primary"
+            disabled={spent}
             onClick={() => {
               setReview({ messageId: msg.id, plan });
               setShowExplain(false);
             }}
           >
-            Review &amp; Run Tool
+            {spent ? 'Tool run started' : 'Review & Run Tool'}
           </button>
         </div>
       </div>
@@ -1267,9 +1523,23 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
                   <span className="chat-stage-label">{displayTitle}</span>
                   {stage.detail && <span className="chat-stage-detail">{stage.detail}</span>}
                   {stage.log && stage.log.length > 0 && (
-                    <div className="chat-log" role="region" aria-label="Execution output">
-                      {stage.log.join('\n')}
-                    </div>
+                    // <details> rather than a useState toggle: the browser already owns this
+                    // widget, keyboard access and all. Open while the run is live so the
+                    // operator watches it happen; collapsed once the run has settled, so a
+                    // finished run reads as a summary instead of 40 lines of scrollback.
+                    //
+                    // Keyed off run.done, not the stage: revealLog fills stage.log one line at
+                    // a time *after* the stage is marked ok, so a stage-scoped `isRunning` is
+                    // already false the first time this element exists and the viewer would
+                    // never once be open.
+                    <details className="chat-log-wrap" open={!run.done}>
+                      <summary>
+                        Output · {stage.log.length} {stage.log.length === 1 ? 'line' : 'lines'}
+                      </summary>
+                      <div className="chat-log" role="region" aria-label="Execution output">
+                        {stage.log.join('\n')}
+                      </div>
+                    </details>
                   )}
                 </div>
                 <span className="chat-stage-index">0{idx + 1}</span>
@@ -1282,15 +1552,13 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
   };
 
   const renderBot = (msg: Message) => {
-    const hasRichCard = !!(msg.plan || msg.run || msg.missingInfo || msg.escalation || (msg.choices && msg.choices.length > 0));
+    const hasRichCard = !!(msg.plan || msg.run || msg.missingInfo || msg.escalation || msg.resolve || msg.analysis || (msg.choices && msg.choices.length > 0));
     return (
     <div className="chat-msg chat-msg-bot">
       <div className="chat-avatar"><BotMessageSquare size={16} /></div>
       <div className={`chat-bubble chat-bubble-bot${hasRichCard ? ' chat-bubble-bot--rich' : ''}`}>
         {msg.loading && <span className="chat-typing"><span /><span /><span /></span>}
-        {msg.text && msg.text.split('\n').map((line, i) => (
-          <p key={i} dangerouslySetInnerHTML={{ __html: formatMarkdown(line) }} />
-        ))}
+        {msg.text && <Markdown text={msg.text} />}
         {msg.stats && renderStats(msg.stats)}
         {msg.rows && msg.rows.length > 0 && renderRows(msg)}
         {msg.choices && (
@@ -1311,9 +1579,67 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
             <p>{msg.escalation.action}</p>
           </div>
         )}
+        {msg.analysis && (
+          <div className="chat-analysis">
+            {msg.analysis.loading ? (
+              <div className="chat-analysis-head">
+                <Loader2 size={13} className="is-spin" /> Working out what to do by hand…
+              </div>
+            ) : msg.analysis.error ? (
+              <p className="chat-analysis-why">{msg.analysis.error}</p>
+            ) : (
+              <>
+                <div className="chat-analysis-head">
+                  <Sparkles size={13} />
+                  <span>{msg.analysis.sourceLabel || 'Suggested steps'}</span>
+                  {msg.analysis.team && <em>{msg.analysis.team}</em>}
+                </div>
+                {msg.analysis.sourceDetail && (
+                  <p className="chat-analysis-why">{msg.analysis.sourceDetail}</p>
+                )}
+                {msg.analysis.steps && <div className="chat-analysis-steps">{msg.analysis.steps}</div>}
+              </>
+            )}
+          </div>
+        )}
         {msg.missingInfo && renderMissingInfoCard(msg, msg.missingInfo)}
         {msg.plan && renderPlanCard(msg)}
         {msg.run && renderRun(msg.run)}
+        {msg.resolve && (
+          <div className="chat-resolve">
+            <p className="chat-resolve-ask">
+              The issue appears resolved. Please verify. Would you like to update the incident status?
+            </p>
+            {!msg.resolve.answered ? (
+              <div className="chat-resolve-actions">
+                <button className="chat-btn chat-btn-primary"
+                        onClick={() => answerResolve(msg.id, msg.resolve!, 'yes')}>
+                  <Check size={14} /> OK
+                </button>
+                <button className="chat-btn chat-btn-ghost"
+                        onClick={() => answerResolve(msg.id, msg.resolve!, 'no')}>
+                  <X size={14} /> Cancel
+                </button>
+              </div>
+            ) : (
+              <>
+                <p className={`chat-resolve-note${msg.resolve.failed ? ' chat-resolve-note--fail' : ''}`}>
+                  {msg.resolve.answered === 'no'
+                    ? `Left ${msg.resolve.incidentRef} open. Nothing was sent to the source system.`
+                    : msg.resolve.result || `Updating ${msg.resolve.incidentRef}…`}
+                </p>
+                {/* The loop has an end, so say so: without this the conversation just stops
+                    mid-flow and the operator has to guess whether anything is still pending. */}
+                {(msg.resolve.answered === 'no' || msg.resolve.result) && (
+                  <p className="chat-resolve-next">
+                    That closes out {msg.resolve.incidentRef}. Do you want to ask anything else —
+                    another ticket to fix, or how the estate is looking right now?
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        )}
         {msg.signin && (
           <div className="chat-signin">
             <p>{activeUser ? 'Ready to resolve this incident with SOP automation.' : msg.signin}</p>
@@ -1399,7 +1725,7 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
             className="chat-sessions-new-btn"
             onClick={createNewSession}
           >
-            <Plus size={15} /> + New Conversation
+            New Conversation
           </button>
 
           <div className="chat-sessions-list">

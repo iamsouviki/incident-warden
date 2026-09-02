@@ -66,11 +66,6 @@ Stated plainly rather than buried, because a reader deploying this needs them. T
 - **`docker compose up` cannot start the backend.** The `mcp-app` service sets no `MCP_JWT_SECRET`
   and the application refuses to boot without one. The shipped compose file also uses `changeme` for
   Postgres and Redis, `dev-token` for Vault and `admin` for Keycloak.
-- **The default admin password is `admin`** unless you set `MCP_DEFAULT_PASSWORD`, and its BCrypt
-  hash is committed in `baseline.sql` alongside the plaintext in a comment. First login forces a
-  change (`must_change_password`), which closes the window but does not remove it. `BootstrapPassword`
-  also logs the effective password in plaintext at INFO. **Set `MCP_DEFAULT_PASSWORD` before first
-  boot.**
 - **Prompts are logged.** `org.springframework.ai` is at `DEBUG` in the default profile, which writes
   prompt and response payloads — incident text, host names, SOP excerpts — into
   `logs/incident-warden.log`. That file has no rotation policy. Turn it down before handling real
@@ -94,14 +89,15 @@ Stated plainly rather than buried, because a reader deploying this needs them. T
 - **The executor agent is the actual blast radius.** `scripts/dev-executor.mjs` deliberately runs
   nothing. Whatever you replace it with holds the credentials and does the work, so its sandboxing,
   its allowlist and its logging are your last line of defence — not this repo's. The dispatch payload
-  carries **no tenant id**, so one executor token is trusted for every tenant: deploy one executor
-  per tenant, or add and check a tenant claim there.
+  names a target host but carries no proof the caller is entitled to it: scope the executor's
+  credentials to the hosts it is permitted to touch.
 
 ## Scope
 
 In scope: authentication and authorisation bypass, guardrail or hash-pinning bypass, anything that
 gets a script dispatched without an approval, secret disclosure, injection into the generated script,
-tenant data leaking across tenants.
+one user reading or writing another user's chat history.
 
-Out of scope: findings that require the `local` demo profile, a weak password an operator chose
-through `MCP_DEFAULT_PASSWORD`, and missing hardening already listed above.
+Out of scope: findings that require the `local` demo profile, a weak password a user chose for
+their own account after the forced first-sign-in change, and missing hardening already listed
+above.

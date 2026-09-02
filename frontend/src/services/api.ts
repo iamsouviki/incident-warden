@@ -21,8 +21,6 @@ export interface AuthUser {
   fullName?: string;
   role: string;
   department?: string;
-  tenantId: string;
-  tenantName?: string;
   token: string;
   expiresIn: number;
   refreshToken?: string;
@@ -39,8 +37,6 @@ export interface LoginResponse {
   fullName?: string;
   role: string;
   department?: string;
-  tenantId: string;
-  tenantName?: string;
   expiresIn: number;
   refreshExpiresIn?: number;
   mustChangePassword?: boolean;

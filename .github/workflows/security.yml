@@ -1,0 +1,97 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly, because a dependency becomes vulnerable while the code sits still. Monday 04:17 UTC
+    # rather than on the hour: scheduled runs queue behind everyone else's midnight cron.
+    - cron: '17 4 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  # SAST. Java and the SPA are scanned separately because CodeQL builds one language at a time.
+  codeql:
+    name: CodeQL — ${{ matrix.language }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+      pull-requests: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [java-kotlin, javascript-typescript]
+    steps:
+      - uses: actions/checkout@v4
+      - if: matrix.language == 'java-kotlin'
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+          cache: maven
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended
+      - uses: github/codeql-action/autobuild@v4
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:${{ matrix.language }}
+          upload: true
+
+
+  # Secrets. A key committed once stays in the history, so the whole history is scanned on push
+  # and only the pushed range on a pull request.
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: trufflesecurity/trufflehog@main
+        with:
+          extra_args: --results=verified
+
+  # Dependencies. Two lanes: Trivy reads the lockfiles for known CVEs on every run, and
+  # dependency-review blocks a pull request that introduces a new high-severity or
+  # incompatibly-licensed package.
+  dependencies:
+    name: Dependency scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+          cache: maven
+      - run: mvn dependency:go-offline || true
+      - uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          exit-code: '0'
+          ignore-unfixed: true
+
+
+  # The container. Scanning the source tree does not cover what the base image ships, which is
+  # where most container CVEs live.
+  image:
+    name: Container image scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t incident-warden:ci .
+      - uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: incident-warden:ci
+          severity: HIGH,CRITICAL
+          exit-code: '0'
+          ignore-unfixed: true

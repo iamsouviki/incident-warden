@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { User, Mail, Shield, Building, Key, Clock, LogOut, Briefcase } from 'lucide-react';
+import { User, Mail, Shield, Clock, LogOut, Briefcase } from 'lucide-react';
 import { getStoredUser, getTokenExpiry, clearAuth, authFetch } from '../services/api';
 
 interface Props {
@@ -12,8 +12,6 @@ interface UserProfile {
   email?: string;
   role: string;
   department?: string;
-  tenantId: string;
-  tenantName?: string;
   ssoProvider?: string;
 }
 
@@ -38,7 +36,6 @@ const AccountPage: React.FC<Props> = ({ onLogout }) => {
   const department = profile?.department || storedUser?.department || 'Operations';
   const email = profile?.email || '—';
   const role = profile?.role || storedUser?.role || 'VIEWER';
-  const workspace = profile?.tenantName || storedUser?.tenantName || storedUser?.tenantId || 'Primary Workspace';
 
   const initials = realName.substring(0, 2).toUpperCase();
 
@@ -92,7 +89,7 @@ const AccountPage: React.FC<Props> = ({ onLogout }) => {
               {role}
             </span>
             <span style={{ fontSize: '12px', color: 'var(--text-2)' }}>
-              {department} · {workspace}
+              {department}
             </span>
           </div>
         </div>
@@ -106,8 +103,6 @@ const AccountPage: React.FC<Props> = ({ onLogout }) => {
           { icon: <Mail size={16}/>,     label: 'Email',            value: email },
           { icon: <Briefcase size={16}/>,label: 'Department',       value: department },
           { icon: <Shield size={16}/>,   label: 'Security Role',    value: role },
-          { icon: <Building size={16}/>, label: 'Workspace',        value: workspace },
-          { icon: <Key size={16}/>,      label: 'Tenant ID',        value: profile?.tenantId || storedUser?.tenantId || '—' },
           {
             icon: <Clock size={16}/>,
             label: 'Access Token Expiry',

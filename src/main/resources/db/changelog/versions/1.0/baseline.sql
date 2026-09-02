@@ -33,8 +33,6 @@ CREATE TABLE IF NOT EXISTS auth.users (
     department           VARCHAR(255),
     password_hash        VARCHAR(255),
     role                 VARCHAR(50)  NOT NULL DEFAULT 'VIEWER',
-    tenant_id            VARCHAR(100) NOT NULL DEFAULT 'tenant-1',
-    tenant_name          VARCHAR(255)          DEFAULT 'Primary Workspace',
     sso_provider         VARCHAR(50),
     sso_subject          VARCHAR(255),
     enabled              BOOLEAN      NOT NULL DEFAULT TRUE,
@@ -56,14 +54,22 @@ CREATE TRIGGER trg_users_audit
 AFTER INSERT OR UPDATE OR DELETE ON auth.users
 FOR EACH ROW EXECUTE FUNCTION audit_log_trigger_func();
 
--- Seed single default owner admin user (Username: admin / Password: admin)
--- $2a$10$dXJ3SW6G7P50lGmMkkmwe.20cQQubK3.HZWzG3YB1tlRy.fqvM/BG is BCrypt for 'admin'
-INSERT INTO auth.users (username, email, full_name, password_hash, role, tenant_id, tenant_name, must_change_password)
-VALUES ('admin', 'admin@mcp.local', 'System Administrator', '$2a$10$dXJ3SW6G7P50lGmMkkmwe.20cQQubK3.HZWzG3YB1tlRy.fqvM/BG', 'ADMIN', 'tenant-1', 'Primary Workspace', true)
-ON CONFLICT (username) DO UPDATE
-SET password_hash = EXCLUDED.password_hash,
-    role = EXCLUDED.role,
-    must_change_password = true;
+-- Seed the single owner account. NO password hash: a committed hash is a credential every
+-- clone of this repository shares, and it is readable off the migration long after the
+-- account it unlocks has been forgotten. A NULL hash cannot authenticate (see
+-- AuthController.login), so this row on its own is not a way in.
+--
+-- BootstrapPassword enrols it on first boot: initial password = username, must_change_password
+-- true, nothing logged. Same rule AuthController applies to every account created or reset
+-- afterwards. Recovery from a lost password is
+--   UPDATE auth.users SET password_hash = NULL WHERE username = 'admin';
+-- plus a restart.
+--
+-- OWNER, not ADMIN: creating user accounts is owner-only, so a fresh install seeded as ADMIN
+-- could never add its first colleague.
+INSERT INTO auth.users (username, email, full_name, password_hash, role, must_change_password)
+VALUES ('admin', 'admin@mcp.local', 'System Administrator', NULL, 'OWNER', true)
+ON CONFLICT (username) DO NOTHING;
 
 -- 5. SOP: Vector Store & Procedures
 CREATE TABLE IF NOT EXISTS sop.vector_store (
@@ -79,7 +85,6 @@ CREATE INDEX IF NOT EXISTS idx_vector_store_fts ON sop.vector_store USING gin (f
 
 CREATE TABLE IF NOT EXISTS sop.sop_procedure (
     id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id         VARCHAR(64)  NOT NULL DEFAULT 'tenant-1',
     sop_id            VARCHAR(64)  NOT NULL,
     step_number       INT          NOT NULL DEFAULT 1,
     title             VARCHAR(300) NOT NULL,
@@ -100,7 +105,6 @@ CREATE TABLE IF NOT EXISTS sop.sop_procedure (
 -- 6. Incident: Incidents (ServiceNow, Freshservice & Dumps), Comments & Remediation
 CREATE TABLE IF NOT EXISTS incident.incidents (
     id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id          VARCHAR(100) NOT NULL DEFAULT 'tenant-1',
     subject            VARCHAR(255) NOT NULL,
     description        TEXT,
     assignee           VARCHAR(100),
@@ -140,7 +144,6 @@ CREATE TABLE IF NOT EXISTS incident.statuses (
 
 CREATE TABLE IF NOT EXISTS incident.remediation_plans (
     id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id          VARCHAR(100) NOT NULL DEFAULT 'tenant-1',
     incident_id        UUID NOT NULL,
     status             VARCHAR(50) NOT NULL,
     action_name        VARCHAR(100) NOT NULL,
@@ -164,7 +167,6 @@ CREATE TABLE IF NOT EXISTS incident.remediation_plans (
 
 CREATE TABLE IF NOT EXISTS incident.hitl_requests (
     id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id          VARCHAR(100) NOT NULL DEFAULT 'tenant-1',
     incident_id        UUID NOT NULL,
     plan_id            UUID NOT NULL,
     status             VARCHAR(50) NOT NULL DEFAULT 'PENDING',
@@ -178,7 +180,6 @@ CREATE TABLE IF NOT EXISTS incident.hitl_requests (
 
 CREATE TABLE IF NOT EXISTS incident.action_executions (
     id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id         VARCHAR(100) NOT NULL DEFAULT 'tenant-1',
     incident_id       UUID NOT NULL,
     plan_id           UUID NOT NULL,
     hitl_request_id   UUID,
@@ -192,7 +193,6 @@ CREATE TABLE IF NOT EXISTS incident.action_executions (
 
 CREATE TABLE IF NOT EXISTS incident.audit_events (
     id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id      VARCHAR(64) NOT NULL DEFAULT 'tenant-1',
     aggregate_type VARCHAR(64) NOT NULL,
     aggregate_id   UUID NOT NULL,
     event_type     VARCHAR(100) NOT NULL,
@@ -207,7 +207,6 @@ CREATE TABLE IF NOT EXISTS incident.telemetry_events (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     event_name VARCHAR(100) NOT NULL,
     payload    JSONB,
-    tenant_id  VARCHAR(100) DEFAULT 'tenant-1',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -223,7 +222,6 @@ CREATE TABLE IF NOT EXISTS tools.saved_scripts (
     language       VARCHAR(50) NOT NULL,
     category       VARCHAR(100) NOT NULL,
     target_host    VARCHAR(255) NOT NULL,
-    tenant_id      VARCHAR(100) NOT NULL DEFAULT 'tenant-1',
     created_at     TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at     TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -246,7 +244,6 @@ CREATE TABLE IF NOT EXISTS tools.execution_logs (
 
 CREATE TABLE IF NOT EXISTS tools.skills (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id   VARCHAR(64)  NOT NULL DEFAULT 'tenant-1',
     kind        VARCHAR(24)  NOT NULL,
     skill_key   VARCHAR(120) NOT NULL,
     pattern     VARCHAR(600),
@@ -280,7 +277,6 @@ CREATE TABLE IF NOT EXISTS ai.ai_config (
 
 CREATE TABLE IF NOT EXISTS ai.chat_sessions (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id   VARCHAR(100) NOT NULL DEFAULT 'tenant-1',
     username    VARCHAR(100) NOT NULL,
     title       VARCHAR(255) NOT NULL DEFAULT 'New Conversation',
     created_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -288,7 +284,7 @@ CREATE TABLE IF NOT EXISTS ai.chat_sessions (
     is_archived BOOLEAN NOT NULL DEFAULT FALSE
 );
 
-CREATE INDEX IF NOT EXISTS idx_chat_sessions_tenant_user ON ai.chat_sessions(tenant_id, username, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_user ON ai.chat_sessions(username, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS ai.chat_messages (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),

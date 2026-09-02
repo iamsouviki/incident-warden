@@ -64,7 +64,7 @@ the product, and it is in this repository.
 | **Deterministic guardrails** | Allowlisted action keys, blocked terms, hash pinning at approval, re-scan at dispatch, and `dryRun:false` refused on the public execute endpoint. |
 | **AI guardrails** | A scope gate before any model call, a 4 000-character input cap, prompt-injection refusal, a per-user LLM rate limit, and provider failures excluded from the answer cache so one bad minute cannot break a question permanently. |
 | **Target credentials stay with the executor** | `connection_method` records *how* to reach a host; the secret for that method lives with the executor agent, not here. The LLM provider key is environment-only (`MCP_LLM_API_KEY`) and is never returned by an API. Login passwords are BCrypt hashes. **One exception, and it is a known defect:** the ITSM integration page writes ServiceNow/Freshservice/Jira secrets into `config.system_config` — see [S1 in the readiness review](docs/enterprise-readiness.md). |
-| **Operated from the UI** | Provider and model, users and roles, agent skills, SOP procedures, ITSM integrations, web-search egress — all database-backed and editable in the browser, with no properties-file edit needed to run it. Two settings fall short of this today and are listed as defects rather than claimed: the notification relay and the HITL confidence band are API-only, their forms having been removed from the Settings page. |
+| **Operated from the UI** | Provider and model, users and roles, agent skills, SOP procedures, ITSM integrations — all database-backed and editable in the browser, with no properties-file edit needed to run it. Two settings fall short of this today and are listed as defects rather than claimed: the notification relay and the HITL confidence band are API-only, their forms having been removed from the Settings page. |
 | **JWT access control** | A role matrix over every endpoint, fail-closed on unmapped writes, refresh tokens, and a rate-limited login. |
 | **Runs fully offline** | Postgres + pgvector + Ollama, plus two dev stand-ins (executor, SMTP) that make the whole loop observable with nothing leaving the machine. |
 
@@ -138,11 +138,13 @@ node scripts/dev-executor.mjs store-0042-pos-01,store-0042-app-01,store-0099-pos
 node scripts/dev-smtp.mjs
 ```
 
-Open <http://localhost:5173> and sign in as **`admin`**. The password is `MCP_DEFAULT_PASSWORD` if
-you set it, otherwise the literal `admin` — and either way the first screen after login is a forced
-password change (`must_change_password` is seeded `true`, and `POST /api/auth/password` is the only
-thing that clears it). **That default is a development convenience and a deployment defect.** Set
-`MCP_DEFAULT_PASSWORD` before first boot for anything reachable by anyone else.
+Open <http://localhost:5173> and sign in as **`admin`**, password **`admin`** — the username is the
+starter password, and the first screen after login is a forced password change
+(`must_change_password` is seeded `true`, and `POST /api/auth/password` is the only thing that
+clears it). Nothing is committed and nothing is logged: the migration seeds the row with a NULL
+hash, which cannot authenticate, and `BootstrapPassword` enrols it on first boot. Same rule for
+every account an administrator creates or resets afterwards. To recover a lost admin password,
+`UPDATE auth.users SET password_hash = NULL WHERE username = 'admin';` and restart.
 
 All four processes are also entries in [.claude/launch.json](.claude/launch.json) (`backend`,
 `frontend`, `executor`, `smtp`).
@@ -176,7 +178,7 @@ React 18 + Vite (5173)
 Spring Boot 3.2 control plane (8080)
   ├── controller/     route-based authorization, no method security
   ├── service/        the whole decision path (below)
-  ├── repository/     Spring Data JPA, tenant-scoped queries
+  ├── repository/     Spring Data JPA
   └── model/          JPA entities
   │
   ├──► PostgreSQL 16 + pgvector   incidents, plans, executions, SOPs, audit chain, config
@@ -191,7 +193,7 @@ Spring Boot 3.2 control plane (8080)
 |---|---|
 | [IncidentIntakeService](src/main/java/com/company/mcp/service/IncidentIntakeService.java) | ticket in, row in Postgres, external id assigned |
 | [SopProcedureService](src/main/java/com/company/mcp/service/SopProcedureService.java) | is there an **APPROVED** procedure covering this, and what action key does it declare? |
-| [IncidentPrecedentService](src/main/java/com/company/mcp/service/IncidentPrecedentService.java) | have *we* fixed this before — same tenant, human-approved, execution `SUCCEEDED`, parseable action key? |
+| [IncidentPrecedentService](src/main/java/com/company/mcp/service/IncidentPrecedentService.java) | have *we* fixed this before — human-approved, execution `SUCCEEDED`, parseable action key? |
 | [TextSimilarity](src/main/java/com/company/mcp/service/TextSimilarity.java) | term coverage between two tickets, reproducible and quotable (not embeddings — a score a reviewer is asked to trust must be explainable) |
 | [AgentAssessmentService](src/main/java/com/company/mcp/service/AgentAssessmentService.java) | category, action key, target, and a confidence score from bounded inputs |
 | [SkillService](src/main/java/com/company/mcp/service/SkillService.java) | the three agent stages' vocabulary as admin-editable rows: categorisation words, host patterns, allowed tools |
@@ -253,7 +255,7 @@ platform still works — that is the state the demo runs in.
 ### Intake
 
 `POST /api/v1/intake/incidents`, `POST /api/v1/incidents`, or a ServiceNow/FreshService import. The
-row lands in `incident.incidents` with a tenant, a priority, and a **store number** and
+row lands in `incident.incidents` with a priority, a **store number** and
 **server/host**.
 
 There is no "New incident" form. A ticket that a person types into this platform is a ticket that
@@ -284,7 +286,7 @@ The **✨ AI Incident Copilot** card on an incident.
 This endpoint changes nothing: it names a likely team and suggests steps.
 
 Which source it uses is a database question, asked once, before any model call:
-`RagService.findApprovedSopEvidence(tenantId, subject + description).approvedEvidencePresent()`.
+`RagService.findApprovedSopEvidence(subject + description).approvedEvidencePresent()`.
 
 * **Approved SOP present** → the steps are generated *grounded on the approved excerpt itself*,
   not routed through `askStrictSopRag` (whose scope check and vector-store availability are
@@ -314,8 +316,8 @@ explained in one clause, and never a hostname or path the ticket did not supply.
 1. **SOP evidence.** Hybrid retrieval (dense pgvector + keyword, fused with Reciprocal Rank
    Fusion, k=60) plus an `APPROVED` procedure lookup. Result carries
    `approvedEvidencePresent`, an excerpt, a reliability score and a reason
-   (`APPROVED_TENANT_SOP_MATCH`, `SOP_SERVICE_UNAVAILABLE`, …).
-2. **Precedent.** `IncidentPrecedentService` scans resolved incidents in this tenant, matching the
+   (`APPROVED_SOP_MATCH`, `SOP_SERVICE_UNAVAILABLE`, …).
+2. **Precedent.** `IncidentPrecedentService` scans resolved incidents, matching the
    new ticket's words against the past ticket's subject, description and up to 2 000 chars of its
    resolution notes. A past ticket only qualifies if its execution was `SUCCEEDED`, carried a
    `hitlRequestId` (a human approved it), and its plan pinned a parseable action key.
@@ -363,7 +365,7 @@ explained in one clause, and never a hostname or path the ticket did not supply.
 
    ⚠️ **The slider that used to write that row is gone**, so the band is API-only today, exactly like
    the notification relay. Same defect, same list.
-4. **Classification → action key.** `classify()` first walks the tenant's **approved** rows in
+4. **Classification → action key.** `classify()` first walks the **approved** rows in
    `sop.sop_procedure` and matches their `match_keywords` (and title) against the ticket wording,
    deriving the category and action key from the procedure's own `action_key`. Only if nothing
    matches does it fall back to the built-in vocabulary (`PRINTING` → `clear-printer-queue`,
@@ -404,7 +406,7 @@ act on rather than the code:
 | `TARGET_HOST_UNKNOWN` / probe reason | mutating action with no confirmed, reachable machine |
 | `SCRIPT_GENERATION_UNAVAILABLE` | no SOP template matched and no model was reachable |
 | `TOOL_NOT_ALLOWLISTED:x` | the procedure declares an action key no tool answers to |
-| `NO_APPROVED_TENANT_SOP_MATCH` | no approved procedure, with ungrounded scripts switched off |
+| `NO_APPROVED_SOP_MATCH` | no approved procedure, with ungrounded scripts switched off |
 | `CONFIDENCE_BELOW_HITL_BAND:nn` | the guardrails passed; the score did not reach the band |
 | `GUARDRAIL_BLOCKED` | the action/target/script boundary refused it |
 
@@ -630,7 +632,7 @@ distinguished so the UI can tell "sign in again" from "your role is insufficient
 
 Also enforced: **separation of duties** (`mcp.hitl.separation-of-duties`, default `true`) — the
 analyst who requested a plan cannot approve it. Off only in `local`, which seeds one account.
-**Tenant scoping** on every query. Login is rate-limited per username *and* per source IP. Audit
+Login is rate-limited per username *and* per source IP. Audit
 entries are hash-chained, so an edit in the middle breaks the chain. SSO/OIDC is fail-closed — any
 of the four `mcp.sso.*` keys missing and `/api/auth/sso` returns 503 rather than degrading.
 
@@ -662,9 +664,9 @@ quietly filing the person as a VIEWER.
 
 ## Notifications
 
-Transport in `config.system_config` (shared infrastructure): `notify_enabled`, `notify_smtp_host`,
-`notify_smtp_port`, `notify_from`. Recipient lists in `config.notification_recipient`, **with a
-tenant id** — a global list would email tenant A about tenant B.
+Transport in `config.system_config`: `notify_enabled`, `notify_smtp_host`, `notify_smtp_port`,
+`notify_from`. There is no separately maintained recipient list — the addresses come off the
+incident and the assignee's account, so there is nothing to keep in sync.
 
 `NotificationService.recipientsFor(incident)` = the reporter's address + the assignee's `auth.users`
 address, deduplicated case-insensitively by a `LinkedHashSet`. A missing address means that recipient
@@ -709,9 +711,9 @@ so an executor that has never heard of the field behaves exactly as it did befor
 Responsibilities that belong to the executor because this platform cannot hold them:
 
 - **The credentials**, and the decision about which hosts it may touch.
-- **Tenant isolation at the edge** — the payload carries no tenant, so one executor token is
-  trusted for every tenant. Deploy one executor per tenant, or add a tenant claim and check it
-  there, before running this multi-tenant against real infrastructure.
+- **Which hosts a token may reach.** The payload names a target host; it carries no proof that
+  the caller is entitled to that host. The executor is the only component positioned to enforce
+  that, so scope its credentials to the hosts it is allowed to touch.
 
 Probe failure semantics: the *host* being unreachable blocks the plan and asks a human to confirm
 the server and connection method; the *executor* being down returns `UNKNOWN`, not `UNREACHABLE` —
@@ -728,8 +730,8 @@ the reviewer is told to verify on the target.
 All routes need `Authorization: Bearer <token>` except login/refresh/SSO and health.
 
 **Auth** — `POST /api/auth/login` `{username, password, rememberMe, role?}` → `{token,
-refreshToken, username, fullName, role, department, tenantId, tenantName, expiresIn,
-refreshExpiresIn}` · `POST /api/auth/refresh` · `POST /api/auth/sso` · `GET /api/auth/me`
+refreshToken, username, fullName, role, department, expiresIn, refreshExpiresIn,
+mustChangePassword}` · `POST /api/auth/refresh` · `POST /api/auth/sso` · `GET /api/auth/me`
 
 **HITL** — `POST /api/v1/hitl/incidents/{id}/plan` (ANALYST) · `GET /api/v1/hitl/requests` ·
 `GET /api/v1/hitl/requests/{id}` · `POST /api/v1/hitl/requests/{id}/decision`
@@ -796,9 +798,10 @@ YAML holds only deployment facts:
 | `mcp.servicenow.*` / `mcp.freshservice.*` | disabled | Ticket import. Also reachable from **Settings → Integrations**, which is where the credential-in-the-DB defect lives. |
 
 An hourly `@Scheduled` job (`IntegrationManagerService.scheduledSync`) pulls tickets in from any
-enabled ITSM integration. It creates rows and nothing else — it never plans and never executes. It
-also hardcodes `tenant-1` and takes no distributed lock, so on more than one replica it runs more
-than once; see [C3](docs/enterprise-readiness.md).
+enabled ITSM integration. It creates rows and nothing else — it never plans and never executes. The
+interval is checked *inside* a distributed lock, so several replicas perform one sync per interval
+rather than one each; a disabled or unreachable provider is reported as such and never as a
+success.
 
 `spring.ai.*` holds per-provider connection settings for OpenAI, Anthropic and Vertex AI; each is
 excluded from autoconfiguration until removed from `spring.autoconfigure.exclude`. Default provider
@@ -914,9 +917,6 @@ that matters — it is the full list with `file:line` references and an ordering
   application refuses to boot without one. Run it from source until that is fixed.
 - **ITSM integration secrets are written to the database in plaintext.** The one place the
   no-credentials-in-the-DB rule is broken, and the highest-severity item in the review.
-- **The shared default password is `admin`** unless `MCP_DEFAULT_PASSWORD` is set, its BCrypt hash
-  is committed in `baseline.sql`, and the bootstrap logs the effective password at INFO. The forced
-  change on first login is the only thing standing in front of it.
 - **`org.springframework.ai` logs at DEBUG by default**, which puts prompts — incident text, host
   names, SOP excerpts — into `logs/incident-warden.log`.
 - **No token revocation.** Disabling an account does not end a session in flight.

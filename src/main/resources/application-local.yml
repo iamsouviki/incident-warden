@@ -49,8 +49,6 @@ mcp:
       allowed-origins: http://localhost:*,http://127.0.0.1:*
   telemetry:
     auto-create-incidents: true
-  confidence:
-    hitl-threshold: 0.70
   hitl:
     # The local demo seeds a single 'admin' account, which must be able to both
     # request and approve a plan. Never disable this in a shared environment.
@@ -62,6 +60,16 @@ server:
 logging:
   level:
     org.springframework: WARN
-    com.company.mcp: INFO
+    com.company.warden: INFO
     org.hibernate.SQL: WARN
     liquibase: INFO
+
+# Full tracing and full health detail are safe here and useful here: no volume, no real incidents,
+# and a single developer who needs to see which component is down.
+management:
+  endpoint:
+    health:
+      show-details: always
+  tracing:
+    sampling:
+      probability: 1.0
