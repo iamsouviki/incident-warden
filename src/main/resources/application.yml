@@ -175,6 +175,9 @@ mcp:
     url: ${MCP_EXECUTOR_URL:}
     token: ${MCP_EXECUTOR_TOKEN:}
     timeout-seconds: ${MCP_EXECUTOR_TIMEOUT_SECONDS:30}
+    local-enabled: ${MCP_EXECUTOR_LOCAL_ENABLED:false}
+    local-allowed-targets: ${MCP_EXECUTOR_LOCAL_ALLOWED_TARGETS:}
+    powershell-path: ${MCP_EXECUTOR_POWERSHELL_PATH:pwsh}
 
   telemetry:
     auto-create-incidents: ${MCP_TELEMETRY_AUTO_CREATE_INCIDENTS:true}

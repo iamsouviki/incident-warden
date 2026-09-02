@@ -14,6 +14,7 @@
   <a href="#api">API</a> ·
   <a href="#known-gaps">Known gaps</a> ·
   <a href="docs/client_poc_demo.md">Demo run sheet</a> ·
+  <a href="docs/demo-flow.md">JAR demo flow</a> ·
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
@@ -80,8 +81,8 @@ ticket ─► saved in Postgres ─► analysis ─► plan ─► guardrails �
 
 Precedent and confidence raise or lower how a plan is *presented* — never whether a human is asked.
 
-**Demo script for a client walkthrough: [docs/client_poc_demo.md](docs/client_poc_demo.md).**
-It is a run sheet with the exact pages, buttons and expected log lines.
+**Demo script:** [docs/demo-flow.md](docs/demo-flow.md) is the runnable JAR flow with a Mermaid
+diagram and API smoke checks. The detailed client run sheet is [docs/client_poc_demo.md](docs/client_poc_demo.md).
 
 ---
 
@@ -120,34 +121,22 @@ Requires PostgreSQL 16 with the `vector` extension on `localhost:5432` (database
 because a fake `similaritySearch` returned every document unranked and made RAG "work" locally
 while proving nothing.
 
-Four processes. The last two are dev stand-ins that make the demo observable offline.
+The default local path is one Java JAR. PostgreSQL and Redis remain external lower-environment dependencies.
 
 ```bash
-mvn -o spring-boot:run -Dspring-boot.run.profiles=local -Dmaven.test.skip=true -Dspring-boot.run.jvmArguments="-Dmcp.executor.enabled=true -Dmcp.executor.url=http://localhost:9099"
+MCP_EXECUTOR_LOCAL_ENABLED=true MCP_EXECUTOR_LOCAL_ALLOWED_TARGETS=test-host ./scripts/run-local.sh
 ```
 
 ```bash
-npm run dev --prefix frontend
 ```
 
-```bash
-node scripts/dev-executor.mjs store-0042-pos-01,store-0042-app-01,store-0099-pos-01
-```
-
-```bash
-node scripts/dev-smtp.mjs
-```
-
-Open <http://localhost:5173> and sign in as **`admin`**, password **`admin`** — the username is the
+Open <http://localhost:8080> and sign in as **`admin`**, password **`admin`** — the username is the
 starter password, and the first screen after login is a forced password change
 (`must_change_password` is seeded `true`, and `POST /api/auth/password` is the only thing that
 clears it). Nothing is committed and nothing is logged: the migration seeds the row with a NULL
 hash, which cannot authenticate, and `BootstrapPassword` enrols it on first boot. Same rule for
 every account an administrator creates or resets afterwards. To recover a lost admin password,
 `UPDATE auth.users SET password_hash = NULL WHERE username = 'admin';` and restart.
-
-All four processes are also entries in [.claude/launch.json](.claude/launch.json) (`backend`,
-`frontend`, `executor`, `smtp`).
 
 The `local` profile ships a committed dev JWT key, disables Redis/Vault, sets
 `hitl-threshold: 0.70` and turns **separation of duties off** so the single seeded account can both
@@ -191,19 +180,19 @@ Spring Boot 3.2 control plane (8080)
 
 | Class | Question it answers |
 |---|---|
-| [IncidentIntakeService](src/main/java/com/company/mcp/service/IncidentIntakeService.java) | ticket in, row in Postgres, external id assigned |
-| [SopProcedureService](src/main/java/com/company/mcp/service/SopProcedureService.java) | is there an **APPROVED** procedure covering this, and what action key does it declare? |
-| [IncidentPrecedentService](src/main/java/com/company/mcp/service/IncidentPrecedentService.java) | have *we* fixed this before — human-approved, execution `SUCCEEDED`, parseable action key? |
-| [TextSimilarity](src/main/java/com/company/mcp/service/TextSimilarity.java) | term coverage between two tickets, reproducible and quotable (not embeddings — a score a reviewer is asked to trust must be explainable) |
-| [AgentAssessmentService](src/main/java/com/company/mcp/service/AgentAssessmentService.java) | category, action key, target, and a confidence score from bounded inputs |
-| [SkillService](src/main/java/com/company/mcp/service/SkillService.java) | the three agent stages' vocabulary as admin-editable rows: categorisation words, host patterns, allowed tools |
-| [IncidentTarget](src/main/java/com/company/mcp/service/IncidentTarget.java) | **which machine** — typed field first, then host extraction from the text, else stop and ask |
-| [GuardrailService](src/main/java/com/company/mcp/service/GuardrailService.java) | may this action/target/script exist at all? one class, every surface |
-| [RemediationScriptService](src/main/java/com/company/mcp/service/RemediationScriptService.java) | produce the script and label its provenance tier |
-| [ScriptExplainer](src/main/java/com/company/mcp/service/ScriptExplainer.java) | what the script does and how, in plain language, for the person approving it |
-| [HitlWorkflowService](src/main/java/com/company/mcp/service/HitlWorkflowService.java) | the only remediation path: plan → queue → decision → dry run → execute, with the hash pin |
-| [RemediationToolRegistry](src/main/java/com/company/mcp/service/RemediationToolRegistry.java) | the executor contract: probe reachability, then dispatch |
-| [NotificationService](src/main/java/com/company/mcp/service/NotificationService.java) | who gets told, and did the relay actually accept it? |
+| [IncidentIntakeService](src/main/java/com/company/warden/service/IncidentIntakeService.java) | ticket in, row in Postgres, external id assigned |
+| [SopProcedureService](src/main/java/com/company/warden/service/SopProcedureService.java) | is there an **APPROVED** procedure covering this, and what action key does it declare? |
+| [IncidentPrecedentService](src/main/java/com/company/warden/service/IncidentPrecedentService.java) | have *we* fixed this before — human-approved, execution `SUCCEEDED`, parseable action key? |
+| [TextSimilarity](src/main/java/com/company/warden/service/TextSimilarity.java) | term coverage between two tickets, reproducible and quotable (not embeddings — a score a reviewer is asked to trust must be explainable) |
+| [AgentAssessmentService](src/main/java/com/company/warden/service/AgentAssessmentService.java) | category, action key, target, and a confidence score from bounded inputs |
+| [SkillService](src/main/java/com/company/warden/service/SkillService.java) | the three agent stages' vocabulary as admin-editable rows: categorisation words, host patterns, allowed tools |
+| [IncidentTarget](src/main/java/com/company/warden/service/IncidentTarget.java) | **which machine** — typed field first, then host extraction from the text, else stop and ask |
+| [GuardrailService](src/main/java/com/company/warden/service/GuardrailService.java) | may this action/target/script exist at all? one class, every surface |
+| [RemediationScriptService](src/main/java/com/company/warden/service/RemediationScriptService.java) | produce the script and label its provenance tier |
+| [ScriptExplainer](src/main/java/com/company/warden/service/ScriptExplainer.java) | what the script does and how, in plain language, for the person approving it |
+| [HitlWorkflowService](src/main/java/com/company/warden/service/HitlWorkflowService.java) | the only remediation path: plan → queue → decision → dry run → execute, with the hash pin |
+| [RemediationToolRegistry](src/main/java/com/company/warden/service/RemediationToolRegistry.java) | the executor contract: probe reachability, then dispatch |
+| [NotificationService](src/main/java/com/company/warden/service/NotificationService.java) | who gets told, and did the relay actually accept it? |
 
 ### Database schemas
 
@@ -619,9 +608,9 @@ ordinary, and flagging them trains reviewers to click through warnings.
 Stateless JWT (HS256, jjwt), BCrypt hashes (`BCryptPasswordEncoder(10)`), no sessions.
 
 **Session lifetime.** Two tokens, both constants in
-[AuthController](src/main/java/com/company/mcp/controller/AuthController.java#L21): a **30-minute
+[AuthController](src/main/java/com/company/warden/controller/AuthController.java#L21): a **30-minute
 access token** and a **3-hour refresh token** whose expiry *is* the session length. `tokenType` is
-a claim, and [JwtAuthFilter](src/main/java/com/company/mcp/config/JwtAuthFilter.java) authenticates
+a claim, and [JwtAuthFilter](src/main/java/com/company/warden/config/JwtAuthFilter.java) authenticates
 an `access` token only, so the long-lived one opens nothing but `/api/auth/refresh`.
 
 Two things to know rather than discover: `mcp.jwt.expiry-ms` in `application.yml` is **dead
@@ -654,7 +643,7 @@ an unattended workstation signed in.
 | **Execute for real** | | | ✅ |
 | AI config, skills, actuator, any DELETE | | | ✅ |
 
-Route-based in [SecurityConfig.java](src/main/java/com/company/mcp/config/SecurityConfig.java) —
+Route-based in [SecurityConfig.java](src/main/java/com/company/warden/config/SecurityConfig.java) —
 one file holds the whole matrix. Method security is deliberately off so a stray `@PreAuthorize`
 cannot create a second, silently-inert rule set. Read and write are separated with fail-closed
 catch-alls, so an endpoint added tomorrow is never a VIEWER write by accident. 401 and 403 are

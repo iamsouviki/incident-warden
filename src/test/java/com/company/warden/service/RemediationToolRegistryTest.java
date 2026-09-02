@@ -196,6 +196,21 @@ class RemediationToolRegistryTest {
     }
 
     @Test
+    void localExecutorRunsAnAllowlistedBashScriptAndCapturesOutput() {
+        ReflectionTestUtils.setField(registry, "executionEnabled", true);
+        ReflectionTestUtils.setField(registry, "localExecutionEnabled", true);
+        ReflectionTestUtils.setField(registry, "localAllowedTargets", "test-host");
+        ReflectionTestUtils.setField(registry, "executorTimeoutSeconds", 5);
+
+        RemediationToolRegistry.Outcome outcome = registry.execute("RESTART_SERVICE:tomcat:linux",
+                "printf 'postgres is running\\n'", "bash", "test-host", false);
+
+        assertEquals("SUCCEEDED", outcome.status());
+        assertEquals("LIVE", outcome.mode());
+        assertTrue(outcome.detail().contains("postgres is running"));
+    }
+
+    @Test
     void onlyHttpProbesArePermitted() {
         RemediationToolRegistry.Outcome outcome = registry.execute("CHECK_URL:file:///etc/passwd:200",
                 "curl file:///etc/passwd", "bash", "FS-1001", false);

@@ -1,7 +1,7 @@
 services:
   postgres:
     image: pgvector/pgvector:pg16
-    container_name: warden_postgres
+    container_name: warden-postgres
     environment:
       POSTGRES_DB: incident_warden_db
       POSTGRES_USER: warden_user
@@ -18,7 +18,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: mcp_redis
+    container_name: warden-redis
     command: redis-server --requirepass ${REDIS_PASSWORD:?set REDIS_PASSWORD}
     ports:
       - "6379:6379"
@@ -33,7 +33,7 @@ services:
   keycloak:
     profiles: ["full"]
     image: quay.io/keycloak/keycloak:24.0
-    container_name: mcp_keycloak
+    container_name: warden-keycloak
     command: start-dev
     environment:
       KC_DB: postgres
@@ -52,7 +52,7 @@ services:
   vault:
     profiles: ["full"]
     image: hashicorp/vault:1.16
-    container_name: mcp_vault
+    container_name: warden-vault
     cap_add:
       - IPC_LOCK
     command: server
@@ -64,11 +64,11 @@ services:
     volumes:
       - vault_data:/vault/data
 
-  mcp-app:
+  warden-app:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: mcp_app
+    container_name: warden-app
     ports:
       - "8080:8080"
     environment:
@@ -121,17 +121,17 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: mcp_frontend
+    container_name: warden-frontend
     ports:
       - "3000:80"
     depends_on:
-      mcp-app:
+      warden-app:
         condition: service_healthy
 
   jaeger:
     profiles: ["full"]
     image: jaegertracing/all-in-one:latest
-    container_name: mcp_jaeger
+    container_name: warden-jaeger
     ports:
       - "16686:16686"  # Jaeger UI
       - "4317:4317"    # OTLP gRPC
@@ -139,7 +139,7 @@ services:
   elasticsearch:
     profiles: ["full"]
     image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
-    container_name: mcp_elasticsearch
+    container_name: warden-elasticsearch
     environment:
       discovery.type: single-node
       xpack.security.enabled: "false"
@@ -156,7 +156,7 @@ services:
   kibana:
     profiles: ["full"]
     image: docker.elastic.co/kibana/kibana:8.13.0
-    container_name: mcp_kibana
+    container_name: warden-kibana
     environment:
       ELASTICSEARCH_HOSTS: http://elasticsearch:9200
     ports:
@@ -168,7 +168,7 @@ services:
   logstash:
     profiles: ["full"]
     image: docker.elastic.co/logstash/logstash:8.13.0
-    container_name: mcp_logstash
+    container_name: warden-logstash
     volumes:
       - ./logstash.conf:/usr/share/logstash/pipeline/logstash.conf
     ports:

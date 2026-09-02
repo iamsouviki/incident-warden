@@ -3,12 +3,10 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKEND_PID=""
-FRONTEND_PID=""
 
 cleanup() {
   trap - INT TERM EXIT
   [[ -n "${BACKEND_PID}" ]] && kill "${BACKEND_PID}" 2>/dev/null || true
-  [[ -n "${FRONTEND_PID}" ]] && kill "${FRONTEND_PID}" 2>/dev/null || true
 }
 trap cleanup INT TERM EXIT
 
@@ -27,8 +25,12 @@ fi
 
 mkdir -p .data logs
 
-echo "Starting backend with the local H2 profile..."
-mvn -q spring-boot:run -Dspring-boot.run.profiles=local > logs/backend-local.log 2>&1 &
+echo "Building the Incident Warden JAR..."
+npm run build --prefix frontend
+mvn -q -DskipTests package
+
+echo "Starting the Incident Warden JAR with the local profile..."
+java -jar target/incident-warden-1.0.0.jar --spring.profiles.active=local > logs/backend-local.log 2>&1 &
 BACKEND_PID=$!
 
 for _ in $(seq 1 45); do
@@ -43,22 +45,15 @@ if ! curl -fsS http://localhost:8080/api/health >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "Starting frontend at http://localhost:5173 ..."
-cd "$ROOT_DIR/frontend"
-if [[ ! -d node_modules ]]; then npm ci; fi
-npm run dev -- --host 0.0.0.0 > "$ROOT_DIR/logs/frontend-local.log" 2>&1 &
-FRONTEND_PID=$!
-
 cat <<EOF
 
 Local development is ready:
-  UI:      http://localhost:5173
-  API:     http://localhost:8080
+  UI/API:  http://localhost:8080
   Health:  http://localhost:8080/api/health
   Login:   admin / admin on a fresh database — the username is the starter
            password, and the first screen is a forced password change
 
-Press Ctrl+C to stop both services.
+Press Ctrl+C to stop the JAR.
 EOF
 
-wait "$FRONTEND_PID"
+wait "$BACKEND_PID"

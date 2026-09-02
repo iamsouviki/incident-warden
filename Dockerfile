@@ -23,8 +23,7 @@ RUN apt-get update \
     && useradd --system --uid 10001 --create-home warden
 
 # Copy built JAR from builder. Globbed on purpose: this line named a jar
-# (mcp-incident-automation-1.0.0.jar) that the build has never produced — the artifactId is
-# incident-automation — so every docker build failed here. A glob survives the next rename too.
+# The artifact name is owned by Maven; a glob keeps this image build resilient to version bumps.
 # .jar.original, Spring Boot's pre-repackage copy, does not match *.jar.
 COPY --from=builder --chown=warden:warden /app/target/*.jar app.jar
 
