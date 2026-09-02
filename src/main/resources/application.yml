@@ -241,10 +241,9 @@ mcp:
     ticket-type: Incident
     limit: 50                               # max tickets per poll cycle
 
-  # ─── Integration HTTP Timeouts (Turned off by default) ───────────────────
+  # ─── Integration HTTP Timeouts (always enforced by IntegrationHttpConfig) ─
   integrations:
     http:
-      timeout-enabled: ${MCP_INTEGRATIONS_HTTP_TIMEOUT_ENABLED:false}
       connect-timeout-ms: ${MCP_INTEGRATIONS_HTTP_CONNECT_TIMEOUT_MS:5000}
       read-timeout-ms: ${MCP_INTEGRATIONS_HTTP_READ_TIMEOUT_MS:10000}
 

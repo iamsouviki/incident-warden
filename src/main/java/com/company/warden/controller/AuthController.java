@@ -172,6 +172,9 @@ public class AuthController {
             return ResponseEntity.status(401).body(Map.of("error", "Refresh token invalid or expired"));
 
         var claims = jwtService.parse(old);
+        if (tokenRevocationService.isRevoked(claims.getId(), claims.getSubject(), claims.getIssuedAt().toInstant()))
+            return ResponseEntity.status(401).body(Map.of("error", "Refresh token invalid or expired"));
+
         AppUser user = users.findByUsername(claims.getSubject()).orElse(null);
         if (user == null || !user.isEnabled())
             return ResponseEntity.status(401).body(Map.of("error", "Account is no longer active"));
@@ -184,6 +187,7 @@ public class AuthController {
                 Map.of("role", role, "tokenType", "access"), ACCESS_TTL);
         String rotatedRefresh = jwtService.generate(user.getUsername(),
                 Map.of("role", role, "tokenType", "refresh"), REFRESH_TTL);
+        tokenRevocationService.revokeToken(claims.getId(), claims.getExpiration().toInstant());
         return ResponseEntity.ok(Map.of(
                 "token", fresh,
                 "refreshToken", rotatedRefresh,

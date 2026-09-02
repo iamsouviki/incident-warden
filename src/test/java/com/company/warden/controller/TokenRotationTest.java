@@ -81,6 +81,14 @@ class TokenRotationTest {
     }
 
     @Test
+    void aRefreshTokenCannotBeReplayedAfterRotation() {
+        String original = (String) login(false).get("refreshToken");
+
+        assertThat(controller.refresh(Map.of("refreshToken", original)).getStatusCode().value()).isEqualTo(200);
+        assertThat(controller.refresh(Map.of("refreshToken", original)).getStatusCode().value()).isEqualTo(401);
+    }
+
+    @Test
     void logoutRevokesTokens() {
         Map<String, Object> session = login(false);
         String access = (String) session.get("token");

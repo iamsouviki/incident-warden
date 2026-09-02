@@ -24,6 +24,7 @@ public class RateLimiterService {
 
     private static final Logger log = LoggerFactory.getLogger(RateLimiterService.class);
     private static final String RATE_LIMIT_PREFIX = "ratelimit:";
+    private static final int MAX_IN_MEMORY_KEYS = 10_000;
 
     private final StringRedisTemplate redisTemplate;
     private final Map<String, Deque<Instant>> inMemoryHits = new ConcurrentHashMap<>();
@@ -78,6 +79,17 @@ public class RateLimiterService {
 
         // In-memory sliding window fallback with auto-pruning
         Instant cutoff = Instant.now().minus(Duration.ofMinutes(1));
+        if (inMemoryHits.size() >= MAX_IN_MEMORY_KEYS) {
+            inMemoryHits.entrySet().removeIf(entry -> {
+                Deque<Instant> hits = entry.getValue();
+                synchronized (hits) {
+                    return hits.isEmpty() || hits.peekLast().isBefore(cutoff);
+                }
+            });
+            if (inMemoryHits.size() >= MAX_IN_MEMORY_KEYS && !inMemoryHits.containsKey(key)) {
+                return false;
+            }
+        }
         Deque<Instant> window = inMemoryHits.computeIfAbsent(key, k -> new ArrayDeque<>());
         synchronized (window) {
             while (!window.isEmpty() && window.peekFirst().isBefore(cutoff)) {

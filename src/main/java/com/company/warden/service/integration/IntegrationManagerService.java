@@ -356,33 +356,22 @@ public class IntegrationManagerService {
      * ITSM credentials come from the environment and are never persisted. {@code servicenow_password}
      * reads {@code MCP_SERVICENOW_PASSWORD}.
      *
-     * <p>This is the only reader of a secret in this class, so there is exactly one place that could
-     * ever reach for the database instead — and it does not. Returning blank when the variable is
-     * unset makes the failure a 401 from the vendor, which is the correct and visible outcome; a
-     * silent fall back to a stale row in {@code system_config} is not.
+     * <p>Returning blank when the variable is unset makes the failure a 401 from the vendor, which
+     * is the correct and visible outcome; a fallback to a stale database row would expose a secret
+     * through backups and replicas.
      */
     private String getSecret(String key) {
         String value = System.getenv("MCP_" + key.toUpperCase(Locale.ROOT));
         if (value != null && !value.isBlank()) {
             return value;
         }
-        // Fallback to Base64-encoded DB key in system_config
-        String dbVal = getConfig(key, "");
-        if (!dbVal.isBlank()) {
-            try {
-                return new String(Base64.getDecoder().decode(dbVal), java.nio.charset.StandardCharsets.UTF_8);
-            } catch (Exception e) {
-                return dbVal;
-            }
-        }
-        log.warn("[INTEGRATION] Secret {} is not set in env or DB; calls needing it will fail to authenticate", key);
+        log.warn("[INTEGRATION] Secret {} is not set in the environment; calls needing it will fail to authenticate", key);
         return "";
     }
 
     private boolean secretPresent(String key) {
         String value = System.getenv("MCP_" + key.toUpperCase(Locale.ROOT));
-        if (value != null && !value.isBlank()) return true;
-        return !getConfig(key, "").isBlank();
+        return value != null && !value.isBlank();
     }
 
     private boolean getBooleanConfig(String key, boolean fallback) {

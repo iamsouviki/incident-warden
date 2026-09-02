@@ -365,10 +365,10 @@ Click through and say little more than this. The Settings page is three cards:
   email (an account nothing can email is one the platform would still report as "notified") and an
   unknown role is refused, not quietly downgraded to read-only. Your own row shows as **owner** and
   is read-only — you cannot demote yourself out of the ability to fix it.
-* **External ITSM & Bug Tracker Integrations** — ServiceNow, Freshservice and Jira sync. Be careful
-  here: **the credentials you type into this card are written to the database in plaintext.** That is
-  the single worst defect in the repository. Show the card, do not enter a real credential, and say
-  so — see the gap list below.
+* **External ITSM & Bug Tracker Integrations** — ServiceNow, Freshservice and Jira sync. The settings
+   form does not persist submitted credentials, but legacy credential rows can still be read through
+   a reversible Base64 fallback. Show the card, do not enter a real credential, and say so — see S1
+   in the readiness review.
 
 Then, elsewhere:
 
@@ -427,7 +427,7 @@ plan whose host probed clean does not show it.
 >
 > Do not plan a host-less incident on stage. If a client asks what happens, say it plainly: the
 > platform refuses correctly and the fix-it-yourself affordance for that one refusal is missing. It is
-> filed as **C13** in `docs/enterprise-readiness.md`.
+> filed as a known UI gap in the project issue tracker.
 
 ---
 
@@ -475,15 +475,14 @@ Five things.
    a NULL one, which cannot authenticate) and none is ever logged, and first login cannot be
    completed without replacing it.
 5. **This is not yet production-hardened**, and the list is written down rather than glossed:
-   `docs/enterprise-readiness.md` has every issue with a file and line number. The four that matter
+   The public security policy and README list the current production blockers. The four that matter
    most, in order:
-   * the ITSM integration screen stores its credentials in the database in plaintext (**S1**);
-   * `docker compose up` does not start the backend, so do not deploy from that compose file (**S2**);
+   * legacy ITSM integration credentials remain recoverable from the database (**S1**);
+   * refresh-token rotation is replayable (**S2**);
    * a refusal that says "name the server" has no field in the UI to name it, because a blocked plan
      never reaches the console that holds the input (**C13**) — the platform is right to refuse and
      wrong about where you fix it;
-   * the frontend type check fails on the committed tree, and one card on the chat page calls two
-     functions that do not exist (**B7**, **C15**).
+    * login rate-limit fallback state can grow without bound (**S3**).
 
    The last two are frontend work measured in hours, not architecture.
 
