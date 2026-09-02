@@ -317,7 +317,7 @@ management:
 logging:
   level:
     root: INFO
-    com.company.mcp: INFO
+    com.company.warden: INFO
     org.springframework: WARN
     # Spring AI at DEBUG logs whole prompts and completions — incident text, hostnames, SOP
     # excerpts — before %mask ever sees a formatted message. WARN is the fix; masking is the

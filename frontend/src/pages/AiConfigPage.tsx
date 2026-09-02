@@ -164,7 +164,7 @@ const AiConfigPage: React.FC = () => {
               <p style={{ margin: 0, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: '6px', fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
                 {apiKeyPresent
                   ? 'A key is configured in the server environment. It is never displayed or stored in the database.'
-                  : 'No key configured. Set MCP_LLM_API_KEY in the server environment and restart — this provider will fail model calls until you do.'}
+                  : 'No key configured. Set LLM_API_KEY in the server environment and restart — this provider will fail model calls until you do.'}
               </p>
             </div>
           )}

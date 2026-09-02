@@ -18,8 +18,8 @@
 <configuration>
     <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
 
-    <conversionRule conversionWord="mask" converterClass="com.company.mcp.config.MaskingConverter"/>
-    <conversionRule conversionWord="maskEx" converterClass="com.company.mcp.config.MaskingThrowableConverter"/>
+    <conversionRule conversionWord="mask" converterClass="com.company.warden.config.MaskingConverter"/>
+    <conversionRule conversionWord="maskEx" converterClass="com.company.warden.config.MaskingThrowableConverter"/>
 
     <property name="LOG_FILE" value="${LOG_FILE:-logs/incident-warden.log}"/>
 

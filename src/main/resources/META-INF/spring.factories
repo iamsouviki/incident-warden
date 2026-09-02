@@ -1,1 +1,1 @@
-org.springframework.boot.env.EnvironmentPostProcessor=com.company.mcp.config.DatabaseInitializer
+org.springframework.boot.env.EnvironmentPostProcessor=com.company.warden.config.DatabaseInitializer

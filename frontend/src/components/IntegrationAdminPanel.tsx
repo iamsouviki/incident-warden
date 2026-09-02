@@ -372,7 +372,7 @@ export default function IntegrationAdminPanel() {
                 style={{ width: '100%', height: '34px', padding: '0 8px', fontSize: '12.5px' }}
               />
             </div>
-            <SecretStatus label="Password / API Key" envVar="MCP_SERVICENOW_PASSWORD" set={settings.serviceNowSecretSet} />
+            <SecretStatus label="Password / API Key" envVar="SERVICENOW_PASSWORD" set={settings.serviceNowSecretSet} />
           </div>
         </div>
 
@@ -415,7 +415,7 @@ export default function IntegrationAdminPanel() {
                 style={{ width: '100%', height: '34px', padding: '0 8px', fontSize: '12.5px' }}
               />
             </div>
-            <SecretStatus label="Freshservice API Key" envVar="MCP_FRESHSERVICE_API_KEY" set={settings.freshserviceSecretSet} />
+            <SecretStatus label="Freshservice API Key" envVar="FRESHSERVICE_API_KEY" set={settings.freshserviceSecretSet} />
           </div>
         </div>
 
@@ -468,7 +468,7 @@ export default function IntegrationAdminPanel() {
                 style={{ width: '100%', height: '34px', padding: '0 8px', fontSize: '12.5px' }}
               />
             </div>
-            <SecretStatus label="API Token" envVar="MCP_JIRA_API_TOKEN" set={settings.jiraSecretSet} />
+            <SecretStatus label="API Token" envVar="JIRA_API_TOKEN" set={settings.jiraSecretSet} />
             <div style={{ gridColumn: '1 / -1' }}>
               <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '4px' }}>JQL Filter Query</label>
               <input

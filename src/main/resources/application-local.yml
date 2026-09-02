@@ -60,7 +60,7 @@ server:
 logging:
   level:
     org.springframework: WARN
-    com.company.mcp: INFO
+    com.company.warden: INFO
     org.hibernate.SQL: WARN
     liquibase: INFO
 

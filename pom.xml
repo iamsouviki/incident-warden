@@ -12,7 +12,7 @@
         <relativePath/>
     </parent>
 
-    <groupId>com.mcp</groupId>
+    <groupId>com.warden</groupId>
     <artifactId>incident-warden</artifactId>
     <version>1.0.0</version>
     <name>Incident Warden</name>
