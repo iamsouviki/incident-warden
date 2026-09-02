@@ -217,6 +217,10 @@ const SUGGESTIONS_SIGNED_IN = [
 ];
 
 const includesAny = (haystack: string, needles: string[]) => needles.some(n => haystack.includes(n));
+const isBoardStatsQuery = (question: string) => includesAny(question.toLowerCase(), [
+  'how many incidents', 'how many tickets', 'incident count', 'ticket count',
+  'total incidents', 'total tickets', 'breakdown by priority', 'breakdown by status',
+]);
 
 const contentWords = (question: string): string[] =>
   (question.toLowerCase().match(/[a-z0-9][a-z0-9-]{1,}/g) || []).filter(w => !STOP_WORDS.has(w));
@@ -693,6 +697,19 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
     }
 
     try {
+      if (isBoardStatsQuery(question)) {
+        const statsResponse = await fetch('/api/v1/public/stats');
+        if (statsResponse.ok) {
+          const stats = await statsResponse.json() as PublicStats;
+          updateMessage(botId, {
+            loading: false,
+            text: 'Here is the current incident count and board breakdown.',
+            stats,
+          });
+          return;
+        }
+      }
+
       const res = await fetch('/api/v1/public/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1129,6 +1146,18 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
       if (!activeUser) {
         await answerAnonymously(q, botId);
         return;
+      }
+      if (isBoardStatsQuery(q)) {
+        const statsResponse = await authFetch('/api/v1/public/stats');
+        if (statsResponse.ok) {
+          const stats = await statsResponse.json() as PublicStats;
+          updateMessage(botId, {
+            loading: false,
+            text: 'Here is the current incident count and board breakdown.',
+            stats,
+          });
+          return;
+        }
       }
       // Before the branch, not inside one: both routes are conversations worth keeping.
       const currentSessionId = await ensureSession(q);

@@ -57,4 +57,9 @@
         <sqlFile path="versions/1.7/seed_pgcheck_tool.sql" relativeToChangelogFile="true" splitStatements="false" />
     </changeSet>
 
+    <changeSet id="1.8-purge-legacy-ai-key" author="mcp-incident-automation">
+        <validCheckSum>ANY</validCheckSum>
+        <sqlFile path="versions/1.8/purge_legacy_ai_key.sql" relativeToChangelogFile="true" splitStatements="false" />
+    </changeSet>
+
 </databaseChangeLog>

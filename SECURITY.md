@@ -50,22 +50,21 @@ first. Each is described in more detail in the [README](README.md#the-invariants
   accounts and roles, SOP procedures, notification recipients — is a database row edited from the UI.
 - `MCP_JWT_SECRET` (≥32 bytes) is required by every profile except `local`; the application refuses
   to start without it. `local` ships a committed dev key so a checkout runs with no setup.
-- ⚠️ **Known violation: ITSM integration secrets ARE written to the database.**
-  `IntegrationManagerService` persists `servicenow_password`, `freshservice_api_key` and
-  `jira_api_token` as plaintext rows in `config.system_config`. They are masked on read, so the API
-  never returns them — but they are in every `pg_dump`, every replica and every backup. If you have
-  configured an ITSM integration through the UI, **treat that database as holding live credentials.**
-  Tracked as [S1](docs/enterprise-readiness.md) with the fix shape; not yet fixed.
+- ⚠️ **Known violation: legacy ITSM secrets remain recoverable from the database.**
+  The settings endpoint ignores submitted credential fields, but `IntegrationManagerService.getSecret()`
+  still reads and Base64-decodes legacy `servicenow_password`, `freshservice_api_key` and
+  `jira_api_token` rows. Base64 is not encryption. If such rows exist, **treat the database as holding
+  live credentials** and rotate them. Track fixes in the repository issue tracker.
 
 ## Known limitations — fix these before production
 
 Stated plainly rather than buried, because a reader deploying this needs them. The full list, with
-`file:line` and an ordering, is [docs/enterprise-readiness.md](docs/enterprise-readiness.md).
+`file:line` and an ordering, is maintained in the repository issue tracker.
 
-- **ITSM integration credentials in the database** — see the ⚠️ above. Highest severity.
-- **`docker compose up` cannot start the backend.** The `mcp-app` service sets no `MCP_JWT_SECRET`
-  and the application refuses to boot without one. The shipped compose file also uses `changeme` for
-  Postgres and Redis, `dev-token` for Vault and `admin` for Keycloak.
+- **Legacy ITSM integration credentials remain in the database** — see the ⚠️ above. Highest severity.
+- **The full Compose profile is development-only.** It ships default-style Postgres/Redis credentials,
+  Vault dev mode and Keycloak `start-dev`; replace all credentials and harden or remove those services
+  before any network exposure.
 - **Prompts are logged.** `org.springframework.ai` is at `DEBUG` in the default profile, which writes
   prompt and response payloads — incident text, host names, SOP excerpts — into
   `logs/incident-warden.log`. That file has no rotation policy. Turn it down before handling real
@@ -85,7 +84,7 @@ Stated plainly rather than buried, because a reader deploying this needs them. T
   if a cookie is introduced, CSRF protection must return in the same commit.
 - **The three ITSM HTTP clients have no timeouts.** A stalled ServiceNow/Freshservice/Jira endpoint
   holds a request thread indefinitely, and `server.tomcat.connection-timeout` is `-1`.
-- **Spring Boot 3.2.0 is past OSS support**, and Dependabot is configured to ignore the parent POM.
+- **Spring Boot 3.2.12 is past OSS support**, and dependency policy must be reviewed before production.
 - **The executor agent is the actual blast radius.** `scripts/dev-executor.mjs` deliberately runs
   nothing. Whatever you replace it with holds the credentials and does the work, so its sandboxing,
   its allowlist and its logging are your last line of defence — not this repo's. The dispatch payload

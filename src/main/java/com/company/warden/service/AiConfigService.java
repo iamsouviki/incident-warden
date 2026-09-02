@@ -3,12 +3,9 @@ package com.company.warden.service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import jakarta.annotation.PostConstruct;
-import java.util.List;
-import java.util.Map;
 
 @Service
 public class AiConfigService {
@@ -51,9 +48,6 @@ public class AiConfigService {
                 if (val == null) continue;
 
                 switch (key) {
-                    case "api_key":
-                        this.apiKey = decodeBase64(val);
-                        break;
                     case "provider":
                         this.provider = val;
                         break;
@@ -71,20 +65,6 @@ public class AiConfigService {
             log.info("[CONFIG] Loaded AI config: provider={}, chatModel={}, embeddingModel={}", provider, activeChatModel, activeEmbeddingModel);
         } catch (Exception e) {
             log.warn("[CONFIG] Failed to load settings from DB, using memory defaults: {}", e.getMessage());
-        }
-    }
-
-    private static String encodeBase64(String value) {
-        if (value == null || value.isBlank()) return "";
-        return java.util.Base64.getEncoder().encodeToString(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-    }
-
-    private static String decodeBase64(String encoded) {
-        if (encoded == null || encoded.isBlank()) return "";
-        try {
-            return new String(java.util.Base64.getDecoder().decode(encoded), java.nio.charset.StandardCharsets.UTF_8);
-        } catch (Exception e) {
-            return encoded; // Fallback to raw string if not Base64
         }
     }
 
@@ -121,8 +101,7 @@ public class AiConfigService {
     }
 
     public void setApiKey(String apiKey) {
-        this.apiKey = apiKey != null ? apiKey.trim() : "";
-        updateConfig("api_key", encodeBase64(this.apiKey));
+        log.warn("[CONFIG] Ignored API key update; configure MCP_LLM_API_KEY in the environment and restart");
     }
 
     public String getActiveChatModel() {

@@ -34,7 +34,7 @@ mvn -o test
 npx tsc --noEmit --project frontend
 ```
 
-Both must pass — **112 tests, 0 failures** is the current baseline. `mvn -q` hides the test summary,
+Both must pass — **157 tests, 0 failures** is the current baseline. `mvn -q` hides the test summary,
 so if you use it, read `target/surefire-reports/*.txt` instead of trusting a silent exit code.
 
 Migrations are one squashed changeset (`1.0-baseline`). **Never edit an existing changeset** — add a
@@ -56,7 +56,7 @@ first. In particular, a PR will not be merged if it:
   product *is*;
 - stores an integration credential, provider API key, or token in the database, or returns one from
   an API. (`IntegrationManagerService` currently breaks this rule and is a known defect — see
-  [S1](docs/enterprise-readiness.md). Fixing it is welcome; matching it is not.);
+  [Known gaps](README.md#known-gaps). Fixing it is welcome; matching it is not.);
 - adds a configuration knob that can only be set by editing a properties file when it is something
   an operator needs to change at runtime. Operator-facing settings belong in the UI.
 
@@ -79,28 +79,21 @@ that is the bar.
 
 ## Where the useful gaps are
 
-[docs/enterprise-readiness.md](docs/enterprise-readiness.md) is the full list with `file:line`
-references and a suggested order; [Known gaps](README.md#known-gaps) is the short version. The ones
-most worth a contribution:
+[Known gaps](README.md#known-gaps) is the short version. The ones most worth a contribution:
 
-- **Get `npm run typecheck` back to green.** It exits 2 today with **58 errors** in five committed
-  files, so the frontend CI job is red before you touch anything — if your first run fails, it is not
-  you. Roughly 40 are unused imports (`TS6133`) and are pure deletion. The two that matter: the chat
-  page calls `handleMissingParamChange` and `handleMissingParamsSubmit` (`ChatPage.tsx:909,919`) and
-  **neither function exists**, so that card throws a `ReferenceError`; and `ToolPlan`/`RunStage`
-  (lines 46, 64) are missing six fields the render code reads. Good first contribution, and nothing
-  else can be gated until it lands.
+- **Add frontend tests.** `npm run typecheck` and `npm run build` pass, but `frontend/package.json`
+  has no test script or framework. The chat page and remediation review flow have no automated
+  browser coverage.
 - **Answering a target refusal from the UI.** `TARGET_HOST_UNKNOWN` blocks a plan and says "enter the
   server this affects" — and the only screen with a hostname input is the HITL review console, which
   a blocked plan never reaches, because the `!eligible` branch returns without creating a request.
   Render the escalation's `action` string plus the three inputs on `IncidentManagementPage`, reusing
   `patchIncident('target', …)` from `HitlReviewConsole.tsx:463`. Frontend-only.
-- **ITSM credentials out of the database.** `IntegrationManagerService` writes three secrets to
-  `config.system_config` in plaintext. The fix pattern already exists in `AiConfigService`: read them
-  from the environment, keep the non-secret fields UI-editable, add a changeset that deletes the
-  rows. Highest-value fix in the repository.
-- **A deployment that boots.** `docker compose up` fails because `mcp-app` sets no `MCP_JWT_SECRET`,
-  and `SPRING_PROFILES_ACTIVE: docker` names a profile with no `application-docker.yml`.
+- **ITSM credentials out of the database.** `IntegrationManagerService` still has a reversible
+  Base64 fallback to legacy `config.system_config` rows. Remove that fallback, read only environment
+  variables, and add a changeset that deletes legacy rows. Highest-value fix in the repository.
+- **A deployment that boots.** `docker compose up` requires explicit `POSTGRES_PASSWORD`,
+  `REDIS_PASSWORD`, `KEYCLOAK_ADMIN_PASSWORD`, `VAULT_DEV_ROOT_TOKEN_ID`, and `MCP_JWT_SECRET` values.
 - **A real executor agent.** `scripts/dev-executor.mjs` runs nothing on purpose. A sandboxed agent
   that does run scripts, with its own allowlist and audit log, is the highest-value missing piece.
 - **MCP tool access.** The registry and `/api/v1/mcp/*` exist; nothing wires the agent to actually
@@ -115,8 +108,8 @@ most worth a contribution:
   were removed from `AiConfigPage.tsx` and never replaced. Either restore both cards or delete the
   endpoints; a half-removed setting is what makes documentation lie. Small, self-contained, and it
   closes a violation of the rule two bullets up.
-- **Deleting `TeamController` and `TeamsPage.tsx`** — a fake API that returns `200 "success"` and
-  persists nothing, plus its only consumer.
+- **Remove or implement the legacy team API** if it is still exposed. A route that returns success
+  without persisting a requested change is not acceptable in an enterprise deployment.
 
 ## Licensing of contributions
 

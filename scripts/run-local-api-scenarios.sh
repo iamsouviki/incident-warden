@@ -2,7 +2,7 @@
 set -euo pipefail
 
 BASE_URL="${BASE_URL:-http://localhost:8080}"
-OUT_DIR="${OUT_DIR:-/tmp/mcp_scenario_results}"
+OUT_DIR="${OUT_DIR:-/tmp/warden_scenario_results}"
 mkdir -p "$OUT_DIR"
 rm -f "$OUT_DIR"/*.body "$OUT_DIR"/summary.tsv
 printf 'scenario\texpected\tactual\tresult\tnote\n' > "$OUT_DIR/summary.tsv"

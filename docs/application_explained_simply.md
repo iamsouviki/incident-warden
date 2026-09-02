@@ -232,7 +232,7 @@ The biggest one: **the locked-down tool runner is not finished.** The app knows 
 
 There are also some untidy things a grown-up should fix before letting strangers near it. The app’s starting password is far too easy to guess. It writes down some secrets in its notebook when it should keep them somewhere safer. When it is talking to the clever language model, it writes the whole conversation into its log file, and those conversations have real ticket details in them. And the one-command “just start everything” recipe does not actually work yet — it forgets to give the app its secret signing key, so the app refuses to wake up.
 
-All of those are written down properly, with exact file names, in **[the readiness review](enterprise-readiness.md)**.
+All of those are written down properly in the public [security policy](../SECURITY.md) and [known gaps](../README.md#known-gaps).
 
 Until they are fixed, the safest rule is:
 

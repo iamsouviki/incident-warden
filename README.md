@@ -12,8 +12,9 @@
   <a href="#functional-flow-in-detail">How it works</a> ·
   <a href="#safeguards">Safeguards</a> ·
   <a href="#api">API</a> ·
-  <a href="docs/enterprise-readiness.md">Readiness review</a> ·
+  <a href="#known-gaps">Known gaps</a> ·
   <a href="docs/client_poc_demo.md">Demo run sheet</a> ·
+  <a href="docs/demo-flow.md">JAR demo flow</a> ·
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
@@ -63,7 +64,7 @@ the product, and it is in this repository.
 | **Platform-aware script generation** | Probes the target to learn its operating system, then emits PowerShell or Bash. Three tiers: deterministic SOP template → model-assisted → refuse. |
 | **Deterministic guardrails** | Allowlisted action keys, blocked terms, hash pinning at approval, re-scan at dispatch, and `dryRun:false` refused on the public execute endpoint. |
 | **AI guardrails** | A scope gate before any model call, a 4 000-character input cap, prompt-injection refusal, a per-user LLM rate limit, and provider failures excluded from the answer cache so one bad minute cannot break a question permanently. |
-| **Target credentials stay with the executor** | `connection_method` records *how* to reach a host; the secret for that method lives with the executor agent, not here. The LLM provider key is environment-only (`MCP_LLM_API_KEY`) and is never returned by an API. Login passwords are BCrypt hashes. **One exception, and it is a known defect:** the ITSM integration page writes ServiceNow/Freshservice/Jira secrets into `config.system_config` — see [S1 in the readiness review](docs/enterprise-readiness.md). |
+| **Target credentials stay with the executor** | `connection_method` records *how* to reach a host; the secret for that method lives with the executor agent, not here. The LLM provider key is environment-only (`MCP_LLM_API_KEY`) and is never returned by an API. Login passwords are BCrypt hashes. **One exception, and it is a known defect:** ITSM secrets can still be read from legacy `config.system_config` rows through a reversible Base64 fallback. |
 | **Operated from the UI** | Provider and model, users and roles, agent skills, SOP procedures, ITSM integrations — all database-backed and editable in the browser, with no properties-file edit needed to run it. Two settings fall short of this today and are listed as defects rather than claimed: the notification relay and the HITL confidence band are API-only, their forms having been removed from the Settings page. |
 | **JWT access control** | A role matrix over every endpoint, fail-closed on unmapped writes, refresh tokens, and a rate-limited login. |
 | **Runs fully offline** | Postgres + pgvector + Ollama, plus two dev stand-ins (executor, SMTP) that make the whole loop observable with nothing leaving the machine. |
@@ -80,8 +81,8 @@ ticket ─► saved in Postgres ─► analysis ─► plan ─► guardrails �
 
 Precedent and confidence raise or lower how a plan is *presented* — never whether a human is asked.
 
-**Demo script for a client walkthrough: [docs/client_poc_demo.md](docs/client_poc_demo.md).**
-It is a run sheet with the exact pages, buttons and expected log lines.
+**Demo script:** [docs/demo-flow.md](docs/demo-flow.md) is the runnable JAR flow with a Mermaid
+diagram and API smoke checks. The detailed client run sheet is [docs/client_poc_demo.md](docs/client_poc_demo.md).
 
 ---
 
@@ -103,7 +104,7 @@ Read this section before changing anything in the remediation path.
    to connect (`SSH`/`WINRM`/`AGENT`); the secret for that method lives with the executor on the
    target network. User login passwords are BCrypt hashes. The intent is that no credential of any
    kind is stored — and the ITSM integration path currently breaks that intent, which is tracked as
-   [S1](docs/enterprise-readiness.md) rather than described here as if it were fixed.
+  [Known gaps](#known-gaps) rather than described here as if it were fixed.
 6. **No script runs unattended. There is no switch that makes it.** No scheduler dispatches a
    remediation, no confidence score dispatches, and no past approval is inherited by a later
    incident. Every execution is recorded against the name of a person who read that script. (One
@@ -120,34 +121,22 @@ Requires PostgreSQL 16 with the `vector` extension on `localhost:5432` (database
 because a fake `similaritySearch` returned every document unranked and made RAG "work" locally
 while proving nothing.
 
-Four processes. The last two are dev stand-ins that make the demo observable offline.
+The default local path is one Java JAR. PostgreSQL and Redis remain external lower-environment dependencies.
 
 ```bash
-mvn -o spring-boot:run -Dspring-boot.run.profiles=local -Dmaven.test.skip=true -Dspring-boot.run.jvmArguments="-Dmcp.executor.enabled=true -Dmcp.executor.url=http://localhost:9099"
+MCP_EXECUTOR_LOCAL_ENABLED=true MCP_EXECUTOR_LOCAL_ALLOWED_TARGETS=test-host ./scripts/run-local.sh
 ```
 
 ```bash
-npm run dev --prefix frontend
 ```
 
-```bash
-node scripts/dev-executor.mjs store-0042-pos-01,store-0042-app-01,store-0099-pos-01
-```
-
-```bash
-node scripts/dev-smtp.mjs
-```
-
-Open <http://localhost:5173> and sign in as **`admin`**, password **`admin`** — the username is the
+Open <http://localhost:8080> and sign in as **`admin`**, password **`admin`** — the username is the
 starter password, and the first screen after login is a forced password change
 (`must_change_password` is seeded `true`, and `POST /api/auth/password` is the only thing that
 clears it). Nothing is committed and nothing is logged: the migration seeds the row with a NULL
 hash, which cannot authenticate, and `BootstrapPassword` enrols it on first boot. Same rule for
 every account an administrator creates or resets afterwards. To recover a lost admin password,
 `UPDATE auth.users SET password_hash = NULL WHERE username = 'admin';` and restart.
-
-All four processes are also entries in [.claude/launch.json](.claude/launch.json) (`backend`,
-`frontend`, `executor`, `smtp`).
 
 The `local` profile ships a committed dev JWT key, disables Redis/Vault, sets
 `hitl-threshold: 0.70` and turns **separation of duties off** so the single seeded account can both
@@ -191,19 +180,19 @@ Spring Boot 3.2 control plane (8080)
 
 | Class | Question it answers |
 |---|---|
-| [IncidentIntakeService](src/main/java/com/company/mcp/service/IncidentIntakeService.java) | ticket in, row in Postgres, external id assigned |
-| [SopProcedureService](src/main/java/com/company/mcp/service/SopProcedureService.java) | is there an **APPROVED** procedure covering this, and what action key does it declare? |
-| [IncidentPrecedentService](src/main/java/com/company/mcp/service/IncidentPrecedentService.java) | have *we* fixed this before — human-approved, execution `SUCCEEDED`, parseable action key? |
-| [TextSimilarity](src/main/java/com/company/mcp/service/TextSimilarity.java) | term coverage between two tickets, reproducible and quotable (not embeddings — a score a reviewer is asked to trust must be explainable) |
-| [AgentAssessmentService](src/main/java/com/company/mcp/service/AgentAssessmentService.java) | category, action key, target, and a confidence score from bounded inputs |
-| [SkillService](src/main/java/com/company/mcp/service/SkillService.java) | the three agent stages' vocabulary as admin-editable rows: categorisation words, host patterns, allowed tools |
-| [IncidentTarget](src/main/java/com/company/mcp/service/IncidentTarget.java) | **which machine** — typed field first, then host extraction from the text, else stop and ask |
-| [GuardrailService](src/main/java/com/company/mcp/service/GuardrailService.java) | may this action/target/script exist at all? one class, every surface |
-| [RemediationScriptService](src/main/java/com/company/mcp/service/RemediationScriptService.java) | produce the script and label its provenance tier |
-| [ScriptExplainer](src/main/java/com/company/mcp/service/ScriptExplainer.java) | what the script does and how, in plain language, for the person approving it |
-| [HitlWorkflowService](src/main/java/com/company/mcp/service/HitlWorkflowService.java) | the only remediation path: plan → queue → decision → dry run → execute, with the hash pin |
-| [RemediationToolRegistry](src/main/java/com/company/mcp/service/RemediationToolRegistry.java) | the executor contract: probe reachability, then dispatch |
-| [NotificationService](src/main/java/com/company/mcp/service/NotificationService.java) | who gets told, and did the relay actually accept it? |
+| [IncidentIntakeService](src/main/java/com/company/warden/service/IncidentIntakeService.java) | ticket in, row in Postgres, external id assigned |
+| [SopProcedureService](src/main/java/com/company/warden/service/SopProcedureService.java) | is there an **APPROVED** procedure covering this, and what action key does it declare? |
+| [IncidentPrecedentService](src/main/java/com/company/warden/service/IncidentPrecedentService.java) | have *we* fixed this before — human-approved, execution `SUCCEEDED`, parseable action key? |
+| [TextSimilarity](src/main/java/com/company/warden/service/TextSimilarity.java) | term coverage between two tickets, reproducible and quotable (not embeddings — a score a reviewer is asked to trust must be explainable) |
+| [AgentAssessmentService](src/main/java/com/company/warden/service/AgentAssessmentService.java) | category, action key, target, and a confidence score from bounded inputs |
+| [SkillService](src/main/java/com/company/warden/service/SkillService.java) | the three agent stages' vocabulary as admin-editable rows: categorisation words, host patterns, allowed tools |
+| [IncidentTarget](src/main/java/com/company/warden/service/IncidentTarget.java) | **which machine** — typed field first, then host extraction from the text, else stop and ask |
+| [GuardrailService](src/main/java/com/company/warden/service/GuardrailService.java) | may this action/target/script exist at all? one class, every surface |
+| [RemediationScriptService](src/main/java/com/company/warden/service/RemediationScriptService.java) | produce the script and label its provenance tier |
+| [ScriptExplainer](src/main/java/com/company/warden/service/ScriptExplainer.java) | what the script does and how, in plain language, for the person approving it |
+| [HitlWorkflowService](src/main/java/com/company/warden/service/HitlWorkflowService.java) | the only remediation path: plan → queue → decision → dry run → execute, with the hash pin |
+| [RemediationToolRegistry](src/main/java/com/company/warden/service/RemediationToolRegistry.java) | the executor contract: probe reachability, then dispatch |
+| [NotificationService](src/main/java/com/company/warden/service/NotificationService.java) | who gets told, and did the relay actually accept it? |
 
 ### Database schemas
 
@@ -211,7 +200,7 @@ Eight: `incident` · `sop` · `tools` · `auth` · `config` · `ai` · `hitl` ·
 are misleading names worth knowing about before you go looking: **`mcp_rag` holds no RAG data** — it
 is Liquibase's own bookkeeping schema (`spring.liquibase.default-schema`) — and **`hitl` is
 empty**, because the HITL tables live in `incident.*`. Both are called out for renaming in the
-[readiness review](docs/enterprise-readiness.md#7-database-name).
+[known gaps](#known-gaps).
 
 The hash-chained audit log is `incident.audit_events`; per-table history lives in `*_audit` tables
 beside their subjects. The pgvector table is `sop.vector_store`
@@ -247,6 +236,36 @@ already ran it.
 
 A draft can be read; only `APPROVED` grants authority. The prose index can be empty and the
 platform still works — that is the state the demo runs in.
+
+### Graph RAG and knowledge graph
+
+Graph RAG is already implemented as a relational graph, not a second graph database. The
+`incident.graph_edges` view derives nodes and relationships from incidents, hosts, stores,
+categories, remediation plans, approved procedures and cited precedents. `IncidentGraphService`
+traverses that view with a bounded recursive query; `GraphRetrievalService` starts only from ticket
+references explicitly named by the user, limits expansion to two hops and 40 rendered relationships,
+removes hub nodes, sorts output deterministically, and includes a source footer in the LLM context.
+
+The answer path is hybrid: vector retrieval finds semantically similar SOP text, lexical retrieval
+finds exact operational terms, and graph retrieval finds connected records such as other incidents on
+the same host or procedure. Each lane is optional and failure-isolated, so a missing graph migration
+does not take chat down.
+
+To make this a full enterprise knowledge graph, add the following in order:
+
+1. Enrich `incident.graph_edges` from approved asset inventory, CMDB, ownership, dependency and
+  change data. Keep source IDs, tenant scope and `observed_at` on every edge.
+2. Add an ingestion job with idempotent upserts, dead-letter handling and reconciliation metrics.
+3. Add tenant-scoped indexes and materialize the view only after query measurements show that the
+  current recursive CTE is too slow.
+4. Rank graph evidence with vector and lexical evidence, then return typed citations and edge
+  provenance to the UI instead of passing unlabelled text to the model.
+5. Test tenant isolation, stale-edge expiry, hub suppression, prompt-injection text in labels, and
+  deterministic answers before enabling external graph sources.
+
+Do not add Neo4j or another graph store yet. The current domain facts already live in PostgreSQL;
+introducing a second store before measuring a relational bottleneck creates synchronization and
+licensing work without improving the incident workflow.
 
 ---
 
@@ -460,7 +479,7 @@ in the whole UI is unreachable for exactly the refusals whose remedy is typing a
 practice the panel is reachable only for the advisory `TARGET_REACHABILITY_UNKNOWN`. Until that is
 fixed, answering a `TARGET_HOST_UNKNOWN` means calling `PUT /api/v1/incidents/{id}` directly or
 letting an ITSM sync populate the field. Filed as **C13** in
-[docs/enterprise-readiness.md](docs/enterprise-readiness.md).
+[Known gaps](#known-gaps).
 
 Save answer also does **not** re-plan. Its confirmation says so — *"Saved. Create the plan again on
 the incident to re-evaluate with this target."* — because a plan built on an answer typed seconds ago
@@ -589,15 +608,15 @@ ordinary, and flagging them trains reviewers to click through warnings.
 Stateless JWT (HS256, jjwt), BCrypt hashes (`BCryptPasswordEncoder(10)`), no sessions.
 
 **Session lifetime.** Two tokens, both constants in
-[AuthController](src/main/java/com/company/mcp/controller/AuthController.java#L21): a **30-minute
+[AuthController](src/main/java/com/company/warden/controller/AuthController.java#L21): a **30-minute
 access token** and a **3-hour refresh token** whose expiry *is* the session length. `tokenType` is
-a claim, and [JwtAuthFilter](src/main/java/com/company/mcp/config/JwtAuthFilter.java) authenticates
+a claim, and [JwtAuthFilter](src/main/java/com/company/warden/config/JwtAuthFilter.java) authenticates
 an `access` token only, so the long-lived one opens nothing but `/api/auth/refresh`.
 
 Two things to know rather than discover: `mcp.jwt.expiry-ms` in `application.yml` is **dead
 config** — the constants above win — and the `rememberMe` flag the login API accepts **changes
 nothing**, because the refresh TTL is flat. Both are listed as defects
-([D7, A4](docs/enterprise-readiness.md)); neither is documented here as a feature.
+([Known gaps](#known-gaps)); neither is documented here as a feature.
 
 Rotation deliberately does **not** extend the window: the replacement refresh token inherits the
 old one's `exp` rather than being minted with a full TTL, and the access token is capped at
@@ -624,7 +643,7 @@ an unattended workstation signed in.
 | **Execute for real** | | | ✅ |
 | AI config, skills, actuator, any DELETE | | | ✅ |
 
-Route-based in [SecurityConfig.java](src/main/java/com/company/mcp/config/SecurityConfig.java) —
+Route-based in [SecurityConfig.java](src/main/java/com/company/warden/config/SecurityConfig.java) —
 one file holds the whole matrix. Method security is deliberately off so a stray `@PreAuthorize`
 cannot create a second, silently-inert rule set. Read and write are separated with fail-closed
 catch-alls, so an endpoint added tomorrow is never a VIEWER write by accident. 401 and 403 are
@@ -680,7 +699,7 @@ method's own javadoc still claims a third source ("the assigned group") that the
 `POST /api/v1/ai/config/notifications/test?to=<addr>` — but the SMTP form was removed from the
 Settings page along with the threshold sliders and never replaced, so the relay can only be
 configured with an authenticated `POST`. That breaks the project's own "operator settings live in the
-UI" rule and is on the [readiness list](docs/enterprise-readiness.md). What *is* right: no relay
+UI" rule and is on the [known gaps list](#known-gaps). What *is* right: no relay
 password column — the relay is reached unauthenticated on the internal network, which is what lets
 "configurable without a properties file" and "no auth details in the database" both hold at once.
 
@@ -816,7 +835,7 @@ React 18 + Vite + TypeScript. JWT in `localStorage` (`mcp_jwt_token`, `mcp_refre
 5 minutes and dispatches `mcp:auth-expired` on a hard 401. `localStorage` and not a store like
 Redux because the refresh token has to survive a page reload — in-memory state cannot hold it
 across F5. The cost is that any script on the origin can read it, which is why the
-[readiness review](docs/enterprise-readiness.md) lists both the missing CSP and the
+[security policy](SECURITY.md) lists the browser-token risks and the
 cookie-hardening path: move the refresh token to an `HttpOnly; Secure; SameSite=Strict` cookie so
 no script can read it at all — and reinstate CSRF protection in the same commit, because
 `csrf.disable()` is only correct while the credential is a header.
@@ -854,7 +873,7 @@ npm run build --prefix frontend
 MCP_JWT_SECRET=local-development-only-key-min-32-bytes mvn -o test
 ```
 
-**112 tests, 0 failures, 0 errors, 0 skipped**, across 19 suites.
+**157 tests, 0 failures, 0 errors, 0 skipped**, across the current backend test suites.
 
 | Suite | Tests | Covers |
 |---|---:|---|
@@ -882,41 +901,36 @@ The context smoke test is the cheap check that catches most breakage.
 
 There is **no frontend test suite** — `frontend/package.json` has no `test` script and no framework.
 The chat page is the product surface and has zero automated coverage; that is a gap, listed as
-[B6](docs/enterprise-readiness.md).
+[Known gaps](#known-gaps).
 
 ---
 
 ## Stack
 
-Java 21 · Spring Boot 3.2.0 · Spring AI 1.0.8 · PostgreSQL 16 + pgvector · Liquibase · Redis
+Java 21 · Spring Boot 3.2.12 · Spring AI 1.0.8 · PostgreSQL 16 + pgvector · Liquibase · Redis
 (rate limiting, optional) · Resilience4j · React 18 + Vite 5 · Maven (`com.mcp:incident-warden`,
 builds offline with `-o`)
 
-**Spring Boot 3.2.0 is past OSS support** and Dependabot is configured to ignore the parent POM, so
-nothing currently tells you when that matters. Raising the floor to Boot 3.5.x is the first item in
-[§4 of the readiness review](docs/enterprise-readiness.md#4-build-ci-supply-chain).
+**Spring Boot 3.2.12 is outside its normal support window**. Dependency updates and CVE policy are
+tracked in [SECURITY.md](SECURITY.md).
 
 ---
 
 ## Known gaps
 
-Read [docs/enterprise-readiness.md](docs/enterprise-readiness.md) before deploying this anywhere
-that matters — it is the full list with `file:line` references and an ordering. The short version:
+Read [SECURITY.md](SECURITY.md) before deploying this anywhere that matters. The short version:
 
-- **`npm run typecheck` fails on the committed tree — 58 errors, so CI is red.** `npm run build`
-  passes because Vite strips types without checking them. Most are unused imports; the substantive
-  ones are below.
-- **The chat page's parameter-collection card is half-built and throws.** `ChatPage.tsx:909,919` call
-  `handleMissingParamChange` / `handleMissingParamsSubmit`, and neither function exists anywhere in
-  the repository. Typing in that card raises a `ReferenceError`. Finish it or delete it.
+- **Frontend typecheck and build pass locally**, but there are no frontend tests. Add focused coverage
+  for chat parameter collection and the remediation review flow before production use.
 - **Three target refusals have no UI answer.** `TARGET_HOST_UNKNOWN`, `TARGET_HOST_INVALID` and
   `TARGET_UNREACHABLE` block a plan and tell the operator to name a server, but the only screen with
   those inputs is reachable only through a HITL request — which a blocked plan never creates. Use
   `PUT /api/v1/incidents/{id}` until it is fixed.
-- **`docker compose up` does not start the backend.** `mcp-app` sets no `MCP_JWT_SECRET`, and the
-  application refuses to boot without one. Run it from source until that is fixed.
-- **ITSM integration secrets are written to the database in plaintext.** The one place the
-  no-credentials-in-the-DB rule is broken, and the highest-severity item in the review.
+- **The full Compose profile is development-only.** Replace its default-style credentials and harden
+  Keycloak, Vault and Elasticsearch before any network exposure.
+- **Legacy ITSM integration secrets remain recoverable from the database.** The settings write path
+  ignores submitted secrets, but `getSecret()` still Base64-decodes legacy rows. Remove that fallback
+  and purge existing rows before production.
 - **`org.springframework.ai` logs at DEBUG by default**, which puts prompts — incident text, host
   names, SOP excerpts — into `logs/incident-warden.log`.
 - **No token revocation.** Disabling an account does not end a session in flight.
@@ -932,7 +946,7 @@ that matters — it is the full list with `file:line` references and an ordering
 - **Rate limits are per-instance and in-memory**, so N replicas means N× the budget, and the map is
   never evicted.
 - **No LLM token accounting.** Provider spend is invisible to the platform that causes it; see
-  [§8](docs/enterprise-readiness.md#8-llm-memory-context-and-cost).
+  [SECURITY.md](SECURITY.md).
 - **Two settings are API-only.** The notification relay and the HITL confidence band still have live
   endpoints, but the forms that drove them were deleted from the Settings page and never replaced —
   so changing either needs an authenticated `curl`. That breaks this project's own rule that operator
@@ -975,10 +989,8 @@ missing real executor agent and the unwired MCP tool access are the two highest-
 ## Security
 
 [SECURITY.md](SECURITY.md) covers private vulnerability reporting and what the design guarantees.
-[docs/enterprise-readiness.md](docs/enterprise-readiness.md) is the unflattering companion: every
-issue found in a full read of the working tree, with `file:line`, ordered by what has to be fixed
-before this is reachable from a network. Start with the ITSM credentials in the database and the
-shared default password.
+Start with the ITSM credential fallback, refresh-token replay, rate-limit memory cap, and
+development-only deployment profile before exposing the system to a network.
 
 ## License
 

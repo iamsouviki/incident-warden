@@ -10,10 +10,15 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -101,6 +106,15 @@ public class RemediationToolRegistry {
 
     @Value("${mcp.executor.timeout-seconds:30}")
     private int executorTimeoutSeconds;
+
+    @Value("${mcp.executor.local-enabled:false}")
+    private boolean localExecutionEnabled;
+
+    @Value("${mcp.executor.local-allowed-targets:}")
+    private String localAllowedTargets;
+
+    @Value("${mcp.executor.powershell-path:pwsh}")
+    private String powershellPath;
 
     public RemediationToolRegistry(ObjectMapper json, GuardrailService guardrails, SkillService skills) {
         this.json = json;
@@ -317,6 +331,9 @@ public class RemediationToolRegistry {
                             + "'. Guardrail scan: " + scan.level() + ". Reachability: " + probe.status()
                             + ". Nothing was dispatched.", "");
         }
+        if (localExecutionEnabled && (executorUrl == null || executorUrl.isBlank())) {
+            return executeLocally(script, language, target);
+        }
         if (!executionEnabled) {
             return new Outcome("SIMULATED", "SIMULATED",
                     "Real execution is disabled (mcp.executor.enabled=false). Nothing was changed.",
@@ -334,6 +351,61 @@ public class RemediationToolRegistry {
                     "EXECUTOR_TOKEN_MISSING");
         }
         return dispatchToExecutor(script, language, target, connection);
+    }
+
+    private Outcome executeLocally(String script, String language, String target) {
+        Set<String> allowed = Arrays.stream(localAllowedTargets.split(","))
+                .map(String::trim).map(s -> s.toLowerCase(Locale.ROOT))
+                .filter(s -> !s.isBlank()).collect(java.util.stream.Collectors.toSet());
+        if (!allowed.contains(target == null ? "" : target.toLowerCase(Locale.ROOT))) {
+            return new Outcome("BLOCKED", "SIMULATED", "Local execution target is not allowlisted.", "LOCAL_TARGET_NOT_ALLOWLISTED");
+        }
+        String normalized = language == null ? "" : language.toLowerCase(Locale.ROOT);
+        String[] interpreter;
+        String extension;
+        if (normalized.equals("bash") || normalized.equals("sh") || normalized.equals("shell")) {
+            interpreter = new String[]{"/bin/bash"}; extension = ".sh";
+        } else if (normalized.equals("python") || normalized.equals("python3")) {
+            interpreter = new String[]{"/usr/bin/python3"}; extension = ".py";
+        } else if (normalized.equals("powershell") || normalized.equals("powershell.exe") || normalized.equals("ps1")) {
+            interpreter = new String[]{powershellPath, "-NoProfile", "-NonInteractive", "-File"}; extension = ".ps1";
+        } else {
+            return new Outcome("BLOCKED", "SIMULATED", "Unsupported local execution language.", "LANGUAGE_NOT_ALLOWED");
+        }
+
+        Path directory = null;
+        try {
+            directory = Files.createTempDirectory("incident-warden-executor-");
+            Path scriptFile = Files.createTempFile(directory, "approved-", extension);
+            Files.writeString(scriptFile, script, StandardCharsets.UTF_8);
+            String[] command = java.util.stream.Stream.concat(Arrays.stream(interpreter), java.util.stream.Stream.of(scriptFile.toString()))
+                    .toArray(String[]::new);
+            Process process = new ProcessBuilder(command).directory(directory.toFile()).start();
+            if (!process.waitFor(Math.max(1, executorTimeoutSeconds), java.util.concurrent.TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                return new Outcome("FAILED", "LIVE", "Local executor timed out after " + executorTimeoutSeconds + " seconds.", "EXECUTOR_TIMEOUT");
+            }
+            String stdout = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            String stderr = new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
+            String output = "exitCode=" + process.exitValue() + "\nstdout:\n" + clip(stdout) + "\nstderr:\n" + clip(stderr);
+            return new Outcome(process.exitValue() == 0 ? "SUCCEEDED" : "FAILED", "LIVE", output,
+                    process.exitValue() == 0 ? "" : "SCRIPT_EXIT_NONZERO");
+        } catch (Exception e) {
+            log.error("[EXEC] Local execution failed for target {}", target, e);
+            return new Outcome("FAILED", "LIVE", "Local executor failed: " + e.getClass().getSimpleName() + ": " + e.getMessage(), "LOCAL_EXECUTOR_FAILED");
+        } finally {
+            if (directory != null) {
+                try (var paths = Files.walk(directory)) {
+                    paths.sorted(java.util.Comparator.reverseOrder()).forEach(path -> {
+                        try { Files.deleteIfExists(path); } catch (Exception ignored) { }
+                    });
+                } catch (Exception ignored) { }
+            }
+        }
+    }
+
+    private static String clip(String value) {
+        return value.length() <= 8_000 ? value : value.substring(0, 8_000) + "\n[truncated]";
     }
 
     /**
