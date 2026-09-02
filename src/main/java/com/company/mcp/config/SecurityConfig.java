@@ -60,7 +60,8 @@ public class SecurityConfig {
                         // already authorized on its REQUEST dispatch, with stack traces off.
                         .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
 
-                        // ── Public: token issuance, static SPA files and liveness ───────────
+                        // ── Public: token issuance, static SPA files, public API and liveness ──
+                        .requestMatchers("/api/v1/public", "/api/v1/public/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/sso", "/api/auth/refresh", "/api/auth/logout")
                         .permitAll()
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
@@ -75,15 +76,17 @@ public class SecurityConfig {
                         // Redacted incident counts, search, and guarded public chat assistant.
                         // Read-only on ticket mutation by construction: see PublicReadService and
                         // RagService.
-                        .requestMatchers("/api/v1/public/**").permitAll()
+                        .requestMatchers("/api/v1/public/**", "/api/v1/public").permitAll()
 
                         // ── Operator surface: read for everyone signed in ───────────────────
-                        .requestMatchers(HttpMethod.GET, "/api/auth/me", "/api/auth/users",                                 "/api/v1/statuses/**",
+                        .requestMatchers(HttpMethod.GET, "/api/auth/me", "/api/auth/users",
+                                "/api/v1/statuses/**",
                                 "/api/v1/incidents", "/api/v1/incidents/**", "/api/v1/scripts", "/api/v1/scripts/**",
                                 "/api/v1/rag/**", "/api/v1/skills", "/api/v1/skills/**",
-                                "/api/v1/integrations/**", "/api/v1/chat/**",
+                                "/api/v1/integrations/**",
                                 "/api/v1/hitl/**", "/api/v1/telemetry/**")
                         .authenticated()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/chat/**").authenticated()
                         .requestMatchers(HttpMethod.POST, "/api/v1/rag/chat", "/api/v1/chat/**").authenticated()
                         .requestMatchers(HttpMethod.PUT, "/api/v1/chat/**").authenticated()
                         .requestMatchers(HttpMethod.DELETE, "/api/v1/chat/**").authenticated()
@@ -130,6 +133,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.DELETE, "/**").hasAnyRole("ADMIN", "OWNER")
 
                         // ── Fail-closed default: an unlisted write is never a VIEWER right ───
+                        .requestMatchers(HttpMethod.POST, "/api/v1/public/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/**").hasAnyRole("ANALYST", "ADMIN", "OWNER")
                         .requestMatchers(HttpMethod.PUT, "/**").hasAnyRole("ANALYST", "ADMIN", "OWNER")
                         .requestMatchers(HttpMethod.PATCH, "/**").hasAnyRole("ANALYST", "ADMIN", "OWNER")
