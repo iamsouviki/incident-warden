@@ -2,6 +2,7 @@ package com.company.warden.controller;
 
 import com.company.warden.config.CurrentUser;
 import com.company.warden.model.SavedScript;
+import com.company.warden.model.Skill;
 import com.company.warden.model.ExecutionLog;
 import com.company.warden.model.ActionExecution;
 import com.company.warden.repository.SavedScriptRepository;
@@ -10,12 +11,14 @@ import com.company.warden.repository.ActionExecutionRepository;
 import com.company.warden.service.GuardrailService;
 import com.company.warden.service.RagService;
 import com.company.warden.service.RateLimiterService;
+import com.company.warden.service.SkillService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.util.*;
@@ -46,6 +49,28 @@ public class ScriptController {
 
     @Autowired
     private CurrentUser currentUser;
+
+    @Autowired
+    private SkillService skillService;
+
+    @Autowired
+    private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+
+    @PostMapping("/bundle")
+    @Transactional
+    public ResponseEntity<?> saveToolBundle(@RequestBody Map<String, Object> body) {
+        SavedScript script = objectMapper.convertValue(body.get("script"), SavedScript.class);
+        if (script.getId() == null) script.setId(UUID.randomUUID());
+        SavedScript saved = savedScriptRepository.save(script);
+        Object rawSkills = body.get("skills");
+        if (!(rawSkills instanceof List<?> skills)) {
+            throw new IllegalArgumentException("skills must be a list");
+        }
+        for (Object rawSkill : skills) {
+            skillService.save(objectMapper.convertValue(rawSkill, Skill.class));
+        }
+        return ResponseEntity.ok(Map.of("script", saved, "skillCount", skills.size()));
+    }
 
     @GetMapping
     public ResponseEntity<?> getScripts() {
@@ -166,13 +191,7 @@ public class ScriptController {
                     .content();
 
             if (generated == null || generated.isBlank()) {
-                return ResponseEntity.ok(Map.of(
-                        "script", "# Failed to generate script contents. Please write manually.",
-                        "name", "",
-                        "description", "",
-                        "inputs", "",
-                        "issues", "",
-                        "resolution", "{}"));
+                return ResponseEntity.status(502).body(Map.of("error", "AI generation returned no script."));
             }
 
             // Strip markdown fences and try to extract JSON envelope.
@@ -205,13 +224,7 @@ public class ScriptController {
                     "findings", scan.findings()));
         } catch (Exception e) {
             log.error("[SCRIPT] AI generation failed", e);
-            return ResponseEntity.ok(Map.of(
-                    "script", "# Error generating script: " + e.getMessage() + "\n# Please write script manually.",
-                    "name", "",
-                    "description", "",
-                    "inputs", "",
-                    "issues", "",
-                    "resolution", "{}"));
+            return ResponseEntity.status(502).body(Map.of("error", "AI generation failed. Please write the script manually."));
         }
     }
 
@@ -232,8 +245,14 @@ public class ScriptController {
         }
         int depth = 0;
         int end = -1;
+        boolean quoted = false;
+        boolean escaped = false;
         for (int i = start; i < text.length(); i++) {
             char c = text.charAt(i);
+            if (escaped) { escaped = false; continue; }
+            if (c == '\\' && quoted) { escaped = true; continue; }
+            if (c == '"') { quoted = !quoted; continue; }
+            if (quoted) continue;
             if (c == '{') depth++;
             else if (c == '}') { depth--; if (depth == 0) { end = i; break; } }
         }

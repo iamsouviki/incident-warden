@@ -54,6 +54,9 @@ public class IncidentService {
     @Value("${mcp.servicenow.password:changeme}")
     private String servicenowPassword;
 
+    @Autowired
+    private SensitiveDataRedactionService sensitiveData;
+
     // FreshService Settings
     @Value("${mcp.freshservice.enabled:false}")
     private boolean freshserviceEnabled;
@@ -533,7 +536,7 @@ public class IncidentService {
                     
                     Respond with ONLY the exact team name from the list. Do not write any other explanation or words.
                     """.formatted(subject, description);
-            String response = chatClient.prompt().user(prompt).call().content();
+            String response = chatClient.prompt().user(sensitiveData.redactForLlm(prompt)).call().content();
             if (response != null) {
                 String clean = response.trim();
                 if (clean.toLowerCase().contains("secops")) return "SecOps";
@@ -636,7 +639,7 @@ public class IncidentService {
         try {
             org.springframework.ai.chat.client.ChatClient chatClient = ragService.getOrBuildChatClient();
             if (chatClient == null) return "";
-            String answer = chatClient.prompt().user(prompt).call().content();
+            String answer = chatClient.prompt().user(sensitiveData.redactForLlm(prompt)).call().content();
             return answer == null ? "" : answer.trim();
         } catch (Exception e) {
             log.warn("Suggestion generation failed: {}", e.getMessage());

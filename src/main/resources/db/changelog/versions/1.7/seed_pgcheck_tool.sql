@@ -35,3 +35,22 @@ INSERT INTO tools.saved_scripts (
     now()
 )
 ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO tools.skills (kind, skill_key, pattern, action_key, arg_count, mutating, enabled, description, definition_json)
+SELECT 'EXECUTION', 'POSTGRESQL_SERVICE_CHECK', '', '', 3, FALSE, TRUE,
+       'Read-only PostgreSQL service and connectivity check.', '{}'
+WHERE NOT EXISTS (SELECT 1 FROM tools.skills WHERE kind = 'EXECUTION' AND skill_key = 'POSTGRESQL_SERVICE_CHECK');
+
+INSERT INTO tools.skills (kind, skill_key, pattern, action_key, arg_count, mutating, enabled, description, definition_json)
+SELECT 'CATEGORIZATION', 'DATABASE_HEALTH',
+       'POSTGRESQL,POSTGRES,PGSQL,DATABASE CONNECTION,DATABASE DOWN',
+       'POSTGRESQL_SERVICE_CHECK:{hostname}:{port}:{service_name}', 0, FALSE, TRUE,
+       'PostgreSQL service and connectivity incidents.',
+       '{"script_path":"postgresql_service_check.py","success_status":"Resolved","failure_status":"Escalated","failure_route":"ESCALATE_DATABASE_OPS"}'
+WHERE NOT EXISTS (SELECT 1 FROM tools.skills WHERE kind = 'CATEGORIZATION' AND skill_key = 'DATABASE_HEALTH');
+
+INSERT INTO tools.skills (kind, skill_key, pattern, action_key, arg_count, mutating, enabled, description, definition_json)
+SELECT 'EXTRACTION', 'DATABASE_HEALTH', '', '', 0, FALSE, TRUE,
+       'Host, port, and PostgreSQL service fields.',
+    '{"fields":[{"key":"hostname","label":"Database host","type":"text","required":true,"pattern":"\\b((?:\\d{1,3}\\.){3}\\d{1,3})\\b"},{"key":"port","label":"Database port","type":"text","required":true,"default":"5432","pattern":"\\b(?:port\\s*)?[:=]?\\s*(\\d{2,5})\\b"},{"key":"service_name","label":"PostgreSQL service","type":"text","required":true,"default":"postgresql","pattern":"\\b(postgresql|postgres|postgresql@[^\\s,;]+)\\b"}]}'
+WHERE NOT EXISTS (SELECT 1 FROM tools.skills WHERE kind = 'EXTRACTION' AND skill_key = 'DATABASE_HEALTH');

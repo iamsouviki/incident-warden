@@ -9,6 +9,14 @@ import { AuthUser, authFetch, extractApiError, login } from '../services/api';
 import Markdown from '../components/Markdown';
 import './ChatPage.css';
 
+const maskSensitiveText = (value: string): string => value
+  .replace(/(\b(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key)\b\s*[:=]\s*)[^\s,;]+/gi, '$1[REDACTED]')
+  .replace(/(\b(?:username|user|login)\b\s*[:=]\s*)[^\s,;]+/gi, '$1[REDACTED]')
+  .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[REDACTED]')
+  .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[REDACTED]')
+  .replace(/\bbearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
+  .replace(/\bAKIA[0-9A-Z]{16}\b/g, '[REDACTED]');
+
 /**
  * The product's front door. One surface, three trust levels:
  *
@@ -1113,7 +1121,7 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
     const q = (question ?? input).trim();
     if (!q || loading) return;
     setInput('');
-    addMessage({ role: 'user', text: q });
+    addMessage({ role: 'user', text: maskSensitiveText(q) });
     const botId = addMessage({ role: 'bot', loading: true });
     setLoading(true);
 
@@ -1194,7 +1202,7 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
 
   const renderRows = (msg: Message) => (
     <div className="chat-rows">
-      <div className="chat-note">Matching “{msg.matched}” · most recent first</div>
+      <div className="chat-note">Matching “{maskSensitiveText(msg.matched || '')}” · most recent first</div>
       <div className="chat-table-scroll">
         <table className="chat-table">
           <thead>
@@ -1211,8 +1219,8 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
               <tr key={row.externalId}>
                 <td><code>{row.externalId}</code></td>
                 <td>
-                  <strong>{row.subject}</strong>
-                  {row.description && <p>{row.description}</p>}
+                  <strong>{maskSensitiveText(row.subject)}</strong>
+                  {row.description && <p>{maskSensitiveText(row.description)}</p>}
                 </td>
                 <td><span className={`chat-status-badge status-${row.status.toLowerCase()}`}>{row.status}</span></td>
                 <td><span className={`chat-priority-badge priority-${row.priority.toLowerCase()}`}>{row.priority}</span></td>
@@ -1506,7 +1514,7 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
       <div className="chat-avatar"><BotMessageSquare size={16} /></div>
       <div className={`chat-bubble chat-bubble-bot${hasRichCard ? ' chat-bubble-bot--rich' : ''}`}>
         {msg.loading && <span className="chat-typing"><span /><span /><span /></span>}
-        {msg.text && <Markdown text={msg.text} />}
+        {msg.text && <Markdown text={maskSensitiveText(msg.text)} />}
         {msg.stats && renderStats(msg.stats)}
         {msg.rows && msg.rows.length > 0 && renderRows(msg)}
         {msg.choices && (
@@ -1514,7 +1522,7 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
             {msg.choices.map(choice => (
               <button key={choice.id} className="chat-choice" onClick={() => planFor(choice, msg.id)}>
                 <code>{choice.ref}</code>
-                <span>{choice.subject}</span>
+                <span>{maskSensitiveText(choice.subject)}</span>
                 <em>{choice.status}</em>
               </button>
             ))}

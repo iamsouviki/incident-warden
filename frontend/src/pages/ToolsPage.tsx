@@ -24,6 +24,7 @@ const ToolsPage: React.FC = () => {
   // Tool Authoring / Edit Modal State
   const [showToolModal, setShowToolModal] = useState(false);
   const [activeScriptId, setActiveScriptId] = useState<string | null>(null);
+  const [existingSkillKey, setExistingSkillKey] = useState<string | null>(null);
   const [promptDescription, setPromptDescription] = useState('');
   const [scriptName, setScriptName] = useState('');
   const [scriptDesc, setScriptDesc] = useState('');
@@ -65,6 +66,7 @@ const ToolsPage: React.FC = () => {
 
   const openNewToolModal = () => {
     setActiveScriptId(null);
+    setExistingSkillKey(null);
     setScriptName('');
     setScriptDesc('');
     setPromptDescription('');
@@ -82,6 +84,7 @@ const ToolsPage: React.FC = () => {
 
   const openEditToolModal = async (script: SavedScript) => {
     setActiveScriptId(script.id);
+    setExistingSkillKey(null);
     setScriptName(script.name);
     setScriptDesc(script.description || '');
     setScriptContent(script.scriptContent);
@@ -98,7 +101,11 @@ const ToolsPage: React.FC = () => {
       const res = await authFetch('/api/v1/skills');
       if (!res.ok) return;
       const rows = await res.json();
-      const categorySkill = rows.find((row: any) => row.kind === 'CATEGORIZATION' && row.skillKey === script.category);
+      const categorySkill = rows.find((row: any) => row.kind === 'CATEGORIZATION'
+        && (row.skillKey === script.category || row.actionKey === script.category
+          || row.actionKey?.split(':')[0] === script.category));
+      const actionKey = categorySkill?.actionKey || '';
+      setExistingSkillKey(actionKey ? actionKey.split(':')[0] : categorySkill?.skillKey || null);
       const extractionSkill = rows.find((row: any) => row.kind === 'EXTRACTION' && row.skillKey === script.category);
       setClassificationRules((categorySkill?.pattern || '').split(/[,;]+/).map((value: string) => value.trim()).filter(Boolean).join('\n'));
       setExtractionRules(extractionSkill?.definitionJson || '{"fields":[]}');
@@ -144,6 +151,7 @@ const ToolsPage: React.FC = () => {
         body: JSON.stringify({ prompt: promptDescription, language, category }),
       });
       const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'AI generation failed.');
       if (data.script) {
         setScriptContent(data.script);
       }
@@ -212,6 +220,7 @@ const ToolsPage: React.FC = () => {
     setMessage(null);
     try {
       const payload = {
+        id: activeScriptId || undefined,
         name,
         description: scriptDesc.trim() || promptDescription.trim(),
         scriptContent,
@@ -221,27 +230,13 @@ const ToolsPage: React.FC = () => {
         validatedInDryRun,
       };
 
-      const endpoint = activeScriptId ? `/api/v1/scripts/${activeScriptId}` : '/api/v1/scripts';
-      const method = activeScriptId ? 'PUT' : 'POST';
-
-      const res = await authFetch(endpoint, {
-        method,
-        body: JSON.stringify(payload)
-      });
-
-      if (!res.ok) {
-        const detail = await extractApiError(res);
-        setMessage({ type: 'error', text: `Failed to save tool: ${detail}` });
-        return;
-      }
-
       // Save all three required skills as one tool definition.
-      const toolSkillKey = name.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+      const toolSkillKey = existingSkillKey || name.toUpperCase().replace(/[^A-Z0-9]/g, '_');
       const skillPayloads = [
         {
           kind: 'EXECUTION',
           skillKey: toolSkillKey,
-          argCount: (extractionRules.match(/"name"\s*:/g) || []).length || 2,
+          argCount: (extractionRules.match(/"key"\s*:/g) || []).length || 2,
           mutating: true,
           enabled: true,
           description: `Remediation tool script for ${safeCategory}: ${name}`,
@@ -264,13 +259,13 @@ const ToolsPage: React.FC = () => {
           definitionJson: extractionRules,
         },
       ];
-      const skillResults = await Promise.all(
-        skillPayloads.map(body => authFetch('/api/v1/skills', { method: 'POST', body: JSON.stringify(body) }))
-      );
-      const firstFail = skillResults.find(r => !r.ok);
-      if (firstFail) {
-        const detail = await extractApiError(firstFail);
-        setMessage({ type: 'error', text: `Tool saved, but skill registration failed: ${detail}` });
+      const res = await authFetch('/api/v1/scripts/bundle', {
+        method: 'POST',
+        body: JSON.stringify({ script: payload, skills: skillPayloads }),
+      });
+      if (!res.ok) {
+        const detail = await extractApiError(res);
+        setMessage({ type: 'error', text: `Tool bundle was not saved: ${detail}` });
         return;
       }
 

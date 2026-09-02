@@ -62,6 +62,9 @@ public class RagService {
     private SopProcedureService sopProcedureService;
 
     @Autowired
+    private SensitiveDataRedactionService sensitiveData;
+
+    @Autowired
     private GraphRetrievalService graphContext;
 
     /**
@@ -489,7 +492,7 @@ public class RagService {
             log.info("[RAG] Routing chat query to model: {}", activeModel);
  
             String answer = activeClient.prompt()
-                    .user(prompt)
+                    .user(sensitiveData.redactForLlm(prompt))
                     .call()
                     .content();
             
@@ -576,7 +579,7 @@ public class RagService {
                     "- Structure your response with clean markdown headings and bullet points for high legibility.";
 
             String answer = activeClient.prompt()
-                    .user(prompt)
+                    .user(sensitiveData.redactForLlm(prompt))
                     .call()
                     .content();
 

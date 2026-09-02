@@ -4,6 +4,7 @@ import com.company.warden.model.Incident;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -35,13 +36,21 @@ public class RemediationScriptService {
 
     private final RagService rag;
     private final GuardrailService guardrails;
+    private final SensitiveDataRedactionService sensitiveData;
     private final int maxLines;
 
+    @Autowired
     public RemediationScriptService(RagService rag, GuardrailService guardrails,
+                                    SensitiveDataRedactionService sensitiveData,
                                     @Value("${mcp.script-gen.max-lines:100}") int maxLines) {
         this.rag = rag;
         this.guardrails = guardrails;
+        this.sensitiveData = sensitiveData;
         this.maxLines = maxLines;
+    }
+
+    public RemediationScriptService(RagService rag, GuardrailService guardrails, int maxLines) {
+        this(rag, guardrails, new SensitiveDataRedactionService(), maxLines);
     }
 
     /**
@@ -161,6 +170,16 @@ public class RemediationScriptService {
                     '%s'
                     echo "Job exited $?"
                     """.formatted(args.get(1), args.get(1), args.get(1));
+                    case "POSTGRESQL_SERVICE_CHECK" -> !windows ? """
+                        # Read-only PostgreSQL health check. Changes nothing.
+                        set -euo pipefail
+                        host='%s'
+                        port='%s'
+                        service='%s'
+                        command -v pg_isready >/dev/null
+                        if command -v systemctl >/dev/null; then systemctl is-active --quiet "$service"; fi
+                        pg_isready -h "$host" -p "$port"
+                        """.formatted(args.get(0), args.get(1), args.get(2)) : null;
             default -> null;
         };
     }
@@ -172,7 +191,7 @@ public class RemediationScriptService {
             return GeneratedScript.unavailable("SCRIPT_GENERATION_UNAVAILABLE");
         }
         try {
-            String raw = client.prompt().user(prompt(incident, evidence, source, platform, parsed)).call().content();
+            String raw = client.prompt().user(sensitiveData.redactForLlm(prompt(incident, evidence, source, platform, parsed))).call().content();
             if (raw == null || raw.isBlank()) return GeneratedScript.unavailable("SCRIPT_GENERATION_EMPTY");
             return scan(strip(raw), platform.language(), source);
         } catch (Exception e) {
