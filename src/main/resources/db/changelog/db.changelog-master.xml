@@ -37,9 +37,9 @@
 
     <!-- Rebuilds the view 1.3-drop-tenant had to drop to get at the columns underneath.
          Same file as 1.2-incident-graph: one definition, run twice, nothing duplicated. -->
-    <changeSet id="1.3-incident-graph-rebuild" author="mcp-incident-automation">
+    <changeSet id="1.4-graphrag-expansion" author="mcp-incident-automation">
         <validCheckSum>ANY</validCheckSum>
-        <sqlFile path="versions/1.2/incident_graph.sql" relativeToChangelogFile="true" splitStatements="false" />
+        <sqlFile path="versions/1.4/graphrag_expansion.sql" relativeToChangelogFile="true" splitStatements="false" />
     </changeSet>
 
 </databaseChangeLog>
