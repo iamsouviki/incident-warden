@@ -51,12 +51,12 @@ jobs:
   migrations:
     name: Migrations — pgvector and container startup
     runs-on: ubuntu-latest
+    env:
+      # Throwaway, generated per run: this is a disposable container that is torn down below.
+      MCP_JWT_SECRET: ci-only-jwt-signing-key-not-used-by-any-deployment-32
     steps:
       - uses: actions/checkout@v4
       - name: Start Postgres, Redis and the application
-        env:
-          # Throwaway, generated per run: this is a disposable container that is torn down below.
-          MCP_JWT_SECRET: ci-only-jwt-signing-key-not-used-by-any-deployment-32
         run: docker compose up --build --wait --wait-timeout 420 postgres redis mcp-app
       - name: Confirm Liquibase applied every changeset
         run: |
@@ -76,6 +76,7 @@ jobs:
   package:
     name: Package — deployable jar
     needs: [backend, frontend, migrations]
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

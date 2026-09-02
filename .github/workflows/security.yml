@@ -21,6 +21,7 @@ jobs:
       contents: read
       security-events: write
       actions: read
+      pull-requests: read
     strategy:
       fail-fast: false
       matrix:
@@ -36,13 +37,13 @@ jobs:
       - uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
-          # security-extended adds the injection and path-traversal queries this codebase cares
-          # about most: it dispatches shell scripts and reads operator-supplied targets.
           queries: security-extended
       - uses: github/codeql-action/autobuild@v4
       - uses: github/codeql-action/analyze@v4
         with:
           category: /language:${{ matrix.language }}
+          upload: true
+
 
   # Secrets. A key committed once stays in the history, so the whole history is scanned on push
   # and only the pushed range on a pull request.
