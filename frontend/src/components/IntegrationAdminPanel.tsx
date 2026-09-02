@@ -154,6 +154,7 @@ function NotificationRelay() {
 
 export default function IntegrationAdminPanel() {
   const [settings, setSettings] = useState<{
+    integrationEnabled?: boolean;
     serviceNowEnabled?: boolean;
     serviceNowUrl?: string;
     serviceNowUsername?: string;
@@ -255,6 +256,8 @@ export default function IntegrationAdminPanel() {
     }
   };
 
+  const masterEnabled = settings.integrationEnabled ?? false;
+
   return (
     <>
     <div className="card" style={{ padding: '24px', marginTop: '24px', borderRadius: '12px' }}>
@@ -268,16 +271,37 @@ export default function IntegrationAdminPanel() {
             Configure automatic synchronization and bidirectional work note / status updates for ServiceNow, Freshservice, and Jira.
           </p>
         </div>
-        <button
-          type="button"
-          className="btn-sync"
-          onClick={handleManualSync}
-          disabled={syncing}
-          style={{ display: 'flex', alignItems: 'center', gap: '6px', height: '36px', padding: '0 14px', fontSize: '13px' }}
-        >
-          <RefreshCw size={14} className={syncing ? 'spin' : ''} />
-          {syncing ? 'Syncing…' : 'Sync All Active Now'}
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', background: 'var(--surface-2)', padding: '6px 12px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+            <input
+              type="checkbox"
+              checked={masterEnabled}
+              onChange={e => {
+                const nextVal = e.target.checked;
+                setSettings({ ...settings, integrationEnabled: nextVal });
+                authFetch('/api/v1/integrations/settings', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ ...settings, integrationEnabled: nextVal })
+                }).catch(() => {});
+              }}
+            />
+            {masterEnabled ? 'Integrations Active' : 'Enable Integrations'}
+          </label>
+
+          {masterEnabled && (
+            <button
+              type="button"
+              className="btn-sync"
+              onClick={handleManualSync}
+              disabled={syncing}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', height: '36px', padding: '0 14px', fontSize: '13px' }}
+            >
+              <RefreshCw size={14} className={syncing ? 'spin' : ''} />
+              {syncing ? 'Syncing…' : 'Sync All Active Now'}
+            </button>
+          )}
+        </div>
       </div>
 
       {statusMessage && (
@@ -298,30 +322,31 @@ export default function IntegrationAdminPanel() {
         </div>
       )}
 
-      <form onSubmit={handleSave}>
-        {/* SYNC DURATION / INTERVAL ROW */}
-        <div style={{ padding: '14px', borderRadius: '8px', background: 'var(--surface2, #1e293b)', border: '1px solid var(--border)', marginBottom: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <Clock size={18} style={{ color: 'var(--accent)' }} />
-            <div>
-              <strong style={{ fontSize: '13px', display: 'block' }}>Automatic Fetch Frequency</strong>
-              <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Background job polling interval for open incident intake.</span>
+      {masterEnabled ? (
+        <form onSubmit={handleSave}>
+          {/* SYNC DURATION / INTERVAL ROW */}
+          <div style={{ padding: '14px', borderRadius: '8px', background: 'var(--surface2, #1e293b)', border: '1px solid var(--border)', marginBottom: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <Clock size={18} style={{ color: 'var(--accent)' }} />
+              <div>
+                <strong style={{ fontSize: '13px', display: 'block' }}>Automatic Fetch Frequency</strong>
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Background job polling interval for open incident intake.</span>
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <select
+                value={settings.syncIntervalHours ?? 1}
+                onChange={e => setSettings({ ...settings, syncIntervalHours: Number(e.target.value) })}
+                style={{ height: '34px', padding: '0 10px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: '13px' }}
+              >
+                <option value={1}>Every 1 Hour</option>
+                <option value={2}>Every 2 Hours</option>
+                <option value={4}>Every 4 Hours</option>
+                <option value={12}>Every 12 Hours</option>
+                <option value={24}>Every 24 Hours</option>
+              </select>
             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <select
-              value={settings.syncIntervalHours ?? 1}
-              onChange={e => setSettings({ ...settings, syncIntervalHours: Number(e.target.value) })}
-              style={{ height: '34px', padding: '0 10px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: '13px' }}
-            >
-              <option value={1}>Every 1 Hour</option>
-              <option value={2}>Every 2 Hours</option>
-              <option value={4}>Every 4 Hours</option>
-              <option value={12}>Every 12 Hours</option>
-              <option value={24}>Every 24 Hours</option>
-            </select>
-          </div>
-        </div>
 
         {/* 1. SERVICENOW */}
         <div style={{ padding: '16px', borderRadius: '10px', border: '1px solid var(--border)', marginBottom: '16px', background: 'var(--surface)' }}>
@@ -488,6 +513,7 @@ export default function IntegrationAdminPanel() {
           </button>
         </div>
       </form>
+      ) : null}
     </div>
     <NotificationRelay />
     </>

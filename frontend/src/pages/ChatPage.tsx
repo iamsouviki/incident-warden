@@ -294,7 +294,7 @@ interface MissingParamField {
   placeholder: string;
   required: boolean;
   defaultValue?: string;
-  type?: 'text' | 'number';
+  type?: 'text' | 'number' | 'boolean';
 }
 
 // ponytail: MissingInfoCardState is the live type; this duplicate is removed
@@ -395,6 +395,7 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
       const data = await res.json();
       setActiveSessionId(data.id);
       sessionStorage.setItem(ACTIVE_SESSION_KEY, data.id);
+      loadSessions();
       return data.id;
     } catch {
       return null;
@@ -791,78 +792,6 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
     return all.slice(0, 5).map(choice);
   };
 
-  const extractIncidentParameters = (detail: any, incident: IncidentChoice) => {
-    const combinedText = `${incident.subject} ${incident.ref} ${detail.action?.actionKey || ''} ${detail.script?.script || ''} ${detail.plan?.target || ''}`.toLowerCase();
-    
-    const values: Record<string, string> = {};
-    
-    // Extract store
-    const storeMatch = combinedText.match(/store[- ]?(\d+)/i);
-    if (storeMatch) {
-      values['store'] = `store-${storeMatch[1].padStart(4, '0')}`;
-    }
-
-    // Extract POS terminal / host
-    const posMatch = combinedText.match(/(?:pos|terminal)[- ]?(\d+)/i);
-    if (posMatch) {
-      values['posTerminal'] = `pos-${posMatch[1].padStart(2, '0')}`;
-    }
-    const hostMatch = combinedText.match(/([a-z0-9-]+(?:\.corp|\.internal|\.local|-[a-z0-9]+-[0-9]+))/i);
-    if (hostMatch && !hostMatch[1].includes('store-')) {
-      values['targetHost'] = hostMatch[1];
-    } else if (values['store']) {
-      values['targetHost'] = `${values['store']}-${values['posTerminal'] || 'pos-01'}`;
-    }
-
-    // Extract SKU / POG / Item
-    const skuMatch = combinedText.match(/(?:sku|item)[- #:]*([0-9]{4,10})/i);
-    if (skuMatch) values['skuOrPog'] = `SKU-${skuMatch[1]}`;
-    const pogMatch = combinedText.match(/pog[- #:]*([0-9]{4,10})/i);
-    if (pogMatch) values['skuOrPog'] = `POG-${pogMatch[1]}`;
-
-    // Extract service
-    const serviceMatch = combinedText.match(/(pos-service|tomcat|postgres|nginx|redis|payment-agent)/i);
-    if (serviceMatch) values['serviceName'] = serviceMatch[1];
-
-    // Decide needed fields based on action / tool
-    const actionKey = (detail.action?.actionKey || '').toLowerCase();
-    const toolName = (detail.action?.tool || '').toLowerCase();
-    const scriptContent = (detail.script?.script || '').toLowerCase();
-
-    let fields: MissingParamField[] = [];
-
-    if (actionKey.includes('print') || toolName.includes('print') || combinedText.includes('pog') || combinedText.includes('sku') || combinedText.includes('printflag') || combinedText.includes('item')) {
-      fields = [
-        { key: 'store', label: 'Store Identifier', placeholder: 'e.g. store-0042', required: true },
-        { key: 'skuOrPog', label: 'Item / SKU / POG Number', placeholder: 'e.g. POG-8821 or 491023', required: true },
-        { key: 'printFlag', label: 'Print Flag / Mode', placeholder: 'e.g. NORMAL or REPRINT (default: NORMAL)', required: false },
-        { key: 'printerQueue', label: 'Printer Queue / Terminal', placeholder: 'e.g. lp_receipt_01', required: false },
-      ];
-    } else if (actionKey.includes('restart') || actionKey.includes('service') || combinedText.includes('service') || combinedText.includes('pos')) {
-      fields = [
-        { key: 'targetHost', label: 'Target Server / POS Terminal', placeholder: 'e.g. store-0042-pos-01', required: true },
-        { key: 'serviceName', label: 'Service Name', placeholder: 'e.g. pos-service, tomcat', required: true },
-      ];
-    } else if (actionKey.includes('cache') || toolName.includes('cache')) {
-      fields = [
-        { key: 'targetHost', label: 'Target Host / Gateway', placeholder: 'e.g. cache-node-01.internal', required: true },
-        { key: 'tier', label: 'Cache Tier', placeholder: 'e.g. redis, varnish', required: false },
-      ];
-    } else if (actionKey.includes('url') || toolName.includes('http') || scriptContent.includes('curl')) {
-      fields = [
-        { key: 'targetHost', label: 'Target Host / Gateway', placeholder: 'e.g. api-gateway.internal', required: true },
-        { key: 'endpointUrl', label: 'Target Health URL', placeholder: 'e.g. https://store-0042.internal/health', required: true },
-      ];
-    } else {
-      fields = [
-        { key: 'targetHost', label: 'Target Hostname / IP', placeholder: 'e.g. store-0042-app-01', required: true },
-        { key: 'parameters', label: 'Command Arguments', placeholder: 'e.g. --force --timeout=30', required: false },
-      ];
-    }
-
-    return { fields, values };
-  };
-
   /**
    * No tool to run, so the answer is words: what is wrong, where the advice came from, and
    * the steps to take by hand.
@@ -899,16 +828,35 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
   };
 
   /** Plans against one incident and renders whichever of the two outcomes the server chose. */
-  const planFor = async (incident: IncidentChoice, botId: string) => {
+  const planFor = async (incident: IncidentChoice, botId: string, suppliedFields: Record<string, string> = {}) => {
     updateMessage(botId, { loading: true, text: undefined, choices: undefined });
     try {
-      const res = await authFetch(`/api/v1/hitl/incidents/${incident.id}/plan`, { method: 'POST' });
+      const res = await authFetch(`/api/v1/hitl/incidents/${incident.id}/plan`, {
+        method: 'POST', body: JSON.stringify(suppliedFields),
+      });
       let body: any = null;
       let requestId = '';
 
       if (res.ok) {
         body = await res.json();
         requestId = body.hitlRequest?.id || '';
+      }
+
+      if (body?.route === 'NEEDS_INPUT') {
+        const fields: MissingParamField[] = (body.fields || []).map((field: any) => ({
+          key: String(field.key), label: field.label || field.key,
+          placeholder: field.placeholder || '', required: Boolean(field.required), type: field.type,
+        }));
+        updateMessage(botId, {
+          loading: false,
+          missingInfo: {
+            requestId: '', incidentId: incident.id, incidentRef: incident.ref,
+            actionKey: body.resolution?.action_key || 'remediation_script',
+            tool: body.resolution?.script_path || 'configured automation',
+            detail: null, fields, values: body.values || {},
+          },
+        });
+        return;
       }
 
       // If already awaiting decision, locate the existing open request instead of erroring
@@ -970,29 +918,7 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
       }
       const detail = await detailRes.json();
 
-      // Extract and check parameter completeness
-      const { fields, values } = extractIncidentParameters(detail, incident);
-      const missingRequired = fields.filter(f => f.required && (!values[f.key] || !values[f.key].trim()));
-
-      if (missingRequired.length > 0) {
-        // Render dynamic missing parameters card
-        updateMessage(botId, {
-          loading: false,
-          missingInfo: {
-            requestId,
-            incidentId: incident.id,
-            incidentRef: incident.ref,
-            actionKey: detail.action?.actionKey || 'remediation_script',
-            tool: detail.action?.tool || 'generated script',
-            detail,
-            fields,
-            values,
-          },
-        });
-        return;
-      }
-
-      updateMessage(botId, { loading: false, plan: planFrom(detail, incident, requestId, values) });
+      updateMessage(botId, { loading: false, plan: planFrom(detail, incident, requestId, suppliedFields) });
     } catch (e) {
       updateMessage(botId, {
         loading: false, error: true,
@@ -1305,18 +1231,13 @@ const ChatPage: React.FC<Props> = ({ user, onLogin }) => {
       ));
       return;
     }
-    // The form stays on screen as the record of what was supplied, but read-only: the plan
-    // below it was built from these values, so editing them afterwards would be a lie.
+    // Re-plan server-side so supplied values are validated, hashed, and included in the script.
     const incident: IncidentChoice = {
       id: missing.incidentId, ref: missing.incidentRef, subject: '', status: '',
     };
-    setMessages(prev => prev.map(m => (m.id === msgId && m.missingInfo
-      ? {
-          ...m,
-          missingInfo: { ...m.missingInfo, submitted: true, validationError: undefined },
-          plan: planFrom(missing.detail, incident, missing.requestId, m.missingInfo.values),
-        }
-      : m)));
+    setMessages(prev => prev.map(m => m.id === msgId && m.missingInfo
+      ? { ...m, missingInfo: { ...m.missingInfo, submitted: true, validationError: undefined } } : m));
+    void planFor(incident, msgId, missing.values);
   };
 
   const renderMissingInfoCard = (msg: Message, missing: MissingInfoCardState) => {

@@ -42,4 +42,9 @@
         <sqlFile path="versions/1.4/graphrag_expansion.sql" relativeToChangelogFile="true" splitStatements="false" />
     </changeSet>
 
+    <changeSet id="1.5-rule-backed-automation-skills" author="mcp-incident-automation">
+        <validCheckSum>ANY</validCheckSum>
+        <sqlFile path="versions/1.5/rule_backed_automation_skills.sql" relativeToChangelogFile="true" splitStatements="false" />
+    </changeSet>
+
 </databaseChangeLog>

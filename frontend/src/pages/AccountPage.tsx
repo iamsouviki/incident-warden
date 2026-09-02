@@ -127,15 +127,6 @@ const AccountPage: React.FC<Props> = ({ onLogout }) => {
         ))}
       </div>
 
-      {/* Enterprise SSO notice */}
-      <div className="card" style={{ padding: '20px 24px', background: 'var(--accent-dim)', border: '1px solid rgba(59,130,246,0.2)' }}>
-        <div style={{ fontSize: '13px', fontWeight: 800, color: 'var(--accent)', marginBottom: '6px' }}>
-          Enterprise Single Sign-On (SSO) Active
-        </div>
-        <div style={{ fontSize: '12.5px', color: 'var(--text-2)', lineHeight: '1.6' }}>
-          Your account is configured for federated identity. You can link identity providers (Okta, Azure AD, Google Workspace) via OIDC tokens.
-        </div>
-      </div>
 
       {/* Sign out */}
       <div className="card" style={{ padding: '20px 24px', border: '1px solid rgba(239,68,68,0.2)' }}>

@@ -1,26 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Trash2, Plus, Upload, Save, FileText, Edit2, X } from 'lucide-react';
+import { Search, Trash2, Plus, Upload, Save, FileText, X } from 'lucide-react';
 import { authFetch } from '../services/api';
 
 interface SopItem {
   id: string;
   content: string;
   metadata: string; // JSON string
-}
-
-/** An approved procedure: the record that authorises a script, not the prose that describes it. */
-interface Procedure {
-  id: string;
-  sopId: string;
-  stepNumber: number;
-  title: string;
-  description?: string;
-  matchKeywords?: string;
-  actionKey: string;
-  approvalStatus: string;
-  requiresApproval: boolean;
-  executionOrder: number;
-  reliability: number;
 }
 
 function parseSopContent(content: string, metadataStr: string) {
@@ -47,32 +32,16 @@ function parseSopContent(content: string, metadataStr: string) {
 
 const SopPage: React.FC = () => {
   const [sops, setSops] = useState<SopItem[]>([]);
-  const [procedures, setProcedures] = useState<Procedure[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loadingList, setLoadingList] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Editor State (Document vs Procedure Authoring)
-  const [activeTab, setActiveTab] = useState<'sops' | 'procedures'>('sops');
+  // Ingestion / Edit Modal State
+  const [showIngestModal, setShowIngestModal] = useState(false);
   const [selectedSop, setSelectedSop] = useState<SopItem | null>(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [file, setFile] = useState<File | null>(null);
-  
-  // Procedure Authoring Modal/Form State
-  const [editingProcedure, setEditingProcedure] = useState<Procedure | null>(null);
-  const [procSopId, setProcSopId] = useState('SOP-001');
-  const [procStepNumber, setProcStepNumber] = useState(1);
-  const [procTitle, setProcTitle] = useState('');
-  const [procDescription, setProcDescription] = useState('');
-  const [procKeywords, setProcKeywords] = useState('');
-  const [procActionKey, setProcActionKey] = useState('');
-  const [procStatus, setProcStatus] = useState('APPROVED');
-  const [procRequiresApproval, setProcRequiresApproval] = useState(true);
-  const [procExecutionOrder, setProcExecutionOrder] = useState(10);
-  const [showProcModal, setShowProcModal] = useState(false);
-  const [procSaving, setProcSaving] = useState(false);
-  const [procError, setProcError] = useState<string | null>(null);
 
   // Loading & Messages
   const [loadingAction, setLoadingAction] = useState(false);
@@ -95,39 +64,28 @@ const SopPage: React.FC = () => {
     }
   };
 
-  const fetchProcedures = async () => {
-    try {
-      const res = await authFetch('/api/v1/rag/procedures');
-      if (res.ok) {
-        const data = await res.json();
-        setProcedures(Array.isArray(data) ? data : []);
-      }
-    } catch (e) {
-      setProcedures([]);
-    }
-  };
-
   useEffect(() => {
     fetchSops();
-    fetchProcedures();
   }, []);
 
-  const handleNewSop = () => {
+  const openNewSopModal = () => {
     setSelectedSop(null);
     setTitle('');
     setDescription('');
     setFile(null);
     setMessage(null);
+    setShowIngestModal(true);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const handleSelectSop = (sop: SopItem) => {
+  const openEditSopModal = (sop: SopItem) => {
     const parsed = parseSopContent(sop.content, sop.metadata);
     setSelectedSop(sop);
     setTitle(parsed.title);
     setDescription(parsed.description);
     setFile(null);
     setMessage(null);
+    setShowIngestModal(true);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -137,7 +95,6 @@ const SopPage: React.FC = () => {
     try {
       const res = await authFetch(`/api/v1/rag/sops/${id}`, { method: 'DELETE' });
       if (res.ok) {
-        if (selectedSop?.id === id) handleNewSop();
         setSops(prev => prev.filter(sop => sop.id !== id));
         setMessage({ type: 'success', text: 'SOP deleted successfully' });
       } else {
@@ -174,7 +131,7 @@ const SopPage: React.FC = () => {
           const data = await response.json();
           if (response.ok) {
             setMessage({ type: 'success', text: 'SOP document updated and re-embedded successfully' });
-            handleNewSop();
+            setShowIngestModal(false);
             fetchSops();
           } else {
             setMessage({ type: 'error', text: data.error || 'Failed to update SOP document' });
@@ -188,6 +145,7 @@ const SopPage: React.FC = () => {
           const data = await res.json();
           if (res.ok) {
             setMessage({ type: 'success', text: data.message || 'SOP updated and re-embedded successfully' });
+            setShowIngestModal(false);
             fetchSops();
           } else {
             setMessage({ type: 'error', text: data.error || 'Failed to update SOP' });
@@ -215,7 +173,7 @@ const SopPage: React.FC = () => {
         const data = await response.json();
         if (response.ok) {
           setMessage({ type: 'success', text: data.message || 'SOP ingested and embedded successfully' });
-          handleNewSop();
+          setShowIngestModal(false);
           fetchSops();
         } else {
           setMessage({ type: 'error', text: data.error || 'Failed to ingest SOP' });
@@ -225,92 +183,6 @@ const SopPage: React.FC = () => {
       setMessage({ type: 'error', text: 'Network error occurred' });
     } finally {
       setLoadingAction(false);
-    }
-  };
-
-  // Procedure Authoring Actions
-  const openNewProcedureModal = () => {
-    setEditingProcedure(null);
-    setProcSopId('SOP-001');
-    setProcStepNumber(procedures.length + 1);
-    setProcTitle('');
-    setProcDescription('');
-    setProcKeywords('');
-    setProcActionKey('RESTART_SERVICE:tomcat:linux');
-    setProcStatus('APPROVED');
-    setProcRequiresApproval(true);
-    setProcExecutionOrder(10);
-    setProcError(null);
-    setShowProcModal(true);
-  };
-
-  const openEditProcedureModal = (proc: Procedure) => {
-    setEditingProcedure(proc);
-    setProcSopId(proc.sopId);
-    setProcStepNumber(proc.stepNumber);
-    setProcTitle(proc.title);
-    setProcDescription(proc.description || '');
-    setProcKeywords(proc.matchKeywords || '');
-    setProcActionKey(proc.actionKey);
-    setProcStatus(proc.approvalStatus);
-    setProcRequiresApproval(proc.requiresApproval);
-    setProcExecutionOrder(proc.executionOrder);
-    setProcError(null);
-    setShowProcModal(true);
-  };
-
-  const handleSaveProcedure = async () => {
-    if (!procSopId.trim() || !procTitle.trim() || !procActionKey.trim()) {
-      setProcError('SOP ID, Title, and Action Key are required.');
-      return;
-    }
-    setProcSaving(true);
-    setProcError(null);
-    try {
-      const payload = {
-        sopId: procSopId.trim(),
-        stepNumber: Number(procStepNumber) || 1,
-        title: procTitle.trim(),
-        description: procDescription.trim(),
-        matchKeywords: procKeywords.trim(),
-        actionKey: procActionKey.trim(),
-        approvalStatus: procStatus,
-        requiresApproval: procRequiresApproval,
-        executionOrder: Number(procExecutionOrder) || 10
-      };
-
-      const url = editingProcedure ? `/api/v1/rag/procedures/${editingProcedure.id}` : '/api/v1/rag/procedures';
-      const method = editingProcedure ? 'PUT' : 'POST';
-
-      const res = await authFetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || `Save failed (${res.status})`);
-      }
-
-      setShowProcModal(false);
-      await fetchProcedures();
-    } catch (e: any) {
-      setProcError(e.message || 'Failed to save procedure');
-    } finally {
-      setProcSaving(false);
-    }
-  };
-
-  const handleDeleteProcedure = async (id: string) => {
-    if (!window.confirm('Delete this procedure from authority registry?')) return;
-    try {
-      const res = await authFetch(`/api/v1/rag/procedures/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        await fetchProcedures();
-      }
-    } catch (e) {
-      console.error('Failed to delete procedure', e);
     }
   };
 
@@ -324,324 +196,204 @@ const SopPage: React.FC = () => {
     );
   });
 
-  const filteredProcedures = procedures.filter(p => {
-    const q = searchQuery.toLowerCase();
-    return (
-      p.title.toLowerCase().includes(q) ||
-      p.sopId.toLowerCase().includes(q) ||
-      p.actionKey.toLowerCase().includes(q) ||
-      (p.matchKeywords && p.matchKeywords.toLowerCase().includes(q))
-    );
-  });
-
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr)) 1.2fr', gap: '20px', minHeight: 'calc(100vh - 160px)', width: '100%' }}>
+    <div style={{ maxWidth: '1000px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '20px', width: '100%' }}>
       
-      {/* ── LEFT PANEL: SOP Library list & search ── */}
-      <div className="card" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-        <div className="card-header" style={{ display: 'flex', flexDirection: 'column', gap: '12px', borderBottom: '1px solid var(--border)', padding: '16px 20px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-            <span style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              Knowledge & Authority
-            </span>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button
-                onClick={() => setActiveTab('sops')}
-                style={{
-                  padding: '5px 10px', borderRadius: '4px', border: '1px solid var(--border)',
-                  background: activeTab === 'sops' ? 'var(--accent-dim)' : 'transparent',
-                  color: activeTab === 'sops' ? 'var(--accent)' : 'var(--text-2)',
-                  fontSize: '11px', fontWeight: 700, cursor: 'pointer'
-                }}
-              >
-                Docs ({sops.length})
-              </button>
-              <button
-                onClick={() => setActiveTab('procedures')}
-                style={{
-                  padding: '5px 10px', borderRadius: '4px', border: '1px solid var(--border)',
-                  background: activeTab === 'procedures' ? 'var(--accent-dim)' : 'transparent',
-                  color: activeTab === 'procedures' ? 'var(--accent)' : 'var(--text-2)',
-                  fontSize: '11px', fontWeight: 700, cursor: 'pointer'
-                }}
-              >
-                Procedures ({procedures.length})
-              </button>
-              {activeTab === 'sops' ? (
-                <button
-                  onClick={handleNewSop}
-                  className="btn-primary"
-                  style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '5px 10px', fontSize: '11px', textTransform: 'uppercase' }}
-                >
-                  <Plus size={12} /> New Doc
-                </button>
-              ) : (
-                <button
-                  onClick={openNewProcedureModal}
-                  className="btn-primary"
-                  style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '5px 10px', fontSize: '11px', textTransform: 'uppercase' }}
-                >
-                  <Plus size={12} /> Author Proc
-                </button>
-              )}
-            </div>
-          </div>
-          
-          <div style={{ position: 'relative', width: '100%' }}>
+      {/* Top Header Card */}
+      <div className="card" style={{ padding: '20px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+        <div>
+          <h2 style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text-1)', margin: '0 0 4px' }}>
+            Standard Operating Procedures (SOP Library)
+          </h2>
+          <p style={{ fontSize: '12.5px', color: 'var(--text-3)', margin: 0 }}>
+            Uploaded SOP documents are embedded into the RAG vector store for grounded operational assistance.
+          </p>
+        </div>
+        <button
+          onClick={openNewSopModal}
+          className="btn-primary"
+          style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '9px 18px', fontSize: '13px', fontWeight: 700 }}
+        >
+          <Plus size={15} /> New SOP
+        </button>
+      </div>
+
+      {message && (
+        <div style={{
+          padding: '12px 16px', borderRadius: '8px',
+          background: message.type === 'success' ? 'var(--ok-dim)' : 'var(--crit-dim)',
+          color: message.type === 'success' ? 'var(--ok)' : 'var(--crit)',
+          border: `1px solid ${message.type === 'success' ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)'}`,
+          fontSize: '13px', fontWeight: 600
+        }}>
+          {message.text}
+        </div>
+      )}
+
+      {/* Main SOP List Card */}
+      <div className="card" style={{ display: 'flex', flexDirection: 'column', minHeight: '400px' }}>
+        <div className="card-header" style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+          <span style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+            Document Library ({filteredSops.length})
+          </span>
+          <div style={{ position: 'relative', width: '280px' }}>
             <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-3)' }} />
             <input
               type="text"
-              placeholder={activeTab === 'sops' ? "Search SOP title or content..." : "Search procedures, action keys, keywords..."}
+              placeholder="Search SOP title or content..."
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              style={{ paddingLeft: '32px', width: '100%', fontSize: '13px', height: '36px' }}
+              style={{ paddingLeft: '32px', width: '100%', fontSize: '13px', height: '34px' }}
             />
           </div>
         </div>
 
-        <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
-          {activeTab === 'sops' ? (
-            loadingList ? (
-              <div style={{ textAlign: 'center', color: 'var(--text-3)', fontSize: '13px', padding: '20px' }}>Loading SOPs...</div>
-            ) : error ? (
-              <div style={{ color: 'var(--crit)', fontSize: '13px', textAlign: 'center', padding: '20px' }}>{error}</div>
-            ) : filteredSops.length === 0 ? (
-              <div style={{ textAlign: 'center', color: 'var(--text-3)', fontSize: '13px', padding: '20px' }}>No SOPs found.</div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {filteredSops.map(sop => {
-                  const parsed = parseSopContent(sop.content, sop.metadata);
-                  return (
-                    <div
-                      key={sop.id}
-                      onClick={() => handleSelectSop(sop)}
-                      style={{
-                        padding: '12px', border: '1px solid var(--border)', borderRadius: '8px', cursor: 'pointer',
-                        background: selectedSop?.id === sop.id ? 'var(--surface-2)' : 'var(--surface-1)',
-                        transition: 'all 0.2s', borderLeft: selectedSop?.id === sop.id ? '4px solid var(--accent)' : '1px solid var(--border)'
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                        <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--text-1)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '240px' }} title={parsed.title}>
-                          {parsed.title}
-                        </span>
-                        <button
-                          onClick={(e) => handleDeleteSop(sop.id, e)}
-                          style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--crit)', padding: '2px' }}
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-                      {parsed.filename && (
-                        <div style={{ fontSize: '10px', color: 'var(--accent)', background: 'var(--accent-dim)', display: 'inline-block', padding: '2px 6px', borderRadius: '4px', marginTop: '4px' }}>
-                          {parsed.filename}
-                        </div>
-                      )}
-                      <p style={{ fontSize: '11.5px', color: 'var(--text-3)', marginTop: '6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {parsed.description}
-                      </p>
-                    </div>
-                  );
-                })}
-              </div>
-            )
+        <div style={{ padding: '20px', flex: 1 }}>
+          {loadingList ? (
+            <div style={{ textAlign: 'center', color: 'var(--text-3)', fontSize: '13px', padding: '40px' }}>Loading SOPs...</div>
+          ) : error ? (
+            <div style={{ color: 'var(--crit)', fontSize: '13px', textAlign: 'center', padding: '40px' }}>{error}</div>
+          ) : filteredSops.length === 0 ? (
+            <div style={{ textAlign: 'center', color: 'var(--text-3)', fontSize: '13px', padding: '40px' }}>
+              No SOP documents found. Click <strong>"New SOP"</strong> above to ingest a document or add standard operating procedures.
+            </div>
           ) : (
-            filteredProcedures.length === 0 ? (
-              <div style={{ textAlign: 'center', color: 'var(--text-3)', fontSize: '13px', padding: '20px' }}>
-                No procedures found. Click "Author Proc" to define authority actions.
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {filteredProcedures.map(p => (
-                  <div key={p.id} style={{ padding: '12px', background: 'var(--surface-2)', borderRadius: '8px', border: '1px solid var(--border)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                      <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--accent)', letterSpacing: '0.5px' }}>
-                        {p.sopId} · STEP {p.stepNumber}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
+              {filteredSops.map(sop => {
+                const parsed = parseSopContent(sop.content, sop.metadata);
+                return (
+                  <div
+                    key={sop.id}
+                    onClick={() => openEditSopModal(sop)}
+                    style={{
+                      padding: '16px', border: '1px solid var(--border)', borderRadius: '8px', cursor: 'pointer',
+                      background: 'var(--surface-1)', transition: 'all 0.2s', display: 'flex', flexDirection: 'column', gap: '8px'
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.borderColor = 'var(--accent)')}
+                    onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--border)')}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <span style={{ fontWeight: 700, fontSize: '14px', color: 'var(--text-1)', wordBreak: 'break-word' }}>
+                        {parsed.title}
                       </span>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 6px', borderRadius: '4px', background: p.approvalStatus === 'APPROVED' ? 'var(--ok-dim)' : 'var(--warn-dim)', color: p.approvalStatus === 'APPROVED' ? 'var(--ok)' : 'var(--warn)' }}>
-                          {p.approvalStatus}
-                        </span>
-                        <button onClick={() => openEditProcedureModal(p)} style={{ background: 'transparent', border: 'none', color: 'var(--text-2)', cursor: 'pointer', padding: '2px' }}>
-                          <Edit2 size={13} />
-                        </button>
-                        <button onClick={() => handleDeleteProcedure(p.id)} style={{ background: 'transparent', border: 'none', color: 'var(--crit)', cursor: 'pointer', padding: '2px' }}>
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
+                      <button
+                        onClick={(e) => handleDeleteSop(sop.id, e)}
+                        style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--crit)', padding: '2px' }}
+                        title="Delete SOP"
+                      >
+                        <Trash2 size={14} />
+                      </button>
                     </div>
-                    <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-1)', marginBottom: '4px' }}>{p.title}</div>
-                    {p.matchKeywords && (
-                      <div style={{ fontSize: '11px', color: 'var(--text-3)', marginBottom: '6px' }}>
-                        Keywords: <span style={{ color: 'var(--text-2)' }}>{p.matchKeywords}</span>
+                    {parsed.filename && (
+                      <div style={{ fontSize: '11px', color: 'var(--accent)', background: 'var(--accent-dim)', padding: '2px 8px', borderRadius: '4px', alignSelf: 'flex-start' }}>
+                        <FileText size={11} style={{ display: 'inline', marginRight: '4px' }} />
+                        {parsed.filename}
                       </div>
                     )}
-                    <code style={{ fontSize: '11px', color: '#93c5fd', background: 'var(--surface-3)', padding: '3px 6px', borderRadius: '4px', display: 'inline-block', wordBreak: 'break-all' }}>
-                      {p.actionKey}
-                    </code>
+                    <p style={{ fontSize: '12px', color: 'var(--text-3)', margin: 0, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: '1.5' }}>
+                      {parsed.description}
+                    </p>
                   </div>
-                ))}
-              </div>
-            )
+                );
+              })}
+            </div>
           )}
         </div>
       </div>
 
-      {/* ── RIGHT PANEL: Ingestion & Details Editor ── */}
-      <div className="card" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-        <div className="card-header" style={{ borderBottom: '1px solid var(--border)', padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-          <span style={{ fontSize: '14px', fontWeight: 800, color: 'var(--text-1)' }}>
-            {selectedSop ? `Editing SOP Details` : 'Ingest Standard Operating Procedure'}
-          </span>
-          <button
-            onClick={handleSaveOrIngest}
-            disabled={loadingAction}
-            className="btn-primary"
-            style={{ padding: '8px 16px', fontSize: '12.5px', display: 'flex', alignItems: 'center', gap: '6px' }}
-          >
-            <Save size={13} /> {loadingAction ? 'Processing...' : selectedSop ? 'Save & Re-embed' : 'Ingest SOP'}
-          </button>
-        </div>
-
-        <div style={{ padding: '20px', flex: 1, display: 'flex', flexDirection: 'column', gap: '18px', overflowY: 'auto' }}>
-          {message && (
-            <div style={{
-              padding: '12px 14px', borderRadius: '8px',
-              background: message.type === 'success' ? 'var(--ok-dim)' : 'var(--crit-dim)',
-              color: message.type === 'success' ? 'var(--ok)' : 'var(--crit)',
-              border: `1px solid ${message.type === 'success' ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)'}`,
-              fontSize: '13px', fontWeight: 600
-            }}>
-              {message.text}
-            </div>
-          )}
-
-          {/* SOP Title */}
-          <div>
-            <label style={{ display: 'block', fontSize: '11px', fontWeight: 800, color: 'var(--text-3)', textTransform: 'uppercase', marginBottom: '6px' }}>
-              SOP Document Title
-            </label>
-            <input
-              type="text"
-              placeholder="e.g. Database Maintenance Procedure"
-              value={title}
-              onChange={e => setTitle(e.target.value)}
-              style={{ width: '100%', padding: '10px 12px', fontSize: '13.5px' }}
-            />
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px', flex: 1, minHeight: '300px' }}>
-            {/* File Upload segment */}
-            <div style={{ padding: '20px', border: '1px dashed var(--border)', borderRadius: '8px', background: 'var(--surface-2)', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', textAlign: 'center' }}>
-              <div style={{ padding: '16px', borderRadius: '50%', background: 'var(--surface-3)', color: 'var(--accent)', marginBottom: '12px' }}>
-                <Upload size={32} />
-              </div>
-              <h3 style={{ fontSize: '14px', fontWeight: 800, color: 'var(--text-1)', marginBottom: '4px' }}>
-                {selectedSop ? 'Replace SOP Document' : 'Upload Document'}
-              </h3>
-              <p style={{ fontSize: '11.5px', color: 'var(--text-3)', marginBottom: '16px', maxWidth: '260px', lineHeight: '1.4' }}>
-                Drop in a .pdf, .docx, .txt, .xlsx, or .csv document to automatically parse and re-embed.
-              </p>
-              
-              <input
-                type="file"
-                ref={fileInputRef}
-                accept=".pdf,.docx,.txt,.xlsx,.csv"
-                onChange={e => setFile(e.target.files?.[0] || null)}
-                style={{ display: 'none' }}
-              />
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => fileInputRef.current?.click()}
-                style={{ padding: '8px 16px', fontSize: '12px', fontWeight: 700 }}
-              >
-                Choose File
-              </button>
-              
-              {file && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '14px', background: 'var(--accent-dim)', color: 'var(--accent)', padding: '6px 12px', borderRadius: '6px', fontSize: '12px', fontWeight: 600 }}>
-                  <FileText size={14} /> Selected: {file.name}
-                </div>
-              )}
-            </div>
-
-            {/* Manual text editing area */}
-            <div style={{ display: 'flex', flexDirection: 'column', opacity: file ? 0.4 : 1, pointerEvents: file ? 'none' : 'auto', transition: 'opacity 0.2s' }}>
-              <label style={{ display: 'block', fontSize: '11px', fontWeight: 800, color: 'var(--text-3)', textTransform: 'uppercase', marginBottom: '6px' }}>
-                Manual SOP Prose
-              </label>
-              <textarea
-                value={description}
-                onChange={e => setDescription(e.target.value)}
-                placeholder="Pasting text description is disabled if a document file is selected for upload on the left."
-                style={{
-                  flex: 1, width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid var(--border)',
-                  background: 'var(--surface-2)', color: 'var(--text-1)', fontFamily: 'var(--font-mono)', fontSize: '12.5px',
-                  resize: 'none', lineHeight: '1.5'
-                }}
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ── PROCEDURE AUTHORING MODAL ── */}
-      {showProcModal && (
-        <div className="modal-backdrop" onClick={() => setShowProcModal(false)}>
-          <div className="modal-panel" onClick={e => e.stopPropagation()} style={{ width: '560px' }}>
-            <div className="modal-header">
-              <h2 style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-1)' }}>
-                {editingProcedure ? 'Edit Approved Procedure' : 'Author Approved Procedure'}
+      {/* ── INGEST / EDIT SOP MODAL ── */}
+      {showIngestModal && (
+        <div className="modal-backdrop" onClick={() => setShowIngestModal(false)}>
+          <div className="modal-panel" onClick={e => e.stopPropagation()} style={{ width: '640px', maxWidth: '90vw' }}>
+            <div className="modal-header" style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h2 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--text-1)', margin: 0 }}>
+                {selectedSop ? 'Edit SOP Document' : 'Ingest Standard Operating Procedure'}
               </h2>
-              <button className="close-btn" onClick={() => setShowProcModal(false)}><X size={18} /></button>
+              <button className="close-btn" onClick={() => setShowIngestModal(false)} style={{ background: 'transparent', border: 'none', color: 'var(--text-3)', cursor: 'pointer' }}>
+                <X size={18} />
+              </button>
             </div>
-            <div className="modal-form">
-              <div className="form-row">
-                <div className="form-field">
-                  <label>SOP Identifier (e.g. SOP-001)</label>
-                  <input type="text" value={procSopId} onChange={e => setProcSopId(e.target.value)} required />
+
+            <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              {/* Title input */}
+              <div>
+                <label style={{ display: 'block', fontSize: '11px', fontWeight: 800, color: 'var(--text-3)', textTransform: 'uppercase', marginBottom: '6px' }}>
+                  SOP Document Title
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. POS Terminal Troubleshooting & Maintenance"
+                  value={title}
+                  onChange={e => setTitle(e.target.value)}
+                  style={{ width: '100%', padding: '10px 12px', fontSize: '13.5px' }}
+                />
+              </div>
+
+              {/* Upload or Prose */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div style={{ padding: '18px', border: '1px dashed var(--border)', borderRadius: '8px', background: 'var(--surface-2)', textAlign: 'center' }}>
+                  <Upload size={28} style={{ color: 'var(--accent)', marginBottom: '8px' }} />
+                  <h4 style={{ fontSize: '13.5px', fontWeight: 700, color: 'var(--text-1)', margin: '0 0 4px' }}>
+                    {selectedSop ? 'Replace Document File' : 'Upload Document File'}
+                  </h4>
+                  <p style={{ fontSize: '11.5px', color: 'var(--text-3)', margin: '0 0 12px' }}>
+                    Supported formats: .pdf, .docx, .txt, .xlsx, .csv
+                  </p>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    accept=".pdf,.docx,.txt,.xlsx,.csv"
+                    onChange={e => setFile(e.target.files?.[0] || null)}
+                    style={{ display: 'none' }}
+                  />
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => fileInputRef.current?.click()}
+                    style={{ padding: '7px 14px', fontSize: '12px', fontWeight: 700 }}
+                  >
+                    Choose File
+                  </button>
+                  {file && (
+                    <div style={{ marginTop: '10px', fontSize: '12px', fontWeight: 600, color: 'var(--accent)' }}>
+                      Selected: {file.name}
+                    </div>
+                  )}
                 </div>
-                <div className="form-field">
-                  <label>Step Number</label>
-                  <input type="number" value={procStepNumber} onChange={e => setProcStepNumber(Number(e.target.value))} required />
+
+                <div style={{ display: 'flex', flexDirection: 'column', opacity: file ? 0.4 : 1, pointerEvents: file ? 'none' : 'auto' }}>
+                  <label style={{ display: 'block', fontSize: '11px', fontWeight: 800, color: 'var(--text-3)', textTransform: 'uppercase', marginBottom: '6px' }}>
+                    Or Manual SOP Text Content
+                  </label>
+                  <textarea
+                    rows={6}
+                    value={description}
+                    onChange={e => setDescription(e.target.value)}
+                    placeholder="Enter standard operating procedure text here..."
+                    style={{
+                      width: '100%', padding: '10px 12px', borderRadius: '6px', border: '1px solid var(--border)',
+                      background: 'var(--surface-2)', color: 'var(--text-1)', fontSize: '12.5px', lineHeight: '1.5'
+                    }}
+                  />
                 </div>
               </div>
-              <div className="form-field">
-                <label>Procedure Title</label>
-                <input type="text" placeholder="e.g. Restart Production Tomcat Service" value={procTitle} onChange={e => setProcTitle(e.target.value)} required />
-              </div>
-              <div className="form-field">
-                <label>Match Vocabulary Keywords (Comma separated)</label>
-                <input type="text" placeholder="e.g. tomcat, web service, 502, unresponsive" value={procKeywords} onChange={e => setProcKeywords(e.target.value)} />
-              </div>
-              <div className="form-field">
-                <label>Action Key (Execution Tool Protocol)</label>
-                <input type="text" placeholder="e.g. RESTART_SERVICE:tomcat:linux" value={procActionKey} onChange={e => setProcActionKey(e.target.value)} required />
-              </div>
-              <div className="form-row">
-                <div className="form-field">
-                  <label>Approval Status</label>
-                  <select value={procStatus} onChange={e => setProcStatus(e.target.value)}>
-                    <option value="APPROVED">APPROVED</option>
-                    <option value="DRAFT">DRAFT</option>
-                    <option value="RETIRED">RETIRED</option>
-                  </select>
-                </div>
-                <div className="form-field">
-                  <label>Execution Order</label>
-                  <input type="number" value={procExecutionOrder} onChange={e => setProcExecutionOrder(Number(e.target.value))} />
-                </div>
-              </div>
-              <div className="form-field">
-                <label>Description & Notes</label>
-                <textarea rows={3} value={procDescription} onChange={e => setProcDescription(e.target.value)} placeholder="Operational details for reviewers..." />
-              </div>
-              {procError && <div className="error-alert">{procError}</div>}
+
+              {/* Action buttons */}
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
-                <button className="btn-secondary" onClick={() => setShowProcModal(false)} style={{ padding: '8px 16px' }}>Cancel</button>
-                <button className="btn-primary" onClick={handleSaveProcedure} disabled={procSaving} style={{ padding: '8px 18px' }}>
-                  {procSaving ? 'Saving...' : 'Save Procedure'}
+                <button
+                  className="btn-secondary"
+                  onClick={() => setShowIngestModal(false)}
+                  style={{ padding: '8px 16px', fontSize: '12.5px' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveOrIngest}
+                  disabled={loadingAction}
+                  className="btn-primary"
+                  style={{ padding: '8px 18px', fontSize: '12.5px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                >
+                  <Save size={14} /> {loadingAction ? 'Processing...' : selectedSop ? 'Save & Re-embed' : 'Ingest SOP'}
                 </button>
               </div>
             </div>

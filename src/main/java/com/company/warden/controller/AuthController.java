@@ -458,7 +458,17 @@ public class AuthController {
         u.setUpdatedAt(OffsetDateTime.now());
         users.save(u);
         tokenRevocationService.revokeAllUserTokens(u.getUsername());
-        return ResponseEntity.ok(Map.of("message", "Password updated.", "mustChangePassword", false));
+
+        String newToken = jwtService.generate(u.getUsername(),
+                Map.of("role", u.getRole(), "tokenType", "access"), ACCESS_TTL);
+        String newRefreshToken = jwtService.generate(u.getUsername(),
+                Map.of("role", u.getRole(), "tokenType", "refresh"), REFRESH_TTL);
+
+        return ResponseEntity.ok(Map.of(
+                "message", "Password updated.",
+                "mustChangePassword", false,
+                "token", newToken,
+                "refreshToken", newRefreshToken));
     }
 
     /** Token parsed once, role checked once, for every admin-only route above. */

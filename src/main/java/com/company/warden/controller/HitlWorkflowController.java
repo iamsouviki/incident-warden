@@ -27,8 +27,9 @@ public class HitlWorkflowController {
     }
 
     @PostMapping("/incidents/{incidentId}/plan")
-    public ResponseEntity<?> createPlan(@PathVariable UUID incidentId) {
-        return ResponseEntity.ok(workflow.createPlan(incidentId));
+    public ResponseEntity<?> createPlan(@PathVariable UUID incidentId,
+                                        @RequestBody(required = false) Map<String, String> fields) {
+        return ResponseEntity.ok(workflow.createPlan(incidentId, fields == null ? Map.of() : fields));
     }
 
     @GetMapping("/requests")

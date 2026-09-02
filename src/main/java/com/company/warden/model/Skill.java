@@ -68,6 +68,10 @@ public class Skill {
     @Column(name = "description", length = 600)
     private String description;
 
+    /** Versioned JSON for category extraction and resolution rules. */
+    @Column(name = "definition_json", columnDefinition = "TEXT")
+    private String definitionJson;
+
     @Column(name = "created_at")
     private OffsetDateTime createdAt;
 
@@ -95,6 +99,8 @@ public class Skill {
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }
+    public String getDefinitionJson() { return definitionJson; }
+    public void setDefinitionJson(String definitionJson) { this.definitionJson = definitionJson; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }

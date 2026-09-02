@@ -155,9 +155,14 @@ const IncidentManagementPage: React.FC = () => {
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
   const [importMessage, setImportMessage] = useState('');
+  const [integrationEnabled, setIntegrationEnabled] = useState(false);
 
   useEffect(() => {
     fetchIncidents();
+    authFetch('/api/v1/integrations/settings')
+      .then(res => res.ok ? res.json() : null)
+      .then(d => d && setIntegrationEnabled(Boolean(d.integrationEnabled)))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -363,16 +368,18 @@ const IncidentManagementPage: React.FC = () => {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <button
-            type="button"
-            className="btn-sync"
-            onClick={handleSyncIntegrations}
-            disabled={syncing}
-            style={{ display: 'flex', alignItems: 'center', gap: '6px', height: '34px', padding: '0 12px', fontSize: '12.5px' }}
-          >
-            <RefreshCw size={13} className={syncing ? 'spin' : ''} />
-            {syncing ? 'Syncing ITSM…' : 'Sync ITSM Feeds'}
-          </button>
+          {integrationEnabled && (
+            <button
+              type="button"
+              className="btn-sync"
+              onClick={handleSyncIntegrations}
+              disabled={syncing}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', height: '34px', padding: '0 12px', fontSize: '12.5px' }}
+            >
+              <RefreshCw size={13} className={syncing ? 'spin' : ''} />
+              {syncing ? 'Syncing ITSM…' : 'Sync ITSM Feeds'}
+            </button>
+          )}
           <button
             type="button"
             className="btn-secondary"

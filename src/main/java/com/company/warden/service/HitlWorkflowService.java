@@ -90,6 +90,11 @@ public class HitlWorkflowService {
 
     @Transactional
     public Map<String, Object> createPlan(UUID incidentId) {
+        return createPlan(incidentId, Map.of());
+    }
+
+    @Transactional
+    public Map<String, Object> createPlan(UUID incidentId, Map<String, String> suppliedFields) {
         Incident incident = incidents.findById(incidentId)
                 .orElseThrow(() -> new NoSuchElementException("Incident not found"));
         boolean active = plans.findByIncidentIdOrderByCreatedAtDesc(incidentId).stream()
@@ -109,6 +114,12 @@ public class HitlWorkflowService {
         AgentAssessmentService.Assessment assessment = agents.assess(incident, evidence,
                 evidence.approvedEvidencePresent() ? evidence.reliability() : agents.defaultPrior(),
                 precedentSimilarity);
+        SkillService.RuleResolution rules = agents.resolveFields(assessment.category(),
+                incident.getSubject() + "\n" + incident.getDescription(), suppliedFields);
+        if (!rules.missing().isEmpty()) {
+            return Map.of("route", "NEEDS_INPUT", "category", assessment.category(),
+                    "fields", rules.fields(), "values", rules.values(), "resolution", rules.resolution());
+        }
         GuardrailService.Result check = guardrails.evaluate(assessment.action(), assessment.target(), evidence, active ? 1 : 0);
 
         // A procedure that declares an action key must declare a runnable one. A typo'd or
@@ -181,7 +192,8 @@ public class HitlWorkflowService {
         plan.setStatus(eligible ? "PENDING_APPROVAL" : "BLOCKED");
         plan.setActionName(assessment.action().isBlank() ? "none" : assessment.action());
         plan.setTarget(assessment.target());
-        plan.setParametersJson(parameters(assessment, evidence, script, precedent.orElse(null), platform));
+        plan.setParametersJson(parameters(assessment, evidence, script, precedent.orElse(null), platform,
+                rules.values(), rules.resolution()));
         plan.setSopEvidence(evidence.approvedEvidencePresent() ? evidence.excerpt() : "SOP evidence unavailable: " + evidence.reason());
         plan.setRiskScore(assessment.riskPenalty() * 100.0);
         plan.setGuardrailStatus(eligible ? "PASS" : "BLOCK");
@@ -527,11 +539,32 @@ public class HitlWorkflowService {
         details.put("status", outcome.status());
         details.put("reason", outcome.reason());
         details.put("dryRun", dryRun);
+        Map<String, Object> resolution = resolveResult(plan.getParametersJson(), outcome.succeeded());
+        details.put("resolution", resolution);
         audit.record("ACTION_EXECUTION", execution.getId(),
                 dryRun ? "DRY_RUN_COMPLETED" : "EXECUTION_COMPLETED", currentUser.username(), details);
 
-        return Map.of("execution", execution, "message",
-                dryRun ? "Dry run recorded; no mutation was performed." : "Execution recorded: " + outcome.status());
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("execution", execution);
+        result.put("resolution", resolution);
+        result.put("message", dryRun ? "Dry run recorded; no mutation was performed."
+                : "Execution recorded: " + outcome.status());
+        return result;
+    }
+
+    private Map<String, Object> resolveResult(String parametersJson, boolean success) {
+        try {
+            Map<String, Object> params = json.readValue(parametersJson, new com.fasterxml.jackson.core.type.TypeReference<>() {});
+            Object raw = params.get("resolution");
+            if (raw instanceof Map<?, ?> rules) {
+                Map<String, Object> result = new LinkedHashMap<>();
+                result.put("status", rules.get(success ? "success_status" : "failure_status"));
+                result.put("route", success ? "" : rules.get("failure_route"));
+                result.put("scriptPath", rules.get("script_path"));
+                return result;
+            }
+        } catch (Exception ignored) { }
+        return Map.of("status", success ? "Resolved" : "Escalated", "route", "");
     }
 
     /**
@@ -625,7 +658,8 @@ public class HitlWorkflowService {
     private String parameters(AgentAssessmentService.Assessment assessment, SopEvidence evidence,
                               RemediationScriptService.GeneratedScript script,
                               IncidentPrecedentService.Precedent precedent,
-                              IncidentTarget.Platform platform) {
+                              IncidentTarget.Platform platform, Map<String, String> extractedFields,
+                              Map<String, Object> resolution) {
         try {
             Map<String, Object> params = new LinkedHashMap<>();
             params.put("classification", assessment.category());
@@ -634,6 +668,8 @@ public class HitlWorkflowService {
             params.put("approvedActionKey", evidence.approvedActionKey());
             params.put("scriptSource", script.source());
             params.put("scriptLanguage", script.language());
+            params.put("extractedFields", extractedFields);
+            params.put("resolution", resolution);
             // Also pinned, and the reviewer's answer to "why is this PowerShell?". The source
             // matters as much as the name: HOST_REPORTED means the machine said so,
             // SOP_ACTION_KEY means nobody has confirmed it and the procedure's default was used.

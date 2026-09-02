@@ -27,8 +27,14 @@ public class SavedScript {
     @Column(name = "category", nullable = false)
     private String category;
 
-    @Column(name = "target_host", nullable = false)
-    private String targetHost;
+    @Column(name = "target_host")
+    private String targetHost = "localhost";
+
+    @Column(name = "required_input_data", columnDefinition = "TEXT")
+    private String requiredInputData;
+
+    @Column(name = "validated_in_dry_run")
+    private Boolean validatedInDryRun = true;
 
     @Column(name = "created_at")
     private OffsetDateTime createdAt;
@@ -48,6 +54,9 @@ public class SavedScript {
         }
         if (updatedAt == null) {
             updatedAt = OffsetDateTime.now();
+        }
+        if (targetHost == null) {
+            targetHost = "localhost";
         }
     }
 
@@ -77,6 +86,12 @@ public class SavedScript {
 
     public String getTargetHost() { return targetHost; }
     public void setTargetHost(String targetHost) { this.targetHost = targetHost; }
+
+    public String getRequiredInputData() { return requiredInputData; }
+    public void setRequiredInputData(String requiredInputData) { this.requiredInputData = requiredInputData; }
+
+    public Boolean getValidatedInDryRun() { return validatedInDryRun; }
+    public void setValidatedInDryRun(Boolean validatedInDryRun) { this.validatedInDryRun = validatedInDryRun; }
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }
