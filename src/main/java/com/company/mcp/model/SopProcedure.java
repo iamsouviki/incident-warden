@@ -9,11 +9,11 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 /**
- * An approved remediation procedure for one tenant.
+ * An approved remediation procedure.
  *
  * This is the record the HITL gate treats as authority to act. Three things depend on
  * it, which is why it is one table and not three:
- *   - SOP evidence: only an APPROVED row for the caller's tenant can back a plan.
+ *   - SOP evidence: only an APPROVED row can back a plan.
  *   - The executor's registry: {@code actionKey} names the tool and its parameters.
  *   - The learning loop: {@code successCount}/{@code failureCount} feed confidence.
  *
@@ -28,9 +28,6 @@ public class SopProcedure {
     @Id
     @Column(name = "id", nullable = false)
     private UUID id;
-
-    @Column(name = "tenant_id", nullable = false, length = 64)
-    private String tenantId;
 
     /** Groups the steps of one procedure together. */
     @Column(name = "sop_id", nullable = false, length = 64)
@@ -96,8 +93,6 @@ public class SopProcedure {
 
     public UUID getId() { return id; }
     public void setId(UUID id) { this.id = id; }
-    public String getTenantId() { return tenantId; }
-    public void setTenantId(String tenantId) { this.tenantId = tenantId; }
     public String getSopId() { return sopId; }
     public void setSopId(String sopId) { this.sopId = sopId; }
     public int getStepNumber() { return stepNumber; }

@@ -245,7 +245,7 @@ class IncidentTargetTest {
     }
 
     private Incident incident(String subject, String description) {
-        return Incident.builder().id(UUID.randomUUID()).tenantId("tenant-a")
+        return Incident.builder().id(UUID.randomUUID())
                 .subject(subject).description(description)
                 .priority("P3").status("New").externalId("FS-1001").build();
     }

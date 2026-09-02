@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * The scope list now gates two surfaces: the chat assistant and {@code
  * IncidentService.analyzeIncident}. What this protects is spend and reputation — analyze
- * runs two to three model calls and a public web search per request, so anything that gets
+ * runs two to three model calls per request, so anything that gets
  * past this list is answered on the operator's credit, wearing the platform's badge.
  *
  * Both directions matter. Too tight and real tickets are refused, which reads as the
@@ -92,5 +92,34 @@ class RagServiceScopeTest {
         assertTrue(RagService.isTransientAnswer(RagService.SERVICE_UNAVAILABLE));
         assertFalse(RagService.isTransientAnswer("Restart the print spooler on lane 3, per SOP-POS-04."));
         assertFalse(RagService.isTransientAnswer(null));
+    }
+
+    /**
+     * A keyboard mash is not an off-topic question. Answering it with the guardrail refusal
+     * tells the user their question was rejected, when the truth is it never arrived — so the
+     * two get different replies and the split is decided here.
+     *
+     * The heuristic is only consulted once scope has already failed, so an in-scope word can
+     * never be called unreadable. It is still checked directly below, because a false positive
+     * would relabel a genuine off-topic question as a typo and invite the user to resend it.
+     */
+    @Test
+    void keyboardMashIsSeparatedFromOffTopic() {
+        assertEquals(RagService.Refusal.UNINTELLIGIBLE, rag.refuse("hhhjdhghjs"));
+        assertEquals(RagService.Refusal.UNINTELLIGIBLE, rag.refuse("zxcvbnm"));
+        assertEquals(RagService.Refusal.UNINTELLIGIBLE, rag.refuse("asdfgh"));
+        // A real question about the wrong subject stays a guardrail refusal.
+        assertEquals(RagService.Refusal.OUT_OF_SCOPE, rag.refuse("write me a poem about cats"));
+        assertEquals(RagService.Refusal.OUT_OF_SCOPE, rag.refuse("what is the capital of France"));
+
+        assertFalse(RagService.isGibberish("printer"));
+        assertFalse(RagService.isGibberish("tomcat"));
+        assertFalse(RagService.isGibberish("what is the capital of France"));
+        // References and acronyms: a digit or a dash means it was typed on purpose, and three
+        // letters is too little to judge ("dns", "sso", "vpn").
+        assertFalse(RagService.isGibberish("fs-1001"));
+        assertFalse(RagService.isGibberish("INC000000001"));
+        assertFalse(RagService.isGibberish("dns"));
+        assertFalse(RagService.isGibberish(null));
     }
 }

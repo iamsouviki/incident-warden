@@ -23,8 +23,6 @@ import static org.mockito.Mockito.when;
  */
 class SopProcedureServiceTest {
 
-    private static final String TENANT = "tenant-local";
-
     private SopProcedureRepository repository;
     private SopProcedureService service;
 
@@ -35,35 +33,35 @@ class SopProcedureServiceTest {
     }
 
     @Test
-    void returnsNoMatchWhenTenantHasNoApprovedProcedure() {
-        when(repository.findByTenantIdAndApprovalStatus(eq(TENANT), eq("APPROVED"))).thenReturn(List.of());
+    void returnsNoMatchWhenThereIsNoApprovedProcedure() {
+        when(repository.findByApprovalStatus("APPROVED")).thenReturn(List.of());
 
-        SopEvidence evidence = service.toEvidence(TENANT, "Core switch in the DC is down, whole floor offline");
+        SopEvidence evidence = service.toEvidence("Core switch in the DC is down, whole floor offline");
 
         assertFalse(evidence.approvedEvidencePresent(), "no approved procedure must not produce evidence");
-        assertEquals("NO_APPROVED_TENANT_SOP_MATCH", evidence.reason());
+        assertEquals("NO_APPROVED_SOP_MATCH", evidence.reason());
     }
 
     @Test
     void returnsNoMatchWhenNothingIsRelevantEnough() {
-        when(repository.findByTenantIdAndApprovalStatus(eq(TENANT), eq("APPROVED")))
+        when(repository.findByApprovalStatus("APPROVED"))
                 .thenReturn(seed());
 
         // Shares no signal term with any seeded procedure.
-        SopEvidence evidence = service.toEvidence(TENANT, "Employee badge reader rejecting valid badges at the loading dock");
+        SopEvidence evidence = service.toEvidence("Employee badge reader rejecting valid badges at the loading dock");
 
         assertFalse(evidence.approvedEvidencePresent());
-        assertEquals("NO_APPROVED_TENANT_SOP_MATCH", evidence.reason());
+        assertEquals("NO_APPROVED_SOP_MATCH", evidence.reason());
     }
 
     @Test
     void singleSharedWordIsNotEnoughToClaimEvidence() {
         List<SopProcedure> only = List.of(
                 procedure("SOP-CACHE-01", "Flush the cache tier", "Flush Redis", "cache redis stale flush", 0.8));
-        when(repository.findByTenantIdAndApprovalStatus(eq(TENANT), eq("APPROVED"))).thenReturn(only);
+        when(repository.findByApprovalStatus("APPROVED")).thenReturn(only);
 
         // "cache" alone scores 1.5, under the 2.0 floor: one word is a coincidence, not evidence.
-        SopEvidence evidence = service.toEvidence(TENANT, "Browser cache question from a store manager");
+        SopEvidence evidence = service.toEvidence("Browser cache question from a store manager");
 
         assertFalse(evidence.approvedEvidencePresent());
     }
@@ -71,13 +69,12 @@ class SopProcedureServiceTest {
     @Test
     void matchesTheRightProcedureAndCarriesItsIdAndActionKey() {
         List<SopProcedure> seeded = seed();
-        when(repository.findByTenantIdAndApprovalStatus(eq(TENANT), eq("APPROVED"))).thenReturn(seeded);
+        when(repository.findByApprovalStatus("APPROVED")).thenReturn(seeded);
 
-        SopEvidence evidence = service.toEvidence(TENANT,
-                "Receipt printer at register 3 shows offline, print queue is stuck");
+        SopEvidence evidence = service.toEvidence("Receipt printer at register 3 shows offline, print queue is stuck");
 
         assertTrue(evidence.approvedEvidencePresent());
-        assertEquals("APPROVED_TENANT_SOP_MATCH", evidence.reason());
+        assertEquals("APPROVED_SOP_MATCH", evidence.reason());
         assertTrue(evidence.excerpt().contains("RESTART_SERVICE:spooler:windows"),
                 "the excerpt must name the action the plan is authorised to run");
         SopProcedure printer = seeded.get(0);
@@ -85,20 +82,11 @@ class SopProcedureServiceTest {
                 "evidence must cite the real row id, not a generated one");
     }
 
+    /** No text is not a match against everything: it is a match against nothing. */
     @Test
-    void oneTenantCannotSeeAnotherTenantsApprovedProcedures() {
-        when(repository.findByTenantIdAndApprovalStatus(eq("tenant-other"), eq("APPROVED"))).thenReturn(List.of());
-
-        SopEvidence evidence = service.toEvidence("tenant-other",
-                "Receipt printer at register 3 shows offline, print queue is stuck");
-
-        assertFalse(evidence.approvedEvidencePresent());
-    }
-
-    @Test
-    void missingTenantYieldsNoEvidence() {
-        assertFalse(service.toEvidence(null, "printer offline print queue").approvedEvidencePresent());
-        assertFalse(service.toEvidence("  ", "printer offline print queue").approvedEvidencePresent());
+    void missingIncidentTextYieldsNoEvidence() {
+        assertFalse(service.toEvidence(null).approvedEvidencePresent());
+        assertFalse(service.toEvidence("  ").approvedEvidencePresent());
     }
 
     @Test
@@ -136,7 +124,6 @@ class SopProcedureServiceTest {
                                    String actionKey, double reliability) {
         SopProcedure p = new SopProcedure();
         p.setId(UUID.randomUUID());
-        p.setTenantId(TENANT);
         p.setSopId(sopId);
         p.setTitle(title);
         p.setDescription(description);

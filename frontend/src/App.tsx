@@ -23,15 +23,12 @@ import './EnterprisePages.css';
 import ChatPage from './pages/ChatPage';
 import LoginPage from './pages/LoginPage';
 import SopPage from './pages/SopPage';
-import TeamsPage from './pages/TeamsPage';
 import AiConfigPage from './pages/AiConfigPage';
 import IncidentManagementPage from './pages/IncidentManagementPage';
 import ToolsPage from './pages/ToolsPage';
 import HitlPage from './pages/HitlPage';
 import AccountPage from './pages/AccountPage';
 import { AuthUser, authFetch, clearAuth, getStoredUser, logoutUser, setAuth } from './services/api';
-
-const DEFAULT_TENANT_ID = 'tenant-1';
 
 type NavItem = { path: string; label: string; icon: React.ReactNode; group: 'Operate' | 'Manage' };
 
@@ -51,7 +48,6 @@ const PAGE_META: Record<string, { title: string; subtitle: string }> = {
   '/hitl': { title: 'HITL approval queue', subtitle: 'Review proposed actions before they affect production systems.' },
   '/tools': { title: 'Tools & scripts', subtitle: 'Manage safe remediation actions and execution history.' },
   '/sops': { title: 'SOP library', subtitle: 'Maintain the operational knowledge agents use for recommendations.' },
-  '/teams': { title: 'Teams', subtitle: 'Manage ownership, escalation paths, and support coverage.' },
   '/settings/ai': { title: 'Settings', subtitle: 'Choose the model that answers, and who has an account here.' },
   '/account': { title: 'My account', subtitle: 'Manage your profile and session.' },
 };
@@ -216,7 +212,6 @@ function AppContent({ user, onLogin, onLogout, theme, toggleTheme }: { user: Aut
   const activePath = location.pathname.startsWith('/incidents/') ? '/incidents' : location.pathname;
   const isChat = activePath === '/';
   const meta = PAGE_META[activePath] || PAGE_META['/incidents'];
-  const workspace = user?.tenantName?.trim() || 'Primary workspace';
   const displayName = user?.fullName?.trim() || user?.username || '';
   const avatarLetter = (displayName || 'U').slice(0, 1).toUpperCase();
 
@@ -285,8 +280,8 @@ function AppContent({ user, onLogin, onLogout, theme, toggleTheme }: { user: Aut
             <div className="sidebar-spacer" />
             <div className="sidebar-footer">
               <div className="workspace-card">
-                <div className="workspace-card-label">Workspace</div>
-                <div className="workspace-card-name" title={user?.tenantId || DEFAULT_TENANT_ID}>{workspace}</div>
+                <div className="workspace-card-label">Signed in as</div>
+                <div className="workspace-card-name">{displayName}</div>
               </div>
             </div>
           </aside>
@@ -361,7 +356,6 @@ function AppContent({ user, onLogin, onLogout, theme, toggleTheme }: { user: Aut
                   <Route path="/hitl" element={<HitlPage />} />
                   <Route path="/tools" element={<ToolsPage />} />
                   <Route path="/sops" element={<SopPage />} />
-                  <Route path="/teams" element={<TeamsPage />} />
                   <Route path="/settings/ai" element={<AiConfigPage />} />
                 </>
               ) : null}

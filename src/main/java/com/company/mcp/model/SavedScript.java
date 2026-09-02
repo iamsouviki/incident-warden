@@ -30,9 +30,6 @@ public class SavedScript {
     @Column(name = "target_host", nullable = false)
     private String targetHost;
 
-    @Column(name = "tenant_id", nullable = false)
-    private String tenantId;
-
     @Column(name = "created_at")
     private OffsetDateTime createdAt;
 
@@ -80,9 +77,6 @@ public class SavedScript {
 
     public String getTargetHost() { return targetHost; }
     public void setTargetHost(String targetHost) { this.targetHost = targetHost; }
-
-    public String getTenantId() { return tenantId; }
-    public void setTenantId(String tenantId) { this.tenantId = tenantId; }
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }

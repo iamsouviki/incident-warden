@@ -89,9 +89,8 @@ public final class IncidentTarget {
      *
      * ponytail: static and process-global, published once at boot by {@code SkillService}
      * and refreshed when an extraction skill is saved. This class is a static utility with
-     * ~15 call sites, several with no request context (intake, external sync), so per-tenant
-     * patterns would mean threading a tenant through all of them. The ceiling is one
-     * estate's host conventions. Make this an injected bean when a second estate needs
+     * ~15 call sites, several with no request context (intake, external sync). The ceiling is
+     * one estate's host conventions. Make this an injected bean if a second estate ever needs
      * different ones.
      */
     private static volatile List<Pattern> authoredHostPatterns = List.of();

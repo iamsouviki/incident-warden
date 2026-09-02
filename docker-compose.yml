@@ -39,9 +39,9 @@ services:
     command: start-dev
     environment:
       KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://postgres:5432/mcp_db
+      KC_DB_URL: jdbc:postgresql://postgres:5432/incident_warden_db
       KC_DB_SCHEMA: keycloak
-      KC_DB_USERNAME: mcp_user
+      KC_DB_USERNAME: warden_user
       KC_DB_PASSWORD: changeme
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
@@ -84,9 +84,9 @@ services:
       VAULT_TOKEN: dev-token
       VAULT_ENABLED: "false"
       SPRING_PROFILES_ACTIVE: docker
-      # Blank means the container generates a new admin password on every start and logs it
-      # once. Set it in .env if you want to be able to sign in after a restart.
-      MCP_DEFAULT_PASSWORD: ${MCP_DEFAULT_PASSWORD:-}
+      # application.yml gives this no default on purpose, so the container cannot boot without it.
+      # ":?" fails `docker compose up` with this message instead of a JVM stack trace 40s later.
+      MCP_JWT_SECRET: ${MCP_JWT_SECRET:?set MCP_JWT_SECRET in .env — at least 32 characters}
       # ── LLM API credentials (secrets only — provider/model config lives in application.yml) ──
       # Populate only the key matching the provider set in application.yml → mcp.llm.provider
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}           # needed when provider=openai

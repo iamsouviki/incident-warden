@@ -15,7 +15,6 @@ public class CurrentUser {
         return user;
     }
 
-    public String tenantId() { return require().tenantId(); }
     public String username() { return require().username(); }
     public String role() { return require().role(); }
 }

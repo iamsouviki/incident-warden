@@ -45,10 +45,9 @@ npm run dev --prefix frontend
 
 Then:
 
-1. Open <http://localhost:5173> and sign in as `admin`. The password is `MCP_DEFAULT_PASSWORD` if
-   you set it before starting the backend, otherwise the literal `admin` — and the first screen is a
-   **forced password change**. Do that now, before the client is watching, and remember what you
-   set it to.
+1. Open <http://localhost:5173> and sign in as `admin` / `admin` — the username is the starter
+   password — and the first screen is a **forced password change**. Do that now, before the client
+   is watching, and remember what you set it to.
 2. Turn notifications on. **There is no form for this** — the SMTP card was removed from the Settings
    page and its API was left behind, so this is a `curl` and it is a known defect (see the note at the
    end of this section). With your token in `$T`:
@@ -149,7 +148,7 @@ question — and the one case where they currently cannot — is Act 9.
 
 **Create guarded remediation plan.** Walk them through what comes back, in this order:
 
-1. **Approved SOP evidence** — SOP-TOMCAT-01 matched, reason `APPROVED_TENANT_SOP_MATCH`.
+1. **Approved SOP evidence** — SOP-TOMCAT-01 matched, reason `APPROVED_SOP_MATCH`.
 2. **Precedent** — an earlier resolved incident with similar wording, with its ticket number and
    similarity score. *This is the "our own history" half.* A past ticket only qualifies if a human
    approved it, its execution actually `SUCCEEDED`, and its plan pinned a parseable action key.
@@ -345,7 +344,7 @@ The other refusals worth naming, all of which produce "back to a human":
 |---|---|
 | `TARGET_HOST_UNKNOWN` | a mutating action with no confirmed machine |
 | `TOOL_NOT_ALLOWLISTED:x` | a procedure declaring an action key no tool answers to |
-| `NO_APPROVED_TENANT_SOP_MATCH` | no approved procedure, with ungrounded scripts switched off |
+| `NO_APPROVED_SOP_MATCH` | no approved procedure, with ungrounded scripts switched off |
 | `SCRIPT_GENERATION_UNAVAILABLE` | no template matched and no model was reachable |
 | `PLAN_ALREADY_AWAITING_DECISION` | a second plan for an incident already in the queue |
 
@@ -472,9 +471,9 @@ Five things.
 3. **There is no real executor agent yet.** The stand-in runs nothing on purpose. Building the
    locked-down one — its own allowlist, its own audit log, its own sandbox — is the largest piece of
    work left, and it is the piece that actually touches your machines.
-4. **The starting password is far too weak** and its hash is in the open-source repository. First
-   login forces a change, which closes the window rather than removing it. Set
-   `MCP_DEFAULT_PASSWORD` before first boot.
+4. **The starting password is the username**, single-use: no hash is committed (the migration seeds
+   a NULL one, which cannot authenticate) and none is ever logged, and first login cannot be
+   completed without replacing it.
 5. **This is not yet production-hardened**, and the list is written down rather than glossed:
    `docs/enterprise-readiness.md` has every issue with a file and line number. The four that matter
    most, in order:

@@ -49,7 +49,7 @@ public class ScriptController {
 
     @GetMapping
     public ResponseEntity<?> getScripts() {
-        List<SavedScript> list = savedScriptRepository.findByTenantId(currentUser.tenantId());
+        List<SavedScript> list = savedScriptRepository.findAll();
         return ResponseEntity.ok(Map.of("scripts", list));
     }
 
@@ -58,7 +58,6 @@ public class ScriptController {
         if (script.getId() == null) {
             script.setId(UUID.randomUUID());
         }
-        script.setTenantId(currentUser.tenantId());
         SavedScript saved = savedScriptRepository.save(script);
         return ResponseEntity.ok(saved);
     }
@@ -67,13 +66,13 @@ public class ScriptController {
 
     @GetMapping("/{id}")
     public ResponseEntity<?> getScript(@PathVariable UUID id) {
-        return ownedScript(id).<ResponseEntity<?>>map(ResponseEntity::ok)
+        return savedScriptRepository.findById(id).<ResponseEntity<?>>map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
     @PutMapping("/{id}")
     public ResponseEntity<?> updateScript(@PathVariable UUID id, @RequestBody SavedScript script) {
-        Optional<SavedScript> opt = ownedScript(id);
+        Optional<SavedScript> opt = savedScriptRepository.findById(id);
         if (opt.isEmpty()) {
             return ResponseEntity.notFound().build();
         }
@@ -90,16 +89,11 @@ public class ScriptController {
 
     @DeleteMapping("/{id}")
     public ResponseEntity<?> deleteScript(@PathVariable UUID id) {
-        if (ownedScript(id).isEmpty()) {
+        if (savedScriptRepository.findById(id).isEmpty()) {
             return ResponseEntity.notFound().build();
         }
         savedScriptRepository.deleteById(id);
         return ResponseEntity.ok(Map.of("message", "Script deleted successfully"));
-    }
-
-    private Optional<SavedScript> ownedScript(UUID id) {
-        return savedScriptRepository.findById(id)
-                .filter(s -> currentUser.tenantId().equals(s.getTenantId()));
     }
 
     @PostMapping("/generate")

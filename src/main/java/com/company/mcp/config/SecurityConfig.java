@@ -2,6 +2,7 @@ package com.company.mcp.config;
 
 import com.company.mcp.service.JwtService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.DispatcherType;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -50,15 +51,24 @@ public class SecurityConfig {
                 .exceptionHandling(e -> e.authenticationEntryPoint(unauthorizedEntryPoint()).accessDeniedHandler(
                         forbiddenHandler()))
                 .authorizeHttpRequests(auth -> auth
+                        // Spring Security 6 authorizes the ERROR dispatch too, and the JWT filter
+                        // does not re-run on it, so an unhandled 500 was re-authorized with an
+                        // empty context and reported to the client as 401 "Sign in again." Every
+                        // server fault in this application looked like an expired token — the user
+                        // signs out and back in, and the real error is never seen. Permitting the
+                        // dispatch leaks nothing: it renders Spring Boot's error body for a request
+                        // already authorized on its REQUEST dispatch, with stack traces off.
+                        .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
+
                         // ── Public: token issuance, static SPA files and liveness ───────────
                         .requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/sso", "/api/auth/refresh", "/api/auth/logout")
                         .permitAll()
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/", "/index.html", "/assets/**", "/favicon.ico", "/*.svg", "/*.png", "/*.ico", "/*.js", "/*.css")
                         .permitAll()
-                        .requestMatchers(HttpMethod.GET, "/incidents", "/incidents/**", "/settings", "/settings/**", "/chat", "/chat/**", "/sops", "/sops/**", "/tools", "/tools/**", "/teams", "/teams/**", "/account", "/account/**", "/login")
+                        .requestMatchers(HttpMethod.GET, "/incidents", "/incidents/**", "/settings", "/settings/**", "/chat", "/chat/**", "/sops", "/sops/**", "/tools", "/tools/**", "/account", "/account/**", "/login")
                         .permitAll()
-                        .requestMatchers(HttpMethod.HEAD, "/", "/index.html", "/incidents", "/incidents/**", "/settings", "/settings/**", "/chat", "/chat/**", "/sops", "/sops/**", "/tools", "/tools/**", "/teams", "/teams/**", "/account", "/account/**", "/login")
+                        .requestMatchers(HttpMethod.HEAD, "/", "/index.html", "/incidents", "/incidents/**", "/settings", "/settings/**", "/chat", "/chat/**", "/sops", "/sops/**", "/tools", "/tools/**", "/account", "/account/**", "/login")
                         .permitAll()
                         .requestMatchers("/api/health", "/actuator/health", "/actuator/health/**", "/actuator/info")
                         .permitAll()
@@ -68,8 +78,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/v1/public/**").permitAll()
 
                         // ── Operator surface: read for everyone signed in ───────────────────
-                        .requestMatchers(HttpMethod.GET, "/api/auth/me", "/api/auth/users", "/api/v1/teams/**",
-                                "/api/v1/statuses/**",
+                        .requestMatchers(HttpMethod.GET, "/api/auth/me", "/api/auth/users",                                 "/api/v1/statuses/**",
                                 "/api/v1/incidents", "/api/v1/incidents/**", "/api/v1/scripts", "/api/v1/scripts/**",
                                 "/api/v1/rag/**", "/api/v1/skills", "/api/v1/skills/**",
                                 "/api/v1/integrations/**", "/api/v1/chat/**",

@@ -1,9 +1,9 @@
 package com.company.mcp.controller;
 
-import com.company.mcp.config.CurrentUser;
 import com.company.mcp.model.Incident;
 import com.company.mcp.repository.IncidentRepository;
 import com.company.mcp.service.integration.IntegrationManagerService;
+import com.company.mcp.service.integration.SourceUpdate;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -18,14 +18,11 @@ public class IntegrationController {
 
     private final IntegrationManagerService integrationManager;
     private final IncidentRepository incidentRepository;
-    private final CurrentUser currentUser;
 
     public IntegrationController(IntegrationManagerService integrationManager,
-                                 IncidentRepository incidentRepository,
-                                 CurrentUser currentUser) {
+                                 IncidentRepository incidentRepository) {
         this.integrationManager = integrationManager;
         this.incidentRepository = incidentRepository;
-        this.currentUser = currentUser;
     }
 
     @GetMapping("/settings")
@@ -52,8 +49,7 @@ public class IntegrationController {
 
     @PostMapping("/sync")
     public ResponseEntity<?> triggerSync() {
-        Map<String, Object> result = integrationManager.syncAllEnabled(currentUser.tenantId());
-        return ResponseEntity.ok(result);
+        return ResponseEntity.ok(integrationManager.syncAllEnabled());
     }
 
     @PostMapping("/incidents/{id}/status")
@@ -62,11 +58,13 @@ public class IntegrationController {
         if (inc == null) return ResponseEntity.notFound().build();
 
         String status = body.getOrDefault("status", "In Progress");
-        boolean ok = integrationManager.updateExternalStatus(inc, status);
+        SourceUpdate result = integrationManager.updateExternalStatus(inc, status);
         inc.setStatus(status);
         incidentRepository.save(inc);
 
-        return ResponseEntity.ok(Map.of("updated", ok, "status", status));
+        // The local status always changes; whether the source ticket followed is reported separately
+        // so the UI cannot present "not configured" or "rejected" as a completed round trip.
+        return ResponseEntity.ok(Map.of("status", status, "sourceUpdate", result.name()));
     }
 
     @PostMapping("/incidents/{id}/notes")
@@ -77,8 +75,8 @@ public class IntegrationController {
         String note = body.getOrDefault("note", "");
         if (note.isBlank()) return ResponseEntity.badRequest().body(Map.of("error", "Note content is required"));
 
-        boolean ok = integrationManager.addExternalWorkNote(inc, note);
-        return ResponseEntity.ok(Map.of("success", ok, "message", "Note pushed to external service."));
+        SourceUpdate result = integrationManager.addExternalWorkNote(inc, note);
+        return ResponseEntity.ok(Map.of("sourceUpdate", result.name()));
     }
 
     @GetMapping("/incidents/{id}/attachments/{attachmentId}")
@@ -87,6 +85,7 @@ public class IntegrationController {
         if (inc == null) return ResponseEntity.notFound().build();
 
         byte[] data = integrationManager.downloadExternalAttachment(inc, attachmentId);
+        if (data == null) return ResponseEntity.status(502).build();
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"incident-" + inc.getExternalId() + "-attachment.log\"")
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)

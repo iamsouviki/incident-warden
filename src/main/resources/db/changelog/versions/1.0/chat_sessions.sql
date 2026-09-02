@@ -2,7 +2,6 @@
 
 CREATE TABLE IF NOT EXISTS ai.chat_sessions (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id   VARCHAR(100) NOT NULL DEFAULT 'tenant-1',
     username    VARCHAR(100) NOT NULL,
     title       VARCHAR(255) NOT NULL DEFAULT 'New Conversation',
     created_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -10,7 +9,7 @@ CREATE TABLE IF NOT EXISTS ai.chat_sessions (
     is_archived BOOLEAN NOT NULL DEFAULT FALSE
 );
 
-CREATE INDEX IF NOT EXISTS idx_chat_sessions_tenant_user ON ai.chat_sessions(tenant_id, username, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_user ON ai.chat_sessions(username, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS ai.chat_messages (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -1,5 +1,6 @@
 package com.company.mcp.service;
 
+import io.micrometer.core.instrument.Metrics;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -92,7 +93,8 @@ public class GuardrailService {
         if (activePlansForIncident > 0) findings.add("LOOP_DETECTED_ACTIVE_PLAN");
         findings.add("DRY_RUN_REQUIRED");
         findings.add("OUTPUT_SCHEMA_REQUIRED");
-        return new Result(findings.stream().noneMatch(this::isBlocking), findings);
+        Result result = new Result(findings.stream().noneMatch(this::isBlocking), findings);
+        return counted("plan", result.passed() ? "PASS" : "BLOCK", result);
     }
 
     /**
@@ -132,7 +134,19 @@ public class GuardrailService {
 
         String level = findings.stream().anyMatch(f -> "BLOCK".equals(f.level())) ? "BLOCK"
                 : findings.isEmpty() ? "PASS" : "WARN";
-        return new ScriptScan(level, findings);
+        return counted("script", level, new ScriptScan(level, findings));
+    }
+
+    /**
+     * Counts every verdict this class reaches, at the two points where one is produced.
+     *
+     * <p>Micrometer's global registry rather than an injected one: Spring Boot binds the
+     * application's registry into it at startup, and a static call keeps the constructor — and so
+     * every test that builds this service by hand — unchanged.
+     */
+    private static <T> T counted(String lane, String verdict, T result) {
+        Metrics.counter("mcp.guardrail.scans", "lane", lane, "verdict", verdict).increment();
+        return result;
     }
 
     /**
@@ -154,7 +168,7 @@ public class GuardrailService {
 
     /** Backward-compatible helper used by isolated legacy validator tests. */
     public Result evaluate(String action, String target, String sopEvidence, int activePlansForIncident) {
-        SopEvidence evidence = new SopEvidence(true, true, List.of(java.util.UUID.randomUUID()), sopEvidence, 0.90, "LEGACY_TEST_EVIDENCE");
+        SopEvidence evidence = new SopEvidence(true, List.of(java.util.UUID.randomUUID()), sopEvidence, 0.90, "LEGACY_TEST_EVIDENCE");
         return evaluate(action, target, evidence, activePlansForIncident);
     }
 

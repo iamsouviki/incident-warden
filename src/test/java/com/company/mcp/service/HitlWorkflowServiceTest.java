@@ -45,10 +45,10 @@ class HitlWorkflowServiceTest {
      * being stubbed into success. The template path needs no model at all, which is the
      * point of having one.
      */
-    private HitlWorkflowService workflow(double hitlThreshold, boolean allowUngrounded) {
+    private HitlWorkflowService workflow(boolean allowUngrounded) {
         RemediationScriptService scripts = new RemediationScriptService(rag, new GuardrailService(), 100);
         HitlWorkflowService workflow = new HitlWorkflowService(incidents, plans, requests, executions, currentUser,
-                rag, new GuardrailService(), new AgentAssessmentService(hitlThreshold, 0.85, null, null, null), audit, new ObjectMapper(),
+                rag, new GuardrailService(), new AgentAssessmentService(0.85, null, null), audit, new ObjectMapper(),
                 new RemediationToolRegistry(new ObjectMapper(), new GuardrailService(), null),
                 mock(SopProcedureService.class), scripts, mock(IncidentPrecedentService.class),
                 mock(UserRepository.class),
@@ -70,10 +70,9 @@ class HitlWorkflowServiceTest {
 
     private UUID stubIncident(String subject, String description, String targetHost) {
         UUID incidentId = UUID.randomUUID();
-        Incident incident = Incident.builder().id(incidentId).tenantId("tenant-a")
+        Incident incident = Incident.builder().id(incidentId)
                 .subject(subject).description(description)
                 .priority("P3").externalId("FS-1001").targetHost(targetHost).build();
-        when(currentUser.tenantId()).thenReturn("tenant-a");
         when(currentUser.username()).thenReturn("analyst");
         when(incidents.findById(incidentId)).thenReturn(Optional.of(incident));
         when(plans.findByIncidentIdOrderByCreatedAtDesc(incidentId)).thenReturn(List.of());
@@ -93,9 +92,9 @@ class HitlWorkflowServiceTest {
     @Test
     void unavailableSopCreatesBlockedPlanAndNeverCreatesApprovalRequest() {
         UUID incidentId = stubIncident("Printer queue is stuck", "The printer queue is blocked");
-        when(rag.findApprovedSopEvidence(eq("tenant-a"), any())).thenReturn(SopEvidence.unavailable("SOP_SERVICE_UNAVAILABLE"));
+        when(rag.findApprovedSopEvidence(any())).thenReturn(SopEvidence.unavailable("SOP_SERVICE_UNAVAILABLE"));
 
-        Map<String, Object> result = workflow(0.80, false).createPlan(incidentId);
+        Map<String, Object> result = workflow(false).createPlan(incidentId);
 
         assertEquals("ESCALATE", result.get("route"));
         assertTrue(result.get("plan") instanceof RemediationPlan);
@@ -114,11 +113,11 @@ class HitlWorkflowServiceTest {
     @Test
     void approvedEvidenceWithAnUnrunnableActionKeyStillBlocks() {
         UUID incidentId = stubIncident("Printer queue is stuck", "The printer queue is blocked");
-        when(rag.findApprovedSopEvidence(eq("tenant-a"), any())).thenReturn(new SopEvidence(
-                true, true, List.of(UUID.randomUUID()), "SOP: clear the print queue", 0.95,
-                "APPROVED_TENANT_SOP_MATCH", "WIPE_DISK:everything"));
+        when(rag.findApprovedSopEvidence(any())).thenReturn(new SopEvidence(
+                true, List.of(UUID.randomUUID()), "SOP: clear the print queue", 0.95,
+                "APPROVED_SOP_MATCH", "WIPE_DISK:everything"));
 
-        Map<String, Object> result = workflow(0.80, true).createPlan(incidentId);
+        Map<String, Object> result = workflow(true).createPlan(incidentId);
         RemediationPlan plan = (RemediationPlan) result.get("plan");
 
         assertEquals("BLOCKED", plan.getStatus());
@@ -136,11 +135,11 @@ class HitlWorkflowServiceTest {
     @Test
     void anApprovedProcedureRendersATemplatedScriptAndReachesAReviewer() {
         UUID incidentId = stubIncident("Service unavailable", "The tomcat service is not responding");
-        when(rag.findApprovedSopEvidence(eq("tenant-a"), any())).thenReturn(new SopEvidence(
-                true, true, List.of(UUID.randomUUID()), "SOP: restart the tomcat service", 0.95,
-                "APPROVED_TENANT_SOP_MATCH", "RESTART_SERVICE:tomcat:linux"));
+        when(rag.findApprovedSopEvidence(any())).thenReturn(new SopEvidence(
+                true, List.of(UUID.randomUUID()), "SOP: restart the tomcat service", 0.95,
+                "APPROVED_SOP_MATCH", "RESTART_SERVICE:tomcat:linux"));
 
-        Map<String, Object> result = workflow(0.70, false).createPlan(incidentId);
+        Map<String, Object> result = workflow(false).createPlan(incidentId);
         RemediationPlan plan = (RemediationPlan) result.get("plan");
 
         assertEquals("HITL_REQUIRED", result.get("route"));
@@ -160,10 +159,10 @@ class HitlWorkflowServiceTest {
     @Test
     void theUngroundedPathStillNeedsAScript() {
         UUID incidentId = stubIncident("Disk almost full", "Root filesystem is at 97 percent on the reporting host");
-        when(rag.findApprovedSopEvidence(eq("tenant-a"), any()))
-                .thenReturn(SopEvidence.noMatch("NO_APPROVED_TENANT_SOP_MATCH"));
+        when(rag.findApprovedSopEvidence(any()))
+                .thenReturn(SopEvidence.noMatch("NO_APPROVED_SOP_MATCH"));
 
-        Map<String, Object> result = workflow(0.80, true).createPlan(incidentId);
+        Map<String, Object> result = workflow(true).createPlan(incidentId);
         RemediationPlan plan = (RemediationPlan) result.get("plan");
 
         assertEquals("ESCALATE", result.get("route"));
@@ -182,11 +181,11 @@ class HitlWorkflowServiceTest {
     @Test
     void aTicketWithNoNamedServerIsAskedForOneInsteadOfReachingAnApprover() {
         UUID incidentId = stubIncident("Service unavailable", "The tomcat service is not responding", null);
-        when(rag.findApprovedSopEvidence(eq("tenant-a"), any())).thenReturn(new SopEvidence(
-                true, true, List.of(UUID.randomUUID()), "SOP: restart the tomcat service", 0.95,
-                "APPROVED_TENANT_SOP_MATCH", "RESTART_SERVICE:tomcat:linux"));
+        when(rag.findApprovedSopEvidence(any())).thenReturn(new SopEvidence(
+                true, List.of(UUID.randomUUID()), "SOP: restart the tomcat service", 0.95,
+                "APPROVED_SOP_MATCH", "RESTART_SERVICE:tomcat:linux"));
 
-        Map<String, Object> result = workflow(0.70, false).createPlan(incidentId);
+        Map<String, Object> result = workflow(false).createPlan(incidentId);
         RemediationPlan plan = (RemediationPlan) result.get("plan");
 
         assertEquals("ESCALATE", result.get("route"));
@@ -198,27 +197,30 @@ class HitlWorkflowServiceTest {
     }
 
     /**
-     * The guardrails passed and the score did not. That must not be reported as
-     * GUARDRAIL_BLOCKED: an operator sent looking for a dangerous script finds two advisory
-     * findings and no explanation. The reason names the band, and the advice names the number.
+     * The last rung of the refusal ladder, and the only one the route can still close. It
+     * replaces the old confidence band: nothing is below a number any more, so the one way
+     * past the guardrails and into an escalation is an approved procedure the classifier
+     * could not turn into a tool. That must not be reported as GUARDRAIL_BLOCKED — an
+     * operator sent looking for a dangerous script finds advisory findings and no
+     * explanation — and the advice has to say to work the procedure by hand.
      */
     @Test
-    void aScoreBelowTheBandSaysSoInsteadOfBlamingTheGuardrails() {
-        // Same grounded, runnable, reachable plan as the happy path — only the required band
-        // is raised out of reach, which is what a P1/P2 risk penalty does in production.
-        UUID incidentId = stubIncident("Service unavailable", "The tomcat service is not responding");
-        when(rag.findApprovedSopEvidence(eq("tenant-a"), any())).thenReturn(new SopEvidence(
-                true, true, List.of(UUID.randomUUID()), "SOP: restart the tomcat service", 0.95,
-                "APPROVED_TENANT_SOP_MATCH", "RESTART_SERVICE:tomcat:linux"));
+    void anSopWithNoMatchingToolSaysSoInsteadOfBlamingTheGuardrails() {
+        // Semantic RAG matched the restart procedure; the keyword classifier sees no "service",
+        // no "printer", no "network" in this wording, so it names no action. Production shape.
+        UUID incidentId = stubIncident("Back-office till is frozen at store 0042",
+                "Staff cannot take payments on lane 3.");
+        when(rag.findApprovedSopEvidence(any())).thenReturn(new SopEvidence(
+                true, List.of(UUID.randomUUID()), "SOP: restart the tomcat service", 0.95,
+                "APPROVED_SOP_MATCH", "RESTART_SERVICE:tomcat:linux"));
 
-        Map<String, Object> result = workflow(0.99, false).createPlan(incidentId);
+        Map<String, Object> result = workflow(false).createPlan(incidentId);
         RemediationPlan plan = (RemediationPlan) result.get("plan");
 
         assertEquals("ESCALATE", result.get("route"));
         assertEquals("BLOCKED", plan.getStatus());
-        assertTrue(String.valueOf(result.get("reason")).startsWith("CONFIDENCE_BELOW_HITL_BAND:"),
-                "reason was " + result.get("reason"));
-        assertTrue(String.valueOf(result.get("action")).contains("99%"),
+        assertEquals("NO_TOOL_FOR_THIS_INCIDENT", result.get("reason"));
+        assertTrue(String.valueOf(result.get("action")).contains("by hand"),
                 "action was " + result.get("action"));
         verify(requests, never()).save(any());
     }
@@ -236,11 +238,11 @@ class HitlWorkflowServiceTest {
         RemediationPlan open = new RemediationPlan();
         open.setStatus("PENDING_APPROVAL");
         when(plans.findByIncidentIdOrderByCreatedAtDesc(incidentId)).thenReturn(List.of(open));
-        when(rag.findApprovedSopEvidence(eq("tenant-a"), any())).thenReturn(new SopEvidence(
-                true, true, List.of(UUID.randomUUID()), "SOP: restart the tomcat service", 0.95,
-                "APPROVED_TENANT_SOP_MATCH", "RESTART_SERVICE:tomcat:linux"));
+        when(rag.findApprovedSopEvidence(any())).thenReturn(new SopEvidence(
+                true, List.of(UUID.randomUUID()), "SOP: restart the tomcat service", 0.95,
+                "APPROVED_SOP_MATCH", "RESTART_SERVICE:tomcat:linux"));
 
-        Map<String, Object> result = workflow(0.70, false).createPlan(incidentId);
+        Map<String, Object> result = workflow(false).createPlan(incidentId);
 
         assertEquals("ESCALATE", result.get("route"));
         assertEquals("PLAN_ALREADY_AWAITING_DECISION", result.get("reason"));

@@ -117,15 +117,14 @@ public class RemediationToolRegistry {
      * stop a plan that was approved while it was still enabled, and a cached table would let
      * that plan through.
      *
-     * ponytail: default tenant only. {@link #parse} is called from paths with no request
-     * context (external sync, intake), so there is no tenant to key on there without
-     * threading one through every caller. Same ceiling as the extraction patterns, and the
-     * same upgrade: pass a tenant in when a second workspace needs a different tool set.
+     * ponytail: one deployment-wide tool table. {@link #parse} is called from paths with no
+     * request context (external sync, intake), so there is nothing request-scoped to key on
+     * there. Same ceiling as the extraction patterns.
      */
     private Map<String, Tool> table() {
         if (skills == null) return BUILT_IN;
         try {
-            Map<String, SkillService.ToolRow> rows = skills.executionTools(null);
+            Map<String, SkillService.ToolRow> rows = skills.executionTools();
             if (rows.isEmpty()) return BUILT_IN;
             Map<String, Tool> effective = new java.util.LinkedHashMap<>();
             rows.forEach((key, row) ->
@@ -215,7 +214,7 @@ public class RemediationToolRegistry {
      */
     public Probe reachable(String host, String connection) {
         if (host == null || host.isBlank()) return new Probe("UNKNOWN", "TARGET_HOST_UNKNOWN", "No host to probe.", "");
-        if (!executionEnabled || executorUrl == null || executorUrl.isBlank()) {
+        if (!executionEnabled || executorUrl == null || executorUrl.isBlank() || executorAuthMissing()) {
             return new Probe("UNKNOWN", "EXECUTOR_NOT_CONFIGURED",
                     "No executor agent is configured, so '" + host + "' could not be checked.", "");
         }
@@ -328,7 +327,32 @@ public class RemediationToolRegistry {
                     "No executor agent is configured (mcp.executor.url). Nothing was changed.",
                     "EXECUTOR_NOT_CONFIGURED");
         }
+        if (executorAuthMissing()) {
+            return new Outcome("SIMULATED", "SIMULATED",
+                    "The executor agent is remote and no mcp.executor.token is set, so nothing was "
+                            + "dispatched. Set the token or point the executor at this machine.",
+                    "EXECUTOR_TOKEN_MISSING");
+        }
         return dispatchToExecutor(script, language, target, connection);
+    }
+
+    /**
+     * True when a script would be dispatched to a remote executor with no bearer token.
+     *
+     * <p>The executor endpoint runs shell commands on request. Reaching it over a network without
+     * a credential makes it a remote code execution service for anyone who can route to it, and it
+     * also means this application cannot prove the thing it dispatched to was the executor. A
+     * loopback address crosses no trust boundary, so the local demo keeps working untouched.
+     */
+    private boolean executorAuthMissing() {
+        if (executorToken != null && !executorToken.isBlank()) return false;
+        try {
+            String host = URI.create(trimTrailingSlash(executorUrl)).getHost();
+            return !("localhost".equalsIgnoreCase(host) || "127.0.0.1".equals(host) || "[::1]".equals(host)
+                    || "::1".equals(host) || "host.docker.internal".equalsIgnoreCase(host));
+        } catch (Exception e) {
+            return true;
+        }
     }
 
     private String render(GuardrailService.ScriptScan scan) {

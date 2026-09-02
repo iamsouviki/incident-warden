@@ -7,7 +7,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface RemediationPlanRepository extends JpaRepository<RemediationPlan, UUID> {
-    List<RemediationPlan> findByTenantIdAndStatus(String tenantId, String status);
+    List<RemediationPlan> findByStatus(String status);
     List<RemediationPlan> findByIncidentIdOrderByCreatedAtDesc(UUID incidentId);
     Optional<RemediationPlan> findFirstByIncidentIdAndStatusOrderByCreatedAtDesc(UUID incidentId, String status);
 }

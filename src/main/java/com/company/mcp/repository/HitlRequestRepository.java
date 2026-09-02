@@ -7,7 +7,6 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface HitlRequestRepository extends JpaRepository<HitlRequest, UUID> {
-    List<HitlRequest> findByTenantIdAndStatusOrderByCreatedAtAsc(String tenantId, String status);
-    Optional<HitlRequest> findByIdAndTenantId(UUID id, String tenantId);
+    List<HitlRequest> findByStatusOrderByCreatedAtAsc(String status);
     Optional<HitlRequest> findFirstByPlanIdAndStatus(UUID planId, String status);
 }

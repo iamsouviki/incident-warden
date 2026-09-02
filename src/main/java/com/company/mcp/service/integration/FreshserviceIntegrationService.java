@@ -18,15 +18,11 @@ public class FreshserviceIntegrationService {
     private final IncidentRepository incidentRepository;
     private final RestTemplate restTemplate;
 
-    public FreshserviceIntegrationService(IncidentRepository incidentRepository) {
-        this(incidentRepository, new RestTemplate());
-    }
 
-    @org.springframework.beans.factory.annotation.Autowired
     public FreshserviceIntegrationService(IncidentRepository incidentRepository,
                                           @org.springframework.beans.factory.annotation.Qualifier("integrationRestTemplate") RestTemplate restTemplate) {
         this.incidentRepository = incidentRepository;
-        this.restTemplate = restTemplate != null ? restTemplate : new RestTemplate();
+        this.restTemplate = java.util.Objects.requireNonNull(restTemplate, "integrationRestTemplate");
     }
 
     public boolean testConnection(String domainUrl, String apiKey) {
@@ -43,7 +39,7 @@ public class FreshserviceIntegrationService {
         }
     }
 
-    public List<Incident> fetchOpenIncidents(String domainUrl, String apiKey, String tenantId) {
+    public List<Incident> fetchOpenIncidents(String domainUrl, String apiKey) {
         List<Incident> synced = new ArrayList<>();
         if (domainUrl == null || domainUrl.isBlank() || apiKey == null || apiKey.isBlank()) {
             log.info("[FRESHSERVICE] No Freshservice API credentials configured.");
@@ -72,7 +68,6 @@ public class FreshserviceIntegrationService {
                             created.setExternalId(externalId);
                             created.setExternalSource("Freshservice");
                             created.setExternalServiceName("Freshservice");
-                            created.setTenantId(tenantId != null ? tenantId : "tenant-1");
                             created.setCreatedAt(OffsetDateTime.now());
                             return created;
                         });
@@ -91,13 +86,14 @@ public class FreshserviceIntegrationService {
                 }
             }
         } catch (Exception e) {
-            log.error("[FRESHSERVICE] Failed to fetch tickets: {}", e.getMessage());
+            log.error("[FRESHSERVICE] Fetch failed", e);
+            throw new IntegrationUnavailableException("Freshservice", e);
         }
         return synced;
     }
 
-    public boolean updateStatus(String domainUrl, String apiKey, String ticketId, String status) {
-        if (domainUrl == null || domainUrl.isBlank()) return true;
+    public SourceUpdate updateStatus(String domainUrl, String apiKey, String ticketId, String status) {
+        if (domainUrl == null || domainUrl.isBlank()) return SourceUpdate.NOT_CONFIGURED;
         try {
             String cleanId = ticketId.replace("FS-", "").trim();
             String url = domainUrl.replaceAll("/+$", "") + "/api/v2/tickets/" + cleanId;
@@ -107,15 +103,15 @@ public class FreshserviceIntegrationService {
             Map<String, Object> body = Map.of("status", mapToFreshserviceStatus(status));
             HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
             ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.PUT, entity, Map.class);
-            return response.getStatusCode().is2xxSuccessful();
+            return response.getStatusCode().is2xxSuccessful() ? SourceUpdate.UPDATED : SourceUpdate.FAILED;
         } catch (Exception e) {
             log.error("[FRESHSERVICE] Failed to update ticket status for {}: {}", ticketId, e.getMessage());
-            return false;
+            return SourceUpdate.FAILED;
         }
     }
 
-    public boolean addNote(String domainUrl, String apiKey, String ticketId, String noteContent) {
-        if (domainUrl == null || domainUrl.isBlank()) return true;
+    public SourceUpdate addNote(String domainUrl, String apiKey, String ticketId, String noteContent) {
+        if (domainUrl == null || domainUrl.isBlank()) return SourceUpdate.NOT_CONFIGURED;
         try {
             String cleanId = ticketId.replace("FS-", "").trim();
             String url = domainUrl.replaceAll("/+$", "") + "/api/v2/tickets/" + cleanId + "/notes";
@@ -125,16 +121,16 @@ public class FreshserviceIntegrationService {
             Map<String, Object> body = Map.of("body", noteContent, "private", true);
             HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
             ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.POST, entity, Map.class);
-            return response.getStatusCode().is2xxSuccessful();
+            return response.getStatusCode().is2xxSuccessful() ? SourceUpdate.UPDATED : SourceUpdate.FAILED;
         } catch (Exception e) {
             log.error("[FRESHSERVICE] Failed to add note for {}: {}", ticketId, e.getMessage());
-            return false;
+            return SourceUpdate.FAILED;
         }
     }
 
     public byte[] downloadAttachment(String domainUrl, String apiKey, String attachmentId) {
         if (domainUrl == null || domainUrl.isBlank() || attachmentId == null) {
-            return "Freshservice incident attachment content".getBytes();
+            return null;
         }
         try {
             String url = domainUrl.replaceAll("/+$", "") + "/api/v2/attachments/" + attachmentId;
@@ -144,7 +140,7 @@ public class FreshserviceIntegrationService {
             return response.getBody();
         } catch (Exception e) {
             log.error("[FRESHSERVICE] Failed to download attachment {}: {}", attachmentId, e.getMessage());
-            return "Attachment content could not be retrieved from Freshservice.".getBytes();
+            return null;
         }
     }
 

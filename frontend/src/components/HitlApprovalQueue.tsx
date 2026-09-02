@@ -15,7 +15,7 @@ interface ReviewItem {
   request: { id: string; status: 'PENDING' | 'APPROVED' | 'REJECTED'; requestedBy?: string; createdAt?: string };
   plan: {
     id: string; status: string; actionName: string; target: string;
-    confidenceScore: number; riskScore: number; guardrailStatus: string;
+    riskScore: number; guardrailStatus: string;
     scriptSource?: string; scriptScanLevel?: string; scriptLanguage?: string;
   };
   incident: { id: string; subject?: string; description?: string; priority?: string; externalId?: string; externalSource?: string };
@@ -133,7 +133,7 @@ const HitlApprovalQueue: React.FC<{ onSelect: (requestId: string) => void; reloa
         <div className="hitl-panel"><div className="hitl-table-wrap">
           <table className="hitl-table">
             <thead><tr>
-              <th>Incident / proposal</th><th>Assignee & Department</th><th>Script</th><th>Risk</th><th>Confidence</th><th>State</th><th />
+              <th>Incident / proposal</th><th>Assignee & Department</th><th>Script</th><th>Risk</th><th>State</th><th />
             </tr></thead>
             <tbody>{filteredItems.map(({ incident, plan, request, assigneeInfo }) => (
               <tr key={request.id} onClick={() => onSelect(request.id)} className="hitl-row-clickable">
@@ -167,12 +167,6 @@ const HitlApprovalQueue: React.FC<{ onSelect: (requestId: string) => void; reloa
                   </div>
                 </td>
                 <td><Badge tone={plan.riskScore >= 50 ? 'danger' : plan.riskScore >= 25 ? 'warning' : 'neutral'}>{Math.round(plan.riskScore || 0)}%</Badge></td>
-                <td>
-                  <div className="hitl-confidence">
-                    <div className="hitl-confidence-bar"><span style={{ width: `${Math.min(100, Math.max(0, plan.confidenceScore || 0))}%` }} /></div>
-                    <span className="hitl-script-meta">{Math.round(plan.confidenceScore || 0)}%</span>
-                  </div>
-                </td>
                 <td>
                   <Badge tone={request.status === 'REJECTED' || plan.status === 'FAILED' ? 'danger'
                              : request.status === 'PENDING' ? 'warning' : 'success'}>

@@ -10,11 +10,10 @@ public interface ActionExecutionRepository extends JpaRepository<ActionExecution
 
     List<ActionExecution> findByPlanIdOrderByStartedAtAsc(UUID planId);
 
-    List<ActionExecution> findByTenantIdOrderByStartedAtDesc(String tenantId);
+    List<ActionExecution> findAllByOrderByStartedAtDesc();
 
     /**
      * Remediations that actually succeeded under a human approval, newest first.
      */
-    List<ActionExecution> findTop100ByTenantIdAndStatusAndHitlRequestIdIsNotNullOrderByCompletedAtDesc(
-            String tenantId, String status);
+    List<ActionExecution> findTop100ByStatusAndHitlRequestIdIsNotNullOrderByCompletedAtDesc(String status);
 }

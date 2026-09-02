@@ -28,7 +28,7 @@ import java.util.UUID;
  *
  * The SOP matcher asks whether a written procedure covers an incident. This asks the
  * other question the platform has always claimed to ask and never did: whether a past
- * ticket in this tenant said the same thing, and was actually resolved by a specific
+ * ticket said the same thing, and was actually resolved by a specific
  * saved tool that a human approved and watched succeed.
  *
  * The bar for being a precedent is deliberately narrow, because the auto-run lane draws
@@ -77,18 +77,18 @@ public class IncidentPrecedentService {
     }
 
     /**
-     * The closest past incident this tenant proved it can fix, or empty.
+     * The closest past incident this deployment proved it can fix, or empty.
      *
      * Empty is the normal answer on a new deployment and must stay cheap and honest:
      * every caller treats "no precedent" as "no extra confidence and no autonomy".
      */
-    public Optional<Precedent> findPrecedent(String tenantId, Incident incident) {
-        if (tenantId == null || tenantId.isBlank() || incident == null) return Optional.empty();
+    public Optional<Precedent> findPrecedent(Incident incident) {
+        if (incident == null) return Optional.empty();
         Set<String> query = TextSimilarity.tokenize(safe(incident.getSubject()) + " " + safe(incident.getDescription()));
         if (query.isEmpty()) return Optional.empty();
 
         List<ActionExecution> successes = executions
-                .findTop100ByTenantIdAndStatusAndHitlRequestIdIsNotNullOrderByCompletedAtDesc(tenantId, "SUCCEEDED");
+                .findTop100ByStatusAndHitlRequestIdIsNotNullOrderByCompletedAtDesc("SUCCEEDED");
         if (successes.isEmpty()) return Optional.empty();
 
         // Newest success per past incident. An incident remediated three times is one
@@ -106,12 +106,12 @@ public class IncidentPrecedentService {
         // for their ticket to be saved.
         Map<UUID, Incident> pastIncidents = new HashMap<>();
         for (Incident past : incidents.findAllById(newestPerIncident.keySet())) {
-            if (tenantId.equals(past.getTenantId())) pastIncidents.put(past.getId(), past);
+            pastIncidents.put(past.getId(), past);
         }
         Map<UUID, RemediationPlan> pastPlans = new HashMap<>();
         for (RemediationPlan plan : plans.findAllById(
                 newestPerIncident.values().stream().map(ActionExecution::getPlanId).toList())) {
-            if (tenantId.equals(plan.getTenantId())) pastPlans.put(plan.getId(), plan);
+            pastPlans.put(plan.getId(), plan);
         }
         Map<UUID, List<String>> notes = notesByIncident(pastIncidents.keySet());
 
@@ -199,7 +199,7 @@ public class IncidentPrecedentService {
     private static String safe(String value) { return value == null ? "" : value; }
 
     /**
-     * One past incident this tenant fixed, and the tool that fixed it.
+     * One past incident this deployment fixed, and the tool that fixed it.
      *
      * @param actionKey    the tool invocation a human approved, e.g. {@code RESTART_SERVICE:spooler:windows}
      * @param scriptSource SOP_TEMPLATE | SOP_GROUNDED | LLM_KNOWLEDGE | NONE — how much
@@ -219,7 +219,7 @@ public class IncidentPrecedentService {
 
         /** The evidence record the past plan was built on, for re-running the guardrails. */
         public SopEvidence asEvidence() {
-            return new SopEvidence(true, true, procedureIds, sopEvidence, 1.0,
+            return new SopEvidence(true, procedureIds, sopEvidence, 1.0,
                     "PRECEDENT_APPROVED_EXECUTION:" + reference, actionKey);
         }
     }

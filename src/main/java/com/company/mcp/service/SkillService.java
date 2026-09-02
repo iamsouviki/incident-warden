@@ -67,18 +67,15 @@ public class SkillService {
     /**
      * Pushes the authored extraction patterns into {@link IncidentTarget} at boot.
      *
-     * ponytail: process-global, and only the default tenant's patterns. IncidentTarget is a
-     * static utility with ~15 call sites, several on paths that have no request context
-     * (intake, sync), so threading a tenant through all of them to support per-tenant host
-     * shapes is a much larger change than the feature is worth today. The built-in patterns
+     * ponytail: process-global. IncidentTarget is a static utility with ~15 call sites,
+     * several on paths that have no request context (intake, sync). The built-in patterns
      * still run first and the authored ones are additive, so the ceiling is "one estate's
-     * host conventions", not correctness. Make IncidentTarget an injected bean when a second
-     * estate with different hostnames actually exists.
+     * host conventions", not correctness.
      */
     @PostConstruct
     void publishExtractionPatterns() {
         try {
-            IncidentTarget.authoredHostPatterns(compiledHostPatterns("tenant-1"));
+            IncidentTarget.authoredHostPatterns(compiledHostPatterns());
         } catch (Exception e) {
             // A missing table at boot (fresh DB, migration mid-flight) must not stop startup:
             // the built-in patterns are unaffected, so the platform degrades to what it was
@@ -90,16 +87,15 @@ public class SkillService {
     // ---------------------------------------------------------------- reads
 
     /** Enabled skills of one kind, in key order. */
-    public List<Skill> enabled(String tenantId, String kind) {
+    public List<Skill> enabled(String kind) {
         String normalizedKind = upper(kind);
         if ("CATEGORISATION".equals(normalizedKind)) normalizedKind = CATEGORIZATION;
-        return skills.findByTenantIdAndKindAndEnabledTrueOrderBySkillKeyAsc(
-                tenantId == null || tenantId.isBlank() ? "tenant-1" : tenantId, normalizedKind);
+        return skills.findByKindAndEnabledTrueOrderBySkillKeyAsc(normalizedKind);
     }
 
     /** Everything for the admin page, all kinds together. */
     public List<Skill> all() {
-        return skills.findByTenantIdOrderByKindAscSkillKeyAsc(currentUser.tenantId());
+        return skills.findAllByOrderByKindAscSkillKeyAsc();
     }
 
     /**
@@ -108,9 +104,9 @@ public class SkillService {
      * Empty when the table is empty, so the caller can fall back to its built-in four and a
      * database that has not been migrated yet keeps remediating exactly as it did before.
      */
-    public Map<String, ToolRow> executionTools(String tenantId) {
+    public Map<String, ToolRow> executionTools() {
         Map<String, ToolRow> rows = new LinkedHashMap<>();
-        for (Skill skill : enabled(tenantId, EXECUTION)) {
+        for (Skill skill : enabled(EXECUTION)) {
             String key = skill.getSkillKey().toUpperCase(Locale.ROOT);
             if (!TOOL_NAME.matcher(key).matches()) continue;   // a row written before this guard existed
             rows.put(key, new ToolRow(key, skill.getArgCount(), skill.isMutating(), text(skill)));
@@ -126,9 +122,9 @@ public class SkillService {
      * to stop the extractor finding hosts it used to find. The row is logged so the admin can
      * see why their pattern is not firing.
      */
-    public List<Pattern> compiledHostPatterns(String tenantId) {
+    public List<Pattern> compiledHostPatterns() {
         List<Pattern> compiled = new ArrayList<>();
-        for (Skill skill : enabled(tenantId, EXTRACTION)) {
+        for (Skill skill : enabled(EXTRACTION)) {
             String raw = skill.getPattern();
             if (raw == null || raw.isBlank()) continue;
             try {
@@ -145,11 +141,10 @@ public class SkillService {
     // ---------------------------------------------------------------- writes
 
     /**
-     * Creates or replaces one skill, keyed on (tenant, kind, key) so re-posting the same key
-     * edits it instead of producing a second row that silently shadows the first.
+     * Creates or replaces one skill, keyed on (kind, key) so re-posting the same key edits it
+     * instead of producing a second row that silently shadows the first.
      */
     public Skill save(Skill submitted) {
-        String tenant = currentUser.tenantId();
         String kind = upper(submitted.getKind());
         if ("CATEGORISATION".equals(kind)) kind = CATEGORIZATION;
         if (!KINDS.contains(kind)) throw new IllegalArgumentException("kind must be one of " + KINDS);
@@ -157,11 +152,11 @@ public class SkillService {
         if (key.isBlank()) throw new IllegalArgumentException("skillKey is required");
 
         Skill existing = submitted.getId() == null
-                ? skills.findByTenantIdAndKindAndSkillKey(tenant, kind, key).orElse(null)
-                : skills.findByIdAndTenantId(submitted.getId(), tenant)
+                ? skills.findByKindAndSkillKey(kind, key).orElse(null)
+                : skills.findById(submitted.getId())
                         .orElseThrow(() -> new IllegalArgumentException("Skill not found"));
 
-        Skill skill = existing == null ? fresh(tenant, kind) : existing;
+        Skill skill = existing == null ? fresh(kind) : existing;
         skill.setKind(kind);
         skill.setSkillKey(EXECUTION.equals(kind) ? key.toUpperCase(Locale.ROOT) : key);
         skill.setPattern(trim(submitted.getPattern()));
@@ -183,7 +178,7 @@ public class SkillService {
         skill.setUpdatedBy(currentUser.username());
 
         Skill saved = skills.save(skill);
-        audit.record(tenant, "SKILL", saved.getId(), existing == null ? "SKILL_CREATED" : "SKILL_UPDATED",
+        audit.record("SKILL", saved.getId(), existing == null ? "SKILL_CREATED" : "SKILL_UPDATED",
                 currentUser.username(), Map.of("kind", kind, "key", saved.getSkillKey(),
                         "mutating", String.valueOf(saved.isMutating()), "enabled", String.valueOf(saved.isEnabled())));
         if (EXTRACTION.equals(kind)) publishExtractionPatterns();
@@ -191,11 +186,10 @@ public class SkillService {
     }
 
     public void delete(UUID id) {
-        String tenant = currentUser.tenantId();
-        Skill skill = skills.findByIdAndTenantId(id, tenant)
+        Skill skill = skills.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Skill not found"));
         skills.delete(skill);
-        audit.record(tenant, "SKILL", id, "SKILL_DELETED", currentUser.username(),
+        audit.record("SKILL", id, "SKILL_DELETED", currentUser.username(),
                 Map.of("kind", skill.getKind(), "key", skill.getSkillKey()));
         if (EXTRACTION.equals(skill.getKind())) publishExtractionPatterns();
     }
@@ -236,10 +230,9 @@ public class SkillService {
         }
     }
 
-    private Skill fresh(String tenant, String kind) {
+    private Skill fresh(String kind) {
         Skill skill = new Skill();
         skill.setId(UUID.randomUUID());
-        skill.setTenantId(tenant);
         skill.setKind(kind);
         skill.setCreatedAt(OffsetDateTime.now());
         return skill;

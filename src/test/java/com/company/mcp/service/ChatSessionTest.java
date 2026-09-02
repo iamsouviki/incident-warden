@@ -36,7 +36,6 @@ class ChatSessionTest {
         sessionTable.clear();
         messageList.clear();
 
-        when(currentUser.tenantId()).thenReturn("tenant-1");
         when(currentUser.username()).thenReturn("analyst.user");
         when(currentUser.role()).thenReturn("ANALYST");
 
@@ -53,21 +52,18 @@ class ChatSessionTest {
             return s;
         });
 
-        when(sessionRepo.findByTenantIdAndUsernameAndIsArchivedFalseOrderByUpdatedAtDesc(anyString(), anyString()))
+        when(sessionRepo.findByUsernameAndIsArchivedFalseOrderByUpdatedAtDesc(anyString()))
                 .thenAnswer(inv -> new ArrayList<>(sessionTable.values()));
 
-        when(sessionRepo.findByTenantIdAndUsernameAndIsArchivedFalseAndUpdatedAtAfterOrderByUpdatedAtDesc(anyString(), anyString(), any(OffsetDateTime.class)))
+        when(sessionRepo.findByUsernameAndIsArchivedFalseAndUpdatedAtAfterOrderByUpdatedAtDesc(anyString(), any(OffsetDateTime.class)))
                 .thenAnswer(inv -> {
-                    OffsetDateTime cutoff = inv.getArgument(2);
+                    OffsetDateTime cutoff = inv.getArgument(1);
                     return sessionTable.values().stream()
                             .filter(s -> s.getUpdatedAt() != null && s.getUpdatedAt().isAfter(cutoff))
                             .toList();
                 });
 
-        when(sessionRepo.findByIdAndTenantIdAndUsername(any(UUID.class), anyString(), anyString()))
-                .thenAnswer(inv -> Optional.ofNullable(sessionTable.get(inv.getArgument(0))));
-
-        when(sessionRepo.findByIdAndTenantId(any(UUID.class), anyString()))
+        when(sessionRepo.findByIdAndUsername(any(UUID.class), anyString()))
                 .thenAnswer(inv -> Optional.ofNullable(sessionTable.get(inv.getArgument(0))));
 
         doAnswer(inv -> {
@@ -100,19 +96,50 @@ class ChatSessionTest {
 
     @Test
     void createSessionAndAddMessages() {
-        ChatSession session = sessionService.createSession("tenant-1", "analyst.user", "POS Troubleshooting");
+        ChatSession session = sessionService.createSession("analyst.user", "POS Troubleshooting");
         assertThat(session.getId()).isNotNull();
         assertThat(session.getTitle()).isEqualTo("POS Troubleshooting");
 
-        ChatMessage userMsg = sessionService.appendMessage(session.getId(), "user", "How do I fix printer offline?", null);
+        ChatMessage userMsg = sessionService.appendMessage(session.getId(), "analyst.user",
+                "user", "How do I fix printer offline?", null).orElseThrow();
         assertThat(userMsg.getId()).isNotNull();
         assertThat(userMsg.getContent()).contains("printer offline");
 
-        ChatMessage botMsg = sessionService.appendMessage(session.getId(), "assistant", "Restart the spooler service.", Map.of("confidence", 0.95));
+        ChatMessage botMsg = sessionService.appendMessage(session.getId(), "analyst.user",
+                "assistant", "Restart the spooler service.", Map.of("source", "SOP-POS-04")).orElseThrow();
         assertThat(botMsg.getId()).isNotNull();
 
         List<ChatMessage> messages = sessionService.getSessionMessages(session.getId());
         assertThat(messages).hasSize(2);
+    }
+
+    /**
+     * The session id comes out of a request body, and this is its only sink. Unchecked it did two
+     * wrong things at once: an id for no session reached the insert and tripped the foreign key,
+     * which surfaced to the user as a 500 on a chat that had otherwise worked; and an id belonging
+     * to another user was appended to silently, so anyone signed in could write into someone
+     * else's history. Both are the same missing lookup.
+     */
+    @Test
+    void aMessageIsOnlyWrittenToASessionTheCallerOwns() {
+        ChatSession mine = sessionService.createSession("analyst.user", "Mine");
+
+        // No such session: rejected before the insert, so the foreign key is never reached.
+        assertThat(sessionService.appendMessage(UUID.randomUUID(), "analyst.user",
+                "user", "hi", null)).isEmpty();
+
+        // A real session, wrong owner. findByIdAndUsername is what enforces this, so the fake
+        // repository is scoped for this case only — elsewhere it ignores the username.
+        when(sessionRepo.findByIdAndUsername(any(UUID.class), anyString()))
+                .thenAnswer(inv -> Optional.ofNullable(sessionTable.get(inv.getArgument(0)))
+                        .filter(s -> s.getUsername().equals(inv.getArgument(1))));
+        assertThat(sessionService.appendMessage(mine.getId(), "someone.else",
+                "user", "reading your history", null)).isEmpty();
+
+        // The owner still gets through.
+        assertThat(sessionService.appendMessage(mine.getId(), "analyst.user",
+                "user", "printer offline in lane 3", null)).isPresent();
+        assertThat(messageList).hasSize(1);
     }
 
     @Test

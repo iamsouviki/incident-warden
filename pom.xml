@@ -203,6 +203,24 @@
             <artifactId>micrometer-registry-prometheus</artifactId>
         </dependency>
 
+        <!--
+          Distributed tracing. management.tracing.sampling.probability was already 1.0 with no
+          tracer on the classpath, which samples nothing — this is the missing half.
+
+          Brave rather than the OTel bridge, and no exporter: spans propagate W3C traceparent
+          across services and land in the MDC, so logback-spring.xml can stamp [traceId/spanId]
+          on every line and one grep reconstructs a request across the whole system. That is
+          free, needs no collector container and no hosted backend.
+
+          ponytail: no span storage, so there is no waterfall UI. Add
+          opentelemetry-exporter-otlp plus a local Jaeger or Zipkin container (both free) when
+          someone actually needs to see span durations rather than correlate log lines.
+        -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-tracing-bridge-brave</artifactId>
+        </dependency>
+
     </dependencies>
 
     <build>

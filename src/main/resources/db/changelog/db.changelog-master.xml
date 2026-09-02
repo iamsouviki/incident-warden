@@ -15,4 +15,31 @@
         <sqlFile path="versions/1.0/chat_sessions.sql" relativeToChangelogFile="true" splitStatements="false" />
     </changeSet>
 
+    <changeSet id="1.2-purge-plaintext-secrets" author="mcp-incident-automation">
+        <validCheckSum>ANY</validCheckSum>
+        <sqlFile path="versions/1.2/purge_plaintext_secrets.sql" relativeToChangelogFile="true" splitStatements="false" />
+    </changeSet>
+
+    <changeSet id="1.2-drop-confidence" author="mcp-incident-automation">
+        <validCheckSum>ANY</validCheckSum>
+        <sqlFile path="versions/1.2/drop_confidence.sql" relativeToChangelogFile="true" splitStatements="false" />
+    </changeSet>
+
+    <changeSet id="1.2-incident-graph" author="mcp-incident-automation">
+        <validCheckSum>ANY</validCheckSum>
+        <sqlFile path="versions/1.2/incident_graph.sql" relativeToChangelogFile="true" splitStatements="false" />
+    </changeSet>
+
+    <changeSet id="1.3-drop-tenant" author="mcp-incident-automation">
+        <validCheckSum>ANY</validCheckSum>
+        <sqlFile path="versions/1.3/drop_tenant.sql" relativeToChangelogFile="true" splitStatements="false" />
+    </changeSet>
+
+    <!-- Rebuilds the view 1.3-drop-tenant had to drop to get at the columns underneath.
+         Same file as 1.2-incident-graph: one definition, run twice, nothing duplicated. -->
+    <changeSet id="1.3-incident-graph-rebuild" author="mcp-incident-automation">
+        <validCheckSum>ANY</validCheckSum>
+        <sqlFile path="versions/1.2/incident_graph.sql" relativeToChangelogFile="true" splitStatements="false" />
+    </changeSet>
+
 </databaseChangeLog>

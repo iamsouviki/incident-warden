@@ -42,7 +42,7 @@
       "runtimeExecutable": "sh",
       "runtimeArgs": [
         "-c",
-        "set -a; [ -f .env.local ] && . ./.env.local; set +a; exec mvn -o spring-boot:run -Dspring-boot.run.profiles=local -Dmaven.test.skip=true \"-Dspring-boot.run.jvmArguments=-Dserver.port=8081 -Dmcp.executor.enabled=true -Dmcp.executor.url=http://localhost:9099\""
+        "export JAVA_HOME=${JAVA_HOME:-/opt/homebrew/opt/openjdk@21}; export MAVEN_OPTS=\"${MAVEN_OPTS:--Djava.io.tmpdir=${TMPDIR:-/tmp}}\"; set -a; [ -f .env.local ] && . ./.env.local; set +a; exec mvn -o spring-boot:run -Dspring-boot.run.profiles=local -Dmaven.test.skip=true \"-Dspring-boot.run.jvmArguments=-Dserver.port=8081 -Dmcp.executor.enabled=true -Dmcp.executor.url=http://localhost:9099\""
       ],
       "port": 8081
     }

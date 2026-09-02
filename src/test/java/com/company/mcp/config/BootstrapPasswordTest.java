@@ -14,51 +14,68 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+/**
+ * The contract this covers is a security one: a fresh install must not ship a credential anyone
+ * can read off the repository, and a restart must not undo the password an administrator chose.
+ */
 class BootstrapPasswordTest {
-
-    private static final String STORED_HASH = "$2a$10$dXJ3SW6G7P50lGmMkkmwe.20cQQubK3.HZWzG3YB1tlRy.fqvM/BG";
 
     private final UserRepository users = mock(UserRepository.class);
     private final PasswordEncoder encoder = mock(PasswordEncoder.class);
 
-    private BootstrapPassword bootstrap(String configured, String storedHash) {
+    private AppUser seeded(String storedHash) {
         AppUser admin = new AppUser();
         admin.setUsername("admin");
         admin.setPasswordHash(storedHash);
         when(users.findByUsername("admin")).thenReturn(Optional.of(admin));
         when(encoder.encode(any())).thenReturn("$2a$10$freshlyEncodedHash");
-        when(encoder.matches(any(), any())).thenReturn(false);
-        return new BootstrapPassword(configured, users, encoder);
+        return admin;
     }
 
+    /** The migration inserts a NULL hash; this is the boot that turns it into a usable account. */
     @Test
-    void aConfiguredPasswordIsUsedVerbatim() {
-        assertThat(bootstrap("chosen-by-the-operator", STORED_HASH).value()).isEqualTo("chosen-by-the-operator");
+    void anAdminWithNoHashIsEnrolledOnTheUsernameAndForcedToChangeIt() {
+        AppUser admin = seeded(null);
+
+        new BootstrapPassword(users, encoder).run(null);
+
+        verify(encoder).encode("admin");
+        assertThat(admin.getPasswordHash()).isEqualTo("$2a$10$freshlyEncodedHash");
+        assertThat(admin.isMustChangePassword()).isTrue();
+        verify(users).save(admin);
     }
 
+    /** Same, for a row whose hash was cleared by hand to recover a lost password. */
     @Test
-    void withNothingConfiguredThePasswordDefaultsToAdmin() {
-        String first = bootstrap("", STORED_HASH).value();
-        String second = bootstrap("   ", STORED_HASH).value();
-        assertThat(first).isEqualTo("admin");
-        assertThat(second).isEqualTo("admin");
-    }
+    void aBlankHashIsTreatedAsAbsent() {
+        seeded("   ");
 
-    @Test
-    void alignsAdminPasswordIfMismatch() {
-        bootstrap("admin", STORED_HASH).run(null);
+        new BootstrapPassword(users, encoder).run(null);
+
         verify(users).save(any(AppUser.class));
     }
 
+    /**
+     * The defect this pins: the previous version re-forced the admin hash to a configured value on
+     * every boot, so a restart silently reverted a chosen password back to a published default.
+     */
     @Test
-    void anAdminAlreadyOnTheConfiguredPasswordIsLeftAlone() {
-        AppUser admin = new AppUser();
-        admin.setUsername("admin");
-        admin.setPasswordHash(STORED_HASH);
-        when(users.findByUsername("admin")).thenReturn(Optional.of(admin));
-        when(encoder.matches("admin", STORED_HASH)).thenReturn(true);
+    void anAdminWhoHasChosenAPasswordKeepsItAcrossRestarts() {
+        AppUser admin = seeded("$2a$10$aHashTheOperatorChose");
 
-        new BootstrapPassword("admin", users, encoder).run(null);
+        new BootstrapPassword(users, encoder).run(null);
+
+        assertThat(admin.getPasswordHash()).isEqualTo("$2a$10$aHashTheOperatorChose");
+        assertThat(admin.isMustChangePassword()).isFalse();
+        verify(users, never()).save(any(AppUser.class));
+    }
+
+    @Test
+    void noAdminRowAtAllIsNotAnError() {
+        when(users.findByUsername("admin")).thenReturn(Optional.empty());
+
+        new BootstrapPassword(users, encoder).run(null);
+
         verify(users, never()).save(any(AppUser.class));
     }
 }

@@ -12,9 +12,6 @@ public class Incident {
     @Column(name = "id", nullable = false)
     private UUID id;
 
-    @Column(name = "tenant_id", nullable = false)
-    private String tenantId;
-
     @Column(name = "subject", nullable = false)
     private String subject;
 
@@ -54,9 +51,6 @@ public class Incident {
 
     @Column(name = "category")
     private String category = "General";
-
-    @Column(name = "confidence_score")
-    private Double confidenceScore = 0.0;
 
     /**
      * Who to tell when this incident is acted on automatically. Nullable: incidents
@@ -113,7 +107,7 @@ public class Incident {
 
     public Incident(UUID id, String subject, String description, String assignee, String assignedGteam, 
                     String priority, String status, OffsetDateTime createdAt, OffsetDateTime updatedAt, 
-                    OffsetDateTime dueDate, String externalSource, String externalId, String category, Double confidenceScore) {
+                    OffsetDateTime dueDate, String externalSource, String externalId, String category) {
         this.id = id;
         this.subject = subject;
         this.description = description;
@@ -127,7 +121,6 @@ public class Incident {
         this.externalSource = externalSource;
         this.externalId = externalId;
         this.category = category;
-        this.confidenceScore = confidenceScore;
     }
 
     @PrePersist
@@ -151,9 +144,6 @@ public class Incident {
     // Getters and Setters
     public UUID getId() { return id; }
     public void setId(UUID id) { this.id = id; }
-
-    public String getTenantId() { return tenantId; }
-    public void setTenantId(String tenantId) { this.tenantId = tenantId; }
 
     public String getSubject() { return subject; }
     public void setSubject(String subject) { this.subject = subject; }
@@ -190,9 +180,6 @@ public class Incident {
 
     public String getCategory() { return category; }
     public void setCategory(String category) { this.category = category; }
-
-    public Double getConfidenceScore() { return confidenceScore; }
-    public void setConfidenceScore(Double confidenceScore) { this.confidenceScore = confidenceScore; }
 
     public String getReporterEmail() { return reporterEmail; }
     public void setReporterEmail(String reporterEmail) { this.reporterEmail = reporterEmail; }
@@ -250,7 +237,6 @@ public class Incident {
 
     public static class Builder {
         private UUID id;
-        private String tenantId;
         private String subject;
         private String description;
         private String assignee;
@@ -263,13 +249,11 @@ public class Incident {
         private String externalSource = "None";
         private String externalId;
         private String category = "General";
-        private Double confidenceScore = 0.0;
         private String reporterEmail;
         private String storeNumber;
         private String targetHost;
 
         public Builder id(UUID id) { this.id = id; return this; }
-        public Builder tenantId(String tenantId) { this.tenantId = tenantId; return this; }
         public Builder subject(String subject) { this.subject = subject; return this; }
         public Builder description(String description) { this.description = description; return this; }
         public Builder assignee(String assignee) { this.assignee = assignee; return this; }
@@ -282,14 +266,12 @@ public class Incident {
         public Builder externalSource(String externalSource) { this.externalSource = externalSource; return this; }
         public Builder externalId(String externalId) { this.externalId = externalId; return this; }
         public Builder category(String category) { this.category = category; return this; }
-        public Builder confidenceScore(Double confidenceScore) { this.confidenceScore = confidenceScore; return this; }
         public Builder reporterEmail(String reporterEmail) { this.reporterEmail = reporterEmail; return this; }
         public Builder storeNumber(String storeNumber) { this.storeNumber = storeNumber; return this; }
         public Builder targetHost(String targetHost) { this.targetHost = targetHost; return this; }
 
         public Incident build() {
-            Incident incident = new Incident(id, subject, description, assignee, assignedGteam, priority, status, createdAt, updatedAt, dueDate, externalSource, externalId, category, confidenceScore);
-            incident.setTenantId(tenantId);
+            Incident incident = new Incident(id, subject, description, assignee, assignedGteam, priority, status, createdAt, updatedAt, dueDate, externalSource, externalId, category);
             incident.setReporterEmail(reporterEmail);
             incident.setStoreNumber(storeNumber);
             incident.setTargetHost(targetHost);

@@ -39,20 +39,6 @@ public class AiConfigService {
 
     private String activeChatModel = "qwen2.5-coder:3b";
     private String activeEmbeddingModel = "nomic-embed-text:latest";
-    @org.springframework.beans.factory.annotation.Value("${mcp.confidence.hitl-threshold:0.80}")
-    private String hitlThreshold = "0.80";
-
-    /**
-     * Whether ticket analysis may consult public web results when no approved SOP matches.
-     *
-     * On means the ticket's own subject and description are sent to a third-party search
-     * engine. Tickets routinely contain internal hostnames, addresses and customer names, and
-     * some contain a credential a user pasted in, so for a regulated workspace this is an
-     * egress decision the operator must make rather than a default. Off simply skips the
-     * search: the suggestion is then labelled AI rather than WEB, and an unmatched ticket
-     * still gets a starting point plus the standing advice to add an SOP.
-     */
-    private String webSearchEnabled = "true";
 
     @PostConstruct
     public void init() {
@@ -76,12 +62,6 @@ public class AiConfigService {
                         break;
                     case "active_embedding_model":
                         this.activeEmbeddingModel = val;
-                        break;
-                    case "hitl_threshold":
-                        this.hitlThreshold = val;
-                        break;
-                    case "web_search_enabled":
-                        this.webSearchEnabled = val;
                         break;
                 }
             }
@@ -141,41 +121,5 @@ public class AiConfigService {
         updateConfig("active_embedding_model", activeEmbeddingModel);
     }
 
-    public String getHitlThreshold() {
-        return hitlThreshold;
-    }
 
-    /**
-     * A stored threshold as a 0-100 percentage, or {@code fallback} when it is unset or junk.
-     *
-     * One parser, shared, because there were two: this page writes "0.80", scores are
-     * percentages, and every reader had to know that. The second copy lived in
-     * {@link AgentAssessmentService}, which did not read this row at all — so moving the band
-     * on the AI configuration page changed how an incident was routed but not whether a plan
-     * could be raised for it. A threshold with two homes is a setting that appears to work.
-     */
-    public static double asPercent(String value, double fallback) {
-        try {
-            double parsed = Double.parseDouble(value);
-            // The UI stores thresholds as 0.80 / 1.00 while scores are 0-100.
-            if (parsed > 0 && parsed <= 1.0) parsed *= 100.0;
-            return Math.min(100.0, Math.max(0.0, parsed));
-        } catch (Exception ignored) {
-            return fallback;
-        }
-    }
-
-    public void setHitlThreshold(String hitlThreshold) {
-        this.hitlThreshold = hitlThreshold;
-        updateConfig("hitl_threshold", hitlThreshold);
-    }
-
-    public String getWebSearchEnabled() {
-        return webSearchEnabled;
-    }
-
-    public void setWebSearchEnabled(String webSearchEnabled) {
-        this.webSearchEnabled = webSearchEnabled;
-        updateConfig("web_search_enabled", webSearchEnabled);
-    }
 }

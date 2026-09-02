@@ -41,7 +41,7 @@ public class RagController {
         if (title == null || description == null || title.isBlank() || description.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "title and description are required"));
         }
-        boolean success = ragService.ingestSop(currentUser.tenantId(), title.trim(), description.trim());
+        boolean success = ragService.ingestSop(title.trim(), description.trim());
         return success
                 ? ResponseEntity.ok(Map.of("message", "SOP successfully ingested and approved for this workspace."))
                 : ResponseEntity.status(503)
@@ -53,7 +53,7 @@ public class RagController {
             @RequestParam(value = "title", required = false) String title) {
         if (file.isEmpty())
             return ResponseEntity.badRequest().body(Map.of("error", "file is empty"));
-        boolean success = ragService.ingestFile(file.getResource(), title, currentUser.tenantId());
+        boolean success = ragService.ingestFile(file.getResource(), title);
         return success
                 ? ResponseEntity.ok(Map.of("message", "File successfully ingested and approved for this workspace."))
                 : ResponseEntity.status(503)
@@ -83,12 +83,14 @@ public class RagController {
         String effSessionId = (sessionIdParam != null && !sessionIdParam.isBlank()) ? sessionIdParam : session.getId();
         String answer = ragService.askStrictSopRag(effSessionId, question);
 
-        // If user provided a valid database session ID, persist the turn
+        // If the client named a stored session, persist the turn into it. A session that is not
+        // this user's is skipped rather than refused: the answer above is already correct and
+        // paid for, so losing it to a 404 over a history write would be the worse outcome.
         if (sessionIdParam != null && !sessionIdParam.isBlank()) {
             try {
                 UUID sessionUuid = UUID.fromString(sessionIdParam);
-                chatSessionService.appendMessage(sessionUuid, "user", question, null);
-                chatSessionService.appendMessage(sessionUuid, "bot", answer, null);
+                chatSessionService.appendMessage(sessionUuid, currentUser.username(), "user", question, null);
+                chatSessionService.appendMessage(sessionUuid, currentUser.username(), "bot", answer, null);
             } catch (IllegalArgumentException ignored) {
                 // Not a UUID session ID (e.g. servlet session fallback), ignore DB persistence
             }
@@ -99,12 +101,12 @@ public class RagController {
 
     @GetMapping("/sops")
     public ResponseEntity<?> getAllSops() {
-        return ResponseEntity.ok(ragService.getAllSops(currentUser.tenantId()));
+        return ResponseEntity.ok(ragService.getAllSops());
     }
 
     @GetMapping("/procedures")
     public ResponseEntity<?> getApprovedProcedures() {
-        return ResponseEntity.ok(procedures.findByTenantIdOrderBySopIdAscStepNumberAsc(currentUser.tenantId()));
+        return ResponseEntity.ok(procedures.findAllByOrderBySopIdAscStepNumberAsc());
     }
 
     @PostMapping("/procedures")
@@ -121,7 +123,6 @@ public class RagController {
         if (procedure.getId() == null) {
             procedure.setId(UUID.randomUUID());
         }
-        procedure.setTenantId(currentUser.tenantId());
         procedure.setCreatedAt(OffsetDateTime.now());
         procedure.setUpdatedAt(OffsetDateTime.now());
         if (procedure.getApprovalStatus() == null || procedure.getApprovalStatus().isBlank()) {
@@ -136,7 +137,7 @@ public class RagController {
 
     @PutMapping("/procedures/{id}")
     public ResponseEntity<?> updateProcedure(@PathVariable UUID id, @RequestBody SopProcedure update) {
-        Optional<SopProcedure> opt = procedures.findByIdAndTenantId(id, currentUser.tenantId());
+        Optional<SopProcedure> opt = procedures.findById(id);
         if (opt.isEmpty())
             return ResponseEntity.notFound().build();
         SopProcedure existing = opt.get();
@@ -159,7 +160,7 @@ public class RagController {
 
     @DeleteMapping("/procedures/{id}")
     public ResponseEntity<?> deleteProcedure(@PathVariable UUID id) {
-        Optional<SopProcedure> opt = procedures.findByIdAndTenantId(id, currentUser.tenantId());
+        Optional<SopProcedure> opt = procedures.findById(id);
         if (opt.isEmpty())
             return ResponseEntity.notFound().build();
         procedures.delete(opt.get());

@@ -14,10 +14,9 @@ import org.springframework.data.repository.query.Param;
 
 @Repository
 public interface ChatSessionRepository extends JpaRepository<ChatSession, UUID> {
-    List<ChatSession> findByTenantIdAndUsernameAndIsArchivedFalseOrderByUpdatedAtDesc(String tenantId, String username);
-    List<ChatSession> findByTenantIdAndUsernameAndIsArchivedFalseAndUpdatedAtAfterOrderByUpdatedAtDesc(String tenantId, String username, OffsetDateTime cutoff);
-    Optional<ChatSession> findByIdAndTenantIdAndUsername(UUID id, String tenantId, String username);
-    Optional<ChatSession> findByIdAndTenantId(UUID id, String tenantId);
+    List<ChatSession> findByUsernameAndIsArchivedFalseOrderByUpdatedAtDesc(String username);
+    List<ChatSession> findByUsernameAndIsArchivedFalseAndUpdatedAtAfterOrderByUpdatedAtDesc(String username, OffsetDateTime cutoff);
+    Optional<ChatSession> findByIdAndUsername(UUID id, String username);
 
     @Modifying
     @Query("DELETE FROM ChatSession s WHERE s.updatedAt < :cutoff")

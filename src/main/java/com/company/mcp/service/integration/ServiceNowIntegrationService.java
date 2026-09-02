@@ -18,15 +18,11 @@ public class ServiceNowIntegrationService {
     private final IncidentRepository incidentRepository;
     private final RestTemplate restTemplate;
 
-    public ServiceNowIntegrationService(IncidentRepository incidentRepository) {
-        this(incidentRepository, new RestTemplate());
-    }
 
-    @org.springframework.beans.factory.annotation.Autowired
     public ServiceNowIntegrationService(IncidentRepository incidentRepository,
                                         @org.springframework.beans.factory.annotation.Qualifier("integrationRestTemplate") RestTemplate restTemplate) {
         this.incidentRepository = incidentRepository;
-        this.restTemplate = restTemplate != null ? restTemplate : new RestTemplate();
+        this.restTemplate = java.util.Objects.requireNonNull(restTemplate, "integrationRestTemplate");
     }
 
     public boolean testConnection(String instanceUrl, String username, String password) {
@@ -43,7 +39,7 @@ public class ServiceNowIntegrationService {
         }
     }
 
-    public List<Incident> fetchOpenIncidents(String instanceUrl, String username, String password, String tenantId) {
+    public List<Incident> fetchOpenIncidents(String instanceUrl, String username, String password) {
         List<Incident> synced = new ArrayList<>();
         if (instanceUrl == null || instanceUrl.isBlank()) {
             log.info("[SERVICENOW] No ServiceNow instance URL configured.");
@@ -70,7 +66,6 @@ public class ServiceNowIntegrationService {
                             created.setExternalId(number);
                             created.setExternalSource("ServiceNow");
                             created.setExternalServiceName("ServiceNow");
-                            created.setTenantId(tenantId != null ? tenantId : "tenant-1");
                             created.setCreatedAt(OffsetDateTime.now());
                             return created;
                         });
@@ -89,13 +84,14 @@ public class ServiceNowIntegrationService {
                 }
             }
         } catch (Exception e) {
-            log.error("[SERVICENOW] Failed to fetch incidents from instance: {}", e.getMessage());
+            log.error("[SERVICENOW] Fetch failed", e);
+            throw new IntegrationUnavailableException("ServiceNow", e);
         }
         return synced;
     }
 
-    public boolean updateStatus(String instanceUrl, String username, String password, String sysIdOrNumber, String status) {
-        if (instanceUrl == null || instanceUrl.isBlank()) return true;
+    public SourceUpdate updateStatus(String instanceUrl, String username, String password, String sysIdOrNumber, String status) {
+        if (instanceUrl == null || instanceUrl.isBlank()) return SourceUpdate.NOT_CONFIGURED;
         try {
             String url = instanceUrl.replaceAll("/+$", "") + "/api/now/table/incident/" + sysIdOrNumber;
             HttpHeaders headers = createAuthHeaders(username, password);
@@ -104,15 +100,15 @@ public class ServiceNowIntegrationService {
             Map<String, Object> body = Map.of("state", mapToServiceNowState(status));
             HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
             ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.PATCH, entity, Map.class);
-            return response.getStatusCode().is2xxSuccessful();
+            return response.getStatusCode().is2xxSuccessful() ? SourceUpdate.UPDATED : SourceUpdate.FAILED;
         } catch (Exception e) {
             log.error("[SERVICENOW] Failed to update status on ServiceNow for {}: {}", sysIdOrNumber, e.getMessage());
-            return false;
+            return SourceUpdate.FAILED;
         }
     }
 
-    public boolean addWorkNote(String instanceUrl, String username, String password, String sysIdOrNumber, String note) {
-        if (instanceUrl == null || instanceUrl.isBlank()) return true;
+    public SourceUpdate addWorkNote(String instanceUrl, String username, String password, String sysIdOrNumber, String note) {
+        if (instanceUrl == null || instanceUrl.isBlank()) return SourceUpdate.NOT_CONFIGURED;
         try {
             String url = instanceUrl.replaceAll("/+$", "") + "/api/now/table/incident/" + sysIdOrNumber;
             HttpHeaders headers = createAuthHeaders(username, password);
@@ -121,16 +117,16 @@ public class ServiceNowIntegrationService {
             Map<String, Object> body = Map.of("work_notes", note);
             HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
             ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.PATCH, entity, Map.class);
-            return response.getStatusCode().is2xxSuccessful();
+            return response.getStatusCode().is2xxSuccessful() ? SourceUpdate.UPDATED : SourceUpdate.FAILED;
         } catch (Exception e) {
             log.error("[SERVICENOW] Failed to add work note for {}: {}", sysIdOrNumber, e.getMessage());
-            return false;
+            return SourceUpdate.FAILED;
         }
     }
 
     public byte[] downloadAttachment(String instanceUrl, String username, String password, String attachmentId) {
         if (instanceUrl == null || instanceUrl.isBlank() || attachmentId == null) {
-            return "Sample incident diagnostic attachment report content".getBytes();
+            return null;
         }
         try {
             String url = instanceUrl.replaceAll("/+$", "") + "/api/now/attachment/" + attachmentId + "/file";
@@ -140,7 +136,7 @@ public class ServiceNowIntegrationService {
             return response.getBody();
         } catch (Exception e) {
             log.error("[SERVICENOW] Failed to download attachment {}: {}", attachmentId, e.getMessage());
-            return "Attachment content could not be retrieved from ServiceNow.".getBytes();
+            return null;
         }
     }
 

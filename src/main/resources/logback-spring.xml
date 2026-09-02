@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Log output for this service passes through masking on the way to every appender.
+
+  The requirement is that PII, tokens and passwords never reach a log file. Two things make that
+  true here rather than aspirational:
+
+    1. %mask and %maskEx replace %msg and %ex, so the masking regex sees every line and every
+       stack trace regardless of which of the ~200 call sites produced it. Asking developers to
+       remember to mask at the call site is a policy; doing it at the sink is a control.
+    2. There is one regex, in PublicReadService.maskSensitive, shared with the public API views.
+       A second copy would drift, and the copy nobody watches is the copy that stops matching.
+
+  traceId/spanId come from Micrometer Tracing's MDC bridge, which is what makes a masked line
+  still correlatable across services — the reason distributed tracing and log masking landed in
+  the same file.
+-->
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+    <conversionRule conversionWord="mask" converterClass="com.company.mcp.config.MaskingConverter"/>
+    <conversionRule conversionWord="maskEx" converterClass="com.company.mcp.config.MaskingThrowableConverter"/>
+
+    <property name="LOG_FILE" value="${LOG_FILE:-logs/incident-warden.log}"/>
+
+    <!-- [traceId] is blank until a tracer is on the classpath; the field is always present so
+         downstream log parsing does not need two formats. -->
+    <property name="PATTERN"
+              value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level [%X{traceId:-}/%X{spanId:-}] %logger{36} - %mask%n%maskEx"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>${PATTERN}</pattern>
+        </encoder>
+    </appender>
+
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_FILE}</file>
+        <encoder>
+            <pattern>${PATTERN}</pattern>
+        </encoder>
+        <!-- Bounded on purpose: an unbounded log file is its own outage, and 10x10MB is enough
+             history to debug an incident without a log-shipping bill. -->
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_FILE}.%d{yyyy-MM-dd}.%i.gz</fileNamePattern>
+            <maxFileSize>10MB</maxFileSize>
+            <maxHistory>10</maxHistory>
+            <totalSizeCap>100MB</totalSizeCap>
+        </rollingPolicy>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="FILE"/>
+    </root>
+</configuration>

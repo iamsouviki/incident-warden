@@ -14,7 +14,9 @@ spring:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:incident_warden_db}
     driver-class-name: org.postgresql.Driver
     username: ${DB_USER:warden_user}
-    password: ${DB_PASSWORD:changeme}
+    # No default. A deployment that forgets this must fail to start, not connect to
+    # somebody else's database with a guessable password. The local profile supplies its own.
+    password: ${DB_PASSWORD}
     hikari:
       maximum-pool-size: 20
       minimum-idle: 5
@@ -98,7 +100,7 @@ spring:
       chat:
         enabled: ${SPRING_AI_ANTHROPIC_ENABLED:false}      # ← set true + ANTHROPIC_API_KEY
         options:
-          model: ${ANTHROPIC_CHAT_MODEL:claude-3-5-sonnet-20241022}  # claude-3-5-sonnet | claude-3-opus | claude-3-haiku
+          model: ${ANTHROPIC_CHAT_MODEL:claude-haiku-4-5}  # claude-haiku-4-5 (cheapest) | claude-sonnet-5 | claude-opus-5
           temperature: 0.0
 
     # ── Google Gemini (Vertex AI) ────────────────────────────────────
@@ -152,11 +154,9 @@ mcp:
     # text. Set false to restore the strict posture: no approved SOP, no plan, escalate.
     allow-ungrounded-scripts: ${MCP_HITL_ALLOW_UNGROUNDED_SCRIPTS:true}
   
-  confidence:
-    # Default HITL approval threshold (60%). When an approved SOP + tool is present,
-    # it routes to HITL approval.
-    hitl-threshold: 0.60
-    # Assumed success rate for a remediation with no execution history yet.
+  sop:
+    # Assumed success rate for a remediation with no execution history yet. Recorded as
+    # evidence for the reviewer; it does not gate anything.
     default-prior-success-rate: 0.85
 
   # The remediation executor agent. Approved scripts are POSTed to <url>/execute as
@@ -206,7 +206,6 @@ mcp:
     issuer: ${MCP_SSO_ISSUER:}                      # must match the "iss" claim in provider tokens
     audience: ${MCP_SSO_AUDIENCE:}                  # must match the "aud" claim (your client_id)
     allowed-email-domains: ${MCP_SSO_ALLOWED_DOMAINS:}  # comma-separated, empty = all domains permitted
-    default-tenant-id: ${MCP_SSO_DEFAULT_TENANT:tenant-1}
 
   # ─── Rate limiting ───────────────────────────────────────────────────────────
   security:
@@ -219,14 +218,16 @@ mcp:
       llm-per-minute: ${MCP_RATE_LIMIT_LLM:20}       # per authenticated user
 
   # ─── ServiceNow Integration (ITSM alert source) ───────────────────────────
-  # Read by IncidentService for on-demand import. There is no background poller: nothing
-  # in this application is @Scheduled, so a ticket arrives by an explicit import call or
-  # by POST /api/v1/intake. Add a poller only when someone asks for unattended intake.
+  # Read by IncidentService for on-demand import, and by IntegrationManagerService.scheduledSync,
+  # which polls every enabled provider once per mcp.integrations.sync-interval-hours. The interval
+  # is checked inside a distributed lock, so N replicas still perform one sync per interval.
   servicenow:
     enabled: ${MCP_SERVICENOW_ENABLED:false}
     instance-url: ${SERVICENOW_INSTANCE_URL:https://your-instance.service-now.com}
     username: ${SERVICENOW_USERNAME:admin}
-    password: ${SERVICENOW_PASSWORD:changeme}
+    # Empty, not "changeme": a placeholder default authenticates against the real vendor with a
+    # guessable string and gets locked out or logged as a break-in. Empty fails closed instead.
+    password: ${SERVICENOW_PASSWORD:}
     table: incident
     query-filter: ""                        # extra sysparm_query (e.g. "assignment_group=IT Ops")
     limit: 50                               # max tickets per poll cycle
@@ -236,7 +237,7 @@ mcp:
   freshservice:
     enabled: ${MCP_FRESHSERVICE_ENABLED:false}
     domain: ${FRESHSERVICE_DOMAIN:your-company}          # → https://your-company.freshservice.com
-    api-key: ${FRESHSERVICE_API_KEY:changeme}
+    api-key: ${FRESHSERVICE_API_KEY:}
     ticket-type: Incident
     limit: 50                               # max tickets per poll cycle
 
@@ -288,7 +289,13 @@ management:
         include: health,info,prometheus,metrics,circuitbreakers
   endpoint:
     health:
-      show-details: always
+      # never, not always: /actuator/health is reachable unauthenticated (SecurityConfig), and
+      # component detail there names the database, the cache and the mail host to anyone who asks.
+      show-details: never
+      # Splits the single UP into /actuator/health/liveness and /readiness, so a rolling deploy can
+      # take a pod out of the load balancer while its database pool warms up instead of killing it.
+      probes:
+        enabled: true
   metrics:
     export:
       prometheus:
@@ -296,20 +303,27 @@ management:
     tags:
       application: ${spring.application.name}
   tracing:
+    # 1.0 is a load test, not a production setting: one stored span per span per request, of prose
+    # that includes incident text. Sampled down by default, and overridden to 1.0 in the local
+    # profile where there is no volume and no real data. Spans carry the same masking as logs
+    # (logback-spring.xml) because MaskingConverter runs at the sink; retention is whatever the
+    # collector is configured for, and this application ships no collector.
     sampling:
-      probability: 1.0
+      probability: ${MCP_TRACING_SAMPLE_RATE:0.05}
 
 # Logging
+# The pattern lives in logback-spring.xml, because %mask (which routes every message through
+# PublicReadService.maskSensitive) needs a conversionRule that application.yml cannot declare.
 logging:
   level:
     root: INFO
     com.company.mcp: INFO
     org.springframework: WARN
-    org.springframework.ai: DEBUG
-    org.springframework.boot.actuate: DEBUG
-  pattern:
-    console: "%d{yyyy-MM-dd HH:mm:ss} - %logger{36} - %msg%n"
-    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+    # Spring AI at DEBUG logs whole prompts and completions — incident text, hostnames, SOP
+    # excerpts — before %mask ever sees a formatted message. WARN is the fix; masking is the
+    # second line of defence, not the first.
+    org.springframework.ai: WARN
+    org.springframework.boot.actuate: INFO
   file:
     name: logs/incident-warden.log
 

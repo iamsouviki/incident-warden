@@ -30,7 +30,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * Why this exists: /api/auth/sso previously minted a first-party session from an
  * unauthenticated request body, so anyone who could reach the endpoint could name
- * any email and tenant and receive a valid token. Identity now comes only from a
+ * any email and receive a valid token. Identity now comes only from a
  * signature this service checked.
  *
  * Fail-closed: if SSO is not fully configured, {@link #enabled()} is false and the

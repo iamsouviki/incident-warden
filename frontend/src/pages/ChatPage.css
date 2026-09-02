@@ -165,6 +165,50 @@
   background: var(--crit-dim);
 }
 
+/* Assistant prose, rendered by components/Markdown.tsx. Before this existed the model's lists,
+   fences and tables reached the screen as literal '- ', '```' and '|' characters. */
+.md-heading {
+  margin: 10px 0 4px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.md-heading:first-child { margin-top: 0; }
+
+.md-list { margin: 6px 0; padding-left: 18px; }
+.md-list li { margin: 2px 0; }
+
+.md-code {
+  margin: 8px 0;
+  padding: 8px 10px;
+  background: var(--surface3, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow-x: auto;
+  white-space: pre;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.md-code code { font-family: inherit; font-size: inherit; color: var(--text); }
+
+/* Wrapper scrolls so a wide table cannot stretch the bubble past the viewport on a phone. */
+.md-table-wrap { overflow-x: auto; margin: 8px 0; }
+
+.md-table { border-collapse: collapse; width: 100%; font-size: 12px; }
+
+.md-table th,
+.md-table td {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.md-table th { background: var(--surface3, var(--bg)); font-weight: 650; }
+
 .chat-typing { display: inline-flex; gap: 4px; padding: 3px 0; }
 
 .chat-typing span {
@@ -309,6 +353,62 @@
 
 .chat-escalation p { margin: 8px 0 0; font-size: 12.5px; color: var(--text-dim); }
 
+/* ── Analysis (no tool to run) ───────────────────────────────────────────────── */
+
+.chat-analysis {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-bright);
+  background: var(--surface2);
+}
+
+.chat-analysis-head {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 12px; font-weight: 600; color: var(--text);
+}
+
+.chat-analysis-head em {
+  font-style: normal; font-size: 11px; color: var(--text-muted);
+  margin-left: auto; flex-shrink: 0;
+}
+
+.chat-analysis-why { margin: 7px 0 0; font-size: 11.5px; color: var(--text-muted); }
+
+/* The model is told to answer in plain text, so honour its line breaks instead of
+   re-parsing them as markup. */
+.chat-analysis-steps {
+  margin-top: 10px;
+  white-space: pre-wrap;
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--text-dim);
+}
+
+/* ── Resolve prompt ──────────────────────────────────────────────────────────── */
+
+.chat-resolve {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--ok);
+  background: var(--ok-dim);
+}
+
+.chat-resolve-ask { margin: 0; font-size: 12.5px; line-height: 1.6; color: var(--text); }
+
+.chat-resolve-actions { display: flex; gap: 8px; margin-top: 11px; }
+
+.chat-resolve-note { margin: 9px 0 0; font-size: 12.5px; color: var(--text-dim); }
+.chat-resolve-note--fail { color: var(--warn); }
+.chat-resolve-next {
+  margin: 8px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
 /* ── Tool card ───────────────────────────────────────────────────────────────── */
 
 .chat-tool-card {
@@ -429,13 +529,22 @@
 }
 
 .chat-btn-ghost { background: transparent; color: var(--text-dim); }
-.chat-btn-ghost:hover { background: var(--surface3); color: var(--text); }
+.chat-btn-ghost:hover:not(:disabled) { background: var(--surface3); color: var(--text); }
 
 .chat-btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-.chat-btn-primary:hover { background: var(--accent-hover); }
+.chat-btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
 
 .chat-btn-danger { background: var(--crit); border-color: var(--crit); color: #fff; }
-.chat-btn-danger:hover { filter: brightness(1.08); }
+.chat-btn-danger:hover:not(:disabled) { filter: brightness(1.08); }
+
+/* A spent control — a run already started, a form already submitted — is dimmed rather
+   than removed: the operator still needs to read what they chose. Opacity keeps this
+   theme-agnostic; a grey fill would only be right in one of the two themes. */
+.chat-btn:disabled,
+.chat-missing-field input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 
 /* ── Live run ────────────────────────────────────────────────────────────────── */
 
@@ -526,6 +635,19 @@
 /* The log pane is the one thing allowed to scroll in both directions: a wrapped
    Windows path or stack frame is unreadable, and a 400-line run must not push the
    composer off the screen. */
+.chat-log-wrap { margin: 8px 0 0; }
+
+.chat-log-wrap > summary {
+  cursor: pointer;
+  width: fit-content;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-dim);
+  list-style: revert;      /* keep the native disclosure triangle */
+}
+
+.chat-log-wrap > summary:hover { color: var(--text); }
+
 .chat-log {
   margin: 8px 0 0;
   padding: 9px 11px;

@@ -25,8 +25,8 @@ import java.util.Set;
  * <ol>
  *   <li><b>No model call.</b> Anonymous answers come from SQL. An unauthenticated LLM route is
  *       a provider-budget DoS with a prompt-injection surface and nobody to attribute it to;
- *       and {@link RagService#askStrictSopRag} needs a tenant from the security context, which
- *       an anonymous caller does not have.</li>
+ *       and {@link RagService#askStrictSopRag} needs an authenticated identity, which an
+ *       anonymous caller does not have.</li>
  *   <li><b>Redaction is the projection.</b> {@link Row} carries five fields, and the query
  *       selects those five columns — descriptions, assignees, teams, notes and target hosts
  *       never leave the database on this path. Filtering a full entity afterwards is the
@@ -39,10 +39,6 @@ public class PublicReadService {
 
     /** UI-managed switch, on by default: an anonymous read is the front door of the product. */
     public static final String ENABLED_KEY = "public_read_enabled";
-
-    /** Which workspace a caller with no account is reading. */
-    public static final String TENANT_KEY = "public_tenant_id";
-    public static final String DEFAULT_TENANT = "tenant-1";
 
     /** Enough to answer a question, not enough to page through the ticket table. */
     private static final int MAX_ROWS = 20;
@@ -67,27 +63,21 @@ public class PublicReadService {
         log.warn("[PUBLIC] Anonymous incident read {} by configuration", value ? "ENABLED" : "DISABLED");
     }
 
-    public String tenantId() {
-        return config.findById(TENANT_KEY).map(SystemConfig::getConfigValue)
-                .filter(value -> !value.isBlank()).orElse(DEFAULT_TENANT);
-    }
-
-    /** Counts over the whole tenant, so "how many are open" is the table's answer. */
+    /** Counts over the whole table, so "how many are open" is the table's answer. */
     public Stats stats() {
-        String tenant = tenantId();
-        Map<String, Long> byStatus = toCountMap(incidents.countGroupedByStatus(tenant));
-        Map<String, Long> byPriority = toCountMap(incidents.countGroupedByPriority(tenant));
+        Map<String, Long> byStatus = toCountMap(incidents.countGroupedByStatus());
+        Map<String, Long> byPriority = toCountMap(incidents.countGroupedByPriority());
         long total = byStatus.values().stream().mapToLong(Long::longValue).sum();
         long open = byStatus.entrySet().stream()
                 .filter(entry -> !CLOSED_STATES.contains(entry.getKey().toLowerCase(Locale.ROOT)))
                 .mapToLong(Map.Entry::getValue).sum();
-        return new Stats(total, open, byStatus, byPriority, incidents.findLastUpdatedAt(tenant));
+        return new Stats(total, open, byStatus, byPriority, incidents.findLastUpdatedAt());
     }
 
     /** Blank {@code q} lists the most recently updated tickets. Never more than {@value #MAX_ROWS}. */
     public List<Row> search(String q) {
         String like = "%" + (q == null ? "" : q.trim().toLowerCase(Locale.ROOT)) + "%";
-        return incidents.searchPublicRows(tenantId(), like, PageRequest.of(0, MAX_ROWS)).stream()
+        return incidents.searchPublicRows(like, PageRequest.of(0, MAX_ROWS)).stream()
                 .map(row -> new Row((String) row[0], (String) row[1], maskSensitive((String) row[2]), (String) row[3],
                         (String) row[4], (OffsetDateTime) row[5]))
                 .toList();

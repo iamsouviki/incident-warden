@@ -47,9 +47,7 @@ public class AiConfigController {
                 Map.entry("baseUrl", aiConfigService.getBaseUrl()),
                 Map.entry("apiKeyPresent", !aiConfigService.getApiKey().isBlank()),
                 Map.entry("chatModel", aiConfigService.getActiveChatModel()),
-                Map.entry("embeddingModel", aiConfigService.getActiveEmbeddingModel()),
-                Map.entry("hitlThreshold", aiConfigService.getHitlThreshold()),
-                Map.entry("webSearchEnabled", aiConfigService.getWebSearchEnabled())));
+                Map.entry("embeddingModel", aiConfigService.getActiveEmbeddingModel())));
     }
 
     @GetMapping("/ollama-models")
@@ -85,8 +83,6 @@ public class AiConfigController {
         if (embeddingModel == null || embeddingModel.isBlank()) return ResponseEntity.badRequest().body(Map.of("error", "embeddingModel is required"));
         aiConfigService.setProvider(provider); if (baseUrl != null) aiConfigService.setBaseUrl(baseUrl);
         aiConfigService.setActiveChatModel(chatModel); aiConfigService.setActiveEmbeddingModel(embeddingModel);
-        if (body.get("hitlThreshold") != null) aiConfigService.setHitlThreshold(body.get("hitlThreshold"));
-        if (body.get("webSearchEnabled") != null) aiConfigService.setWebSearchEnabled(body.get("webSearchEnabled"));
         return ResponseEntity.ok(Map.of("message", "AI & Platform Configuration updated successfully", "provider", provider, "chatModel", chatModel, "embeddingModel", embeddingModel));
     }
 
@@ -152,7 +148,7 @@ public class AiConfigController {
      */
     @GetMapping("/public-read")
     public ResponseEntity<?> getPublicRead() {
-        return ResponseEntity.ok(Map.of("enabled", publicRead.enabled(), "tenantId", publicRead.tenantId()));
+        return ResponseEntity.ok(Map.of("enabled", publicRead.enabled()));
     }
 
     @PostMapping("/public-read")

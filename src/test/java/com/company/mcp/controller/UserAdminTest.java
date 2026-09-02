@@ -1,6 +1,5 @@
 package com.company.mcp.controller;
 
-import com.company.mcp.config.BootstrapPassword;
 import com.company.mcp.model.AppUser;
 import com.company.mcp.repository.UserRepository;
 import com.company.mcp.service.JwtService;
@@ -22,33 +21,34 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * An account an admin created starts on a password that is written in this repository, so the
- * only thing keeping that acceptable is that it cannot survive first use. These tests are that
- * guarantee: the flag is set when the account is made, sign-in reports it, and the account
- * cannot satisfy the forced reset by setting the same published value back.
+ * An account an admin created starts on its own username as its password, so the only thing
+ * keeping that acceptable is that it cannot survive first use. These tests are that guarantee:
+ * the flag is set when the account is made, sign-in reports it, and the account cannot satisfy
+ * the forced reset by setting the username straight back.
+ *
+ * The username is over eight characters on purpose: a shorter one would be rejected by the length
+ * rule first, and the reuse rule below would never be reached.
  *
  * A real BCrypt encoder, not a mock — every assertion here is about whether a specific password
  * matches a specific hash, which a mock that always answers true cannot tell you.
  */
 class UserAdminTest {
 
-    private static final String NEW_USER = "p.mehta";
+    private static final String NEW_USER = "priya.mehta";
 
     private final Map<String, AppUser> table = new HashMap<>();
     private final UserRepository users = mock(UserRepository.class);
     private final JwtService jwt = new JwtService("test-secret-that-is-comfortably-over-32-bytes");
     private final PasswordEncoder encoder = new BCryptPasswordEncoder(4);   // 4 rounds: a test, not a login
     private final RateLimiterService rateLimiter = mock(RateLimiterService.class);
-    private final BootstrapPassword bootstrap = mock(BootstrapPassword.class);
     private final com.company.mcp.service.TokenRevocationService tokenRevocationService = new com.company.mcp.service.TokenRevocationService(null);
     private final AuthController controller = new AuthController(
-            users, jwt, encoder, mock(OidcTokenValidator.class), rateLimiter, bootstrap, tokenRevocationService, "", "tenant-1");
+            users, jwt, encoder, mock(OidcTokenValidator.class), rateLimiter, tokenRevocationService, "");
 
     UserAdminTest() {
         AppUser owner = new AppUser();
         owner.setUsername("owner");
         owner.setRole("OWNER");
-        owner.setTenantId("tenant-1");
         owner.setEnabled(true);
         owner.setPasswordHash(encoder.encode("an-owner-password-nobody-published"));
         table.put("owner", owner);
@@ -56,7 +56,6 @@ class UserAdminTest {
         AppUser admin = new AppUser();
         admin.setUsername("admin");
         admin.setRole("ADMIN");
-        admin.setTenantId("tenant-1");
         admin.setEnabled(true);
         admin.setPasswordHash(encoder.encode("an-admin-password-nobody-published"));
         table.put("admin", admin);
@@ -68,7 +67,6 @@ class UserAdminTest {
             return u;
         });
         when(rateLimiter.allowLogin(anyString())).thenReturn(true);
-        when(bootstrap.starter()).thenReturn(BootstrapPassword.STARTER_PASSWORD);
     }
 
     @Test
@@ -76,16 +74,16 @@ class UserAdminTest {
         Map<String, Object> created = asMap(controller.createUser(ownerToken(), Map.of(
                 "username", NEW_USER, "email", "priya.mehta@company.com", "role", "ANALYST")));
 
-        assertThat(created.get("defaultPassword")).isEqualTo(BootstrapPassword.STARTER_PASSWORD);
+        assertThat(created.get("defaultPassword")).isEqualTo(NEW_USER);
         assertThat(table.get(NEW_USER).isMustChangePassword()).isTrue();
-        assertThat(encoder.matches(BootstrapPassword.STARTER_PASSWORD, table.get(NEW_USER).getPasswordHash()))
+        assertThat(encoder.matches(NEW_USER, table.get(NEW_USER).getPasswordHash()))
                 .as("the password the owner reads out is the one that works")
                 .isTrue();
 
         // Sign-in has to say so, or the client never knows to block.
         var http = new org.springframework.mock.web.MockHttpServletRequest();
         Map<String, Object> session = asMap(controller.login(
-                Map.of("username", NEW_USER, "password", BootstrapPassword.STARTER_PASSWORD), http));
+                Map.of("username", NEW_USER, "password", NEW_USER), http));
         assertThat(session.get("mustChangePassword")).isEqualTo(true);
     }
 
@@ -103,13 +101,13 @@ class UserAdminTest {
         String token = accessTokenFor(NEW_USER, "ANALYST");
 
         ResponseEntity<?> reuse = controller.changePassword(token, Map.of(
-                "currentPassword", BootstrapPassword.STARTER_PASSWORD,
-                "newPassword", BootstrapPassword.STARTER_PASSWORD));
+                "currentPassword", NEW_USER,
+                "newPassword", NEW_USER));
         assertThat(reuse.getStatusCode().value()).isEqualTo(400);
         assertThat(table.get(NEW_USER).isMustChangePassword()).as("still locked out of the app").isTrue();
 
         ResponseEntity<?> tooShort = controller.changePassword(token, Map.of(
-                "currentPassword", BootstrapPassword.STARTER_PASSWORD, "newPassword", "short"));
+                "currentPassword", NEW_USER, "newPassword", "short"));
         assertThat(tooShort.getStatusCode().value()).isEqualTo(400);
 
         // A wrong current password is 400, never 401: the client signs the user out on 401, and
@@ -119,7 +117,7 @@ class UserAdminTest {
                 .getStatusCode().value()).isEqualTo(400);
 
         ResponseEntity<?> ok = controller.changePassword(token, Map.of(
-                "currentPassword", BootstrapPassword.STARTER_PASSWORD, "newPassword", "a-password-of-their-own"));
+                "currentPassword", NEW_USER, "newPassword", "a-password-of-their-own"));
         assertThat(ok.getStatusCode().value()).isEqualTo(200);
         assertThat(table.get(NEW_USER).isMustChangePassword()).isFalse();
         assertThat(encoder.matches("a-password-of-their-own", table.get(NEW_USER).getPasswordHash())).isTrue();
@@ -138,7 +136,7 @@ class UserAdminTest {
         controller.createUser(ownerToken(), Map.of(
                 "username", NEW_USER, "email", "priya.mehta@company.com", "role", "ANALYST"));
         controller.changePassword(accessTokenFor(NEW_USER, "ANALYST"), Map.of(
-                "currentPassword", BootstrapPassword.STARTER_PASSWORD, "newPassword", "a-password-of-their-own"));
+                "currentPassword", NEW_USER, "newPassword", "a-password-of-their-own"));
         assertThat(table.get(NEW_USER).isMustChangePassword()).isFalse();
 
         assertThat(controller.resetPassword(adminToken(), NEW_USER).getStatusCode().value()).isEqualTo(200);
@@ -169,7 +167,7 @@ class UserAdminTest {
 
     private String accessTokenFor(String username, String role) {
         return "Bearer " + jwt.generate(username,
-                Map.of("role", role, "tenantId", "tenant-1", "tokenType", "access"), 60_000);
+                Map.of("role", role, "tokenType", "access"), 60_000);
     }
 
     @SuppressWarnings("unchecked")

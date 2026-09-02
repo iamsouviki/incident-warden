@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { authFetch, getStoredUser } from '../services/api';
+import { authFetch } from '../services/api';
 import { Play, Trash2, Plus, Save, Sparkles, AlertTriangle } from 'lucide-react';
 import SkillsPanel from '../components/SkillsPanel';
 
@@ -38,8 +38,6 @@ const CATEGORIES = [
 ];
 
 const ToolsPage: React.FC = () => {
-  const user = getStoredUser();
-  const tenantId = user?.tenantId || 'tenant-1';
 
   // Skills default: Categorization, Extraction, and Skill Mapping define what actions the platform takes.
   const [mode, setMode] = useState<'skills' | 'scripts'>('skills');
@@ -74,7 +72,7 @@ const ToolsPage: React.FC = () => {
   const loadSavedScripts = async () => {
     setLoadingList(true);
     try {
-      const res = await authFetch(`/api/v1/scripts?tenantId=${tenantId}`);
+      const res = await authFetch('/api/v1/scripts');
       if (res.ok) {
         const data = await res.json();
         setSavedScripts(data.scripts || []);
@@ -284,8 +282,7 @@ const ToolsPage: React.FC = () => {
         scriptContent,
         language,
         category,
-        targetHost,
-        tenantId
+        targetHost
       };
       
       const endpoint = activeScriptId ? `/api/v1/scripts/${activeScriptId}` : '/api/v1/scripts';

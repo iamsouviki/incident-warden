@@ -66,13 +66,13 @@ class PublicReadServiceTest {
     @Test
     void openCountExcludesFinishedWorkAndTreatsUnknownStatusesAsOpen() {
         when(config.findById(anyString())).thenReturn(Optional.empty());
-        when(incidents.countGroupedByStatus(PublicReadService.DEFAULT_TENANT)).thenReturn(List.of(
+        when(incidents.countGroupedByStatus()).thenReturn(List.of(
                 new Object[]{"New", 3L}, new Object[]{"In Progress", 2L},
                 new Object[]{"Resolved", 4L}, new Object[]{"Closed", 1L},
                 new Object[]{"Waiting on vendor", 5L}));
-        when(incidents.countGroupedByPriority(PublicReadService.DEFAULT_TENANT))
+        when(incidents.countGroupedByPriority())
                 .thenReturn(List.<Object[]>of(new Object[]{"P1", 1L}));
-        when(incidents.findLastUpdatedAt(anyString())).thenReturn(OffsetDateTime.now());
+        when(incidents.findLastUpdatedAt()).thenReturn(OffsetDateTime.now());
 
         PublicReadService.Stats stats = service.stats();
         assertEquals(15L, stats.total());
@@ -83,7 +83,7 @@ class PublicReadServiceTest {
     @Test
     void searchIsBoundedToTwentyRows() {
         when(config.findById(anyString())).thenReturn(Optional.empty());
-        when(incidents.searchPublicRows(anyString(), anyString(), any())).thenReturn(List.<Object[]>of(
+        when(incidents.searchPublicRows(anyString(), any())).thenReturn(List.<Object[]>of(
                 new Object[]{"INC000000042", "POS offline", "POS terminal down at 10.0.0.1", "New", "P1", OffsetDateTime.now()}));
         assertEquals(1, service.search("pos").size());
         assertEquals("INC000000042", service.search("pos").get(0).externalId());

@@ -23,13 +23,12 @@ import java.util.UUID;
  *
  * The security model is the point of this class:
  *
- *   - An MCP client is a caller like any other. It presents the same JWT, is bound to the
- *     same tenant, and hits the same role rules. There is no separate agent identity with
- *     elevated rights.
+ *   - An MCP client is a caller like any other. It presents the same JWT and hits the same
+ *     role rules. There is no separate agent identity with elevated rights.
  *   - No tool here executes a remediation directly. {@code execute_approved_plan} runs a
  *     plan a human already approved, re-validating the approval and the plan hash
- *     server-side. An agent cannot invent a plan and run it, or run a plan approved for a
- *     different tenant.
+ *     server-side. An agent cannot invent a plan and run it, or run a plan whose script
+ *     no longer matches the one that was approved.
  *   - Everything else is read-only.
  *
  * ponytail: HTTP POST only, no SSE stream and no session negotiation. Request/response
@@ -92,7 +91,7 @@ public class McpController {
         info.put("protocolVersion", PROTOCOL_VERSION);
         info.put("capabilities", Map.of("tools", Map.of("listChanged", false)));
         info.put("serverInfo", Map.of("name", "incident-warden", "version", "1.0"));
-        info.put("instructions", "Incident remediation tools for the authenticated operator's tenant. "
+        info.put("instructions", "Incident remediation tools for the authenticated operator. "
                 + "Remediation cannot be executed without a human approval recorded in this system: "
                 + "call create_remediation_plan to raise one, then wait for a reviewer.");
         return info;
@@ -109,21 +108,21 @@ public class McpController {
     private List<Map<String, Object>> toolDescriptors() {
         return List.of(
                 tool("list_open_incidents",
-                        "List open incidents in the caller's tenant. Read-only.",
+                        "List open incidents. Read-only.",
                         Map.of()),
                 tool("get_incident",
-                        "Fetch one incident by id, including its confidence score and status. Read-only.",
+                        "Fetch one incident by id, including its status and priority. Read-only.",
                         Map.of("incidentId", stringParam("Incident UUID"))),
                 tool("list_remediation_tools",
                         "List the remediation actions this platform can run, and which of them mutate a system. Read-only.",
                         Map.of()),
                 tool("create_remediation_plan",
-                        "Assess an incident against the tenant's approved procedures and raise a plan for human "
+                        "Assess an incident against the approved procedures and raise a plan for human "
                                 + "approval. This does NOT execute anything. It returns whether the plan is eligible "
                                 + "and, if not, the reason it was escalated instead.",
                         Map.of("incidentId", stringParam("Incident UUID"))),
                 tool("get_pending_approvals",
-                        "List remediation plans awaiting human review in the caller's tenant. Read-only.",
+                        "List remediation plans awaiting human review. Read-only.",
                         Map.of()),
                 tool("execute_approved_plan",
                         "Execute a plan a human has already approved. Requires the approval id and the plan hash "

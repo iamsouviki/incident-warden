@@ -37,9 +37,6 @@ public class Skill {
     @Column(name = "id", nullable = false)
     private UUID id;
 
-    @Column(name = "tenant_id", nullable = false, length = 64)
-    private String tenantId;
-
     /** CATEGORIZATION | EXTRACTION | EXECUTION. */
     @Column(name = "kind", nullable = false, length = 24)
     private String kind;
@@ -82,8 +79,6 @@ public class Skill {
 
     public UUID getId() { return id; }
     public void setId(UUID id) { this.id = id; }
-    public String getTenantId() { return tenantId; }
-    public void setTenantId(String tenantId) { this.tenantId = tenantId; }
     public String getKind() { return kind; }
     public void setKind(String kind) { this.kind = kind; }
     public String getSkillKey() { return skillKey; }

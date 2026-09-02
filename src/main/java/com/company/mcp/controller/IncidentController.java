@@ -25,6 +25,9 @@ public class IncidentController {
     @Autowired
     private com.company.mcp.config.CurrentUser currentUser;
 
+    @Autowired
+    private com.company.mcp.service.IncidentGraphService graph;
+
     @PostMapping
     public ResponseEntity<Incident> createIncident(@RequestBody Incident incident) {
         Incident created = incidentService.createIncident(incident);
@@ -97,6 +100,17 @@ public class IncidentController {
         return ResponseEntity.ok(incidentService.getHistory(id));
     }
 
+    /**
+     * The incident's neighbourhood in the knowledge graph: the machine, the site, the
+     * procedure, the remediation, and every other incident that shares one of them.
+     * Read-only.
+     */
+    @GetMapping("/{id}/graph")
+    public ResponseEntity<Map<String, Object>> getGraph(@PathVariable UUID id,
+                                                       @RequestParam(defaultValue = "2") int depth) {
+        return ResponseEntity.ok(graph.neighbourhood(id, depth));
+    }
+
     @PostMapping("/sync")
     public ResponseEntity<Map<String, Object>> syncIncidents() {
         Map<String, Object> result = incidentService.syncExternalIncidents();
@@ -104,8 +118,8 @@ public class IncidentController {
     }
 
     /**
-     * Rate-limited because it is the priciest endpoint here: two to three model calls plus a
-     * public web search per request. Same limiter and same 429 as script generation — an
+     * Rate-limited because it is the priciest endpoint here: two to three model calls per
+     * request. Same limiter and same 429 as script generation — an
      * authenticated viewer holding the button down should not be able to spend the whole
      * provider budget.
      */

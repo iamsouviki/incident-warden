@@ -37,13 +37,13 @@ public class ChatSessionService {
         this.sessionTtlDays = Math.min(Math.max(sessionTtlDays, 1), MAX_TTL_DAYS);
     }
 
-    public List<ChatSession> listSessions(String tenantId, String username) {
+    public List<ChatSession> listSessions(String username) {
         OffsetDateTime cutoff = OffsetDateTime.now().minusDays(sessionTtlDays);
-        return sessionRepository.findByTenantIdAndUsernameAndIsArchivedFalseAndUpdatedAtAfterOrderByUpdatedAtDesc(tenantId, username, cutoff);
+        return sessionRepository.findByUsernameAndIsArchivedFalseAndUpdatedAtAfterOrderByUpdatedAtDesc(username, cutoff);
     }
 
-    public Optional<ChatSession> getSession(UUID sessionId, String tenantId, String username) {
-        Optional<ChatSession> opt = sessionRepository.findByIdAndTenantIdAndUsername(sessionId, tenantId, username);
+    public Optional<ChatSession> getSession(UUID sessionId, String username) {
+        Optional<ChatSession> opt = sessionRepository.findByIdAndUsername(sessionId, username);
         if (opt.isPresent()) {
             OffsetDateTime cutoff = OffsetDateTime.now().minusDays(sessionTtlDays);
             if (opt.get().getUpdatedAt() != null && opt.get().getUpdatedAt().isBefore(cutoff)) {
@@ -76,9 +76,8 @@ public class ChatSessionService {
     }
 
     @Transactional
-    public ChatSession createSession(String tenantId, String username, String title) {
+    public ChatSession createSession(String username, String title) {
         ChatSession session = new ChatSession();
-        session.setTenantId(tenantId != null ? tenantId : "tenant-1");
         session.setUsername(username != null ? username : "anonymous");
         session.setTitle(title != null && !title.isBlank() ? title.trim() : "New Conversation");
         session.setCreatedAt(OffsetDateTime.now());
@@ -88,8 +87,8 @@ public class ChatSessionService {
     }
 
     @Transactional
-    public Optional<ChatSession> updateTitle(UUID sessionId, String tenantId, String username, String newTitle) {
-        Optional<ChatSession> opt = sessionRepository.findByIdAndTenantIdAndUsername(sessionId, tenantId, username);
+    public Optional<ChatSession> updateTitle(UUID sessionId, String username, String newTitle) {
+        Optional<ChatSession> opt = sessionRepository.findByIdAndUsername(sessionId, username);
         if (opt.isEmpty()) {
             return Optional.empty();
         }
@@ -100,8 +99,8 @@ public class ChatSessionService {
     }
 
     @Transactional
-    public boolean deleteSession(UUID sessionId, String tenantId, String username) {
-        Optional<ChatSession> opt = sessionRepository.findByIdAndTenantIdAndUsername(sessionId, tenantId, username);
+    public boolean deleteSession(UUID sessionId, String username) {
+        Optional<ChatSession> opt = sessionRepository.findByIdAndUsername(sessionId, username);
         if (opt.isEmpty()) {
             return false;
         }
@@ -110,8 +109,28 @@ public class ChatSessionService {
         return true;
     }
 
+    /**
+     * Appends one turn, but only to a session that exists and belongs to the caller.
+     *
+     * The id arrives in a request body, so it is a trust boundary, and this method is the only
+     * sink for it. Unchecked it did two wrong things at once: a fabricated id reached the insert
+     * and tripped the {@code chat_messages_session_id_fkey} constraint, surfacing as a 500 on a
+     * chat that otherwise worked; and a real id belonging to somebody else was appended to
+     * without complaint, so any signed-in user could write into another user's history.
+     * {@link #syncMessages} has always scoped its lookup this way — this is the same rule applied
+     * to the path that skipped it.
+     *
+     * @return the saved message, or empty when the session is not the caller's to write to
+     */
     @Transactional
-    public ChatMessage appendMessage(UUID sessionId, String role, String content, Object metadata) {
+    public Optional<ChatMessage> appendMessage(UUID sessionId, String username,
+                                              String role, String content, Object metadata) {
+        Optional<ChatSession> owned = sessionRepository.findByIdAndUsername(sessionId, username);
+        if (owned.isEmpty()) {
+            log.warn("[CHAT] Rejected message for session {} — not present for this user", sessionId);
+            return Optional.empty();
+        }
+
         ChatMessage msg = new ChatMessage();
         msg.setSessionId(sessionId);
         msg.setRole(role != null ? role : "user");
@@ -131,25 +150,25 @@ public class ChatSessionService {
         ChatMessage saved = messageRepository.save(msg);
 
         // Touch session updated_at
-        sessionRepository.findById(sessionId).ifPresent(session -> {
-            session.setUpdatedAt(OffsetDateTime.now());
-            // If default title, optionally update from first user prompt
-            if ("New Conversation".equalsIgnoreCase(session.getTitle()) && "user".equalsIgnoreCase(role) && !content.isBlank()) {
-                String candidate = content.trim().replaceAll("\\s+", " ");
-                if (candidate.length() > 60) {
-                    candidate = candidate.substring(0, 57) + "...";
-                }
-                session.setTitle(candidate);
+        ChatSession session = owned.get();
+        session.setUpdatedAt(OffsetDateTime.now());
+        // If default title, optionally update from first user prompt
+        if ("New Conversation".equalsIgnoreCase(session.getTitle()) && "user".equalsIgnoreCase(role)
+                && content != null && !content.isBlank()) {
+            String candidate = content.trim().replaceAll("\\s+", " ");
+            if (candidate.length() > 60) {
+                candidate = candidate.substring(0, 57) + "...";
             }
-            sessionRepository.save(session);
-        });
+            session.setTitle(candidate);
+        }
+        sessionRepository.save(session);
 
-        return saved;
+        return Optional.of(saved);
     }
 
     @Transactional
-    public List<ChatMessage> syncMessages(UUID sessionId, String tenantId, String username, List<Map<String, Object>> turns) {
-        Optional<ChatSession> opt = sessionRepository.findByIdAndTenantIdAndUsername(sessionId, tenantId, username);
+    public List<ChatMessage> syncMessages(UUID sessionId, String username, List<Map<String, Object>> turns) {
+        Optional<ChatSession> opt = sessionRepository.findByIdAndUsername(sessionId, username);
         if (opt.isEmpty()) {
             return List.of();
         }

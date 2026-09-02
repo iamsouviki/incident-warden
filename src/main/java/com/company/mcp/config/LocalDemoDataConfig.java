@@ -18,30 +18,19 @@ import java.util.UUID;
 @Profile("local")
 public class LocalDemoDataConfig {
 
-    /**
-     * The tenant every seeded account actually belongs to.
-     *
-     * This used to be "tenant-local", which no user had: the Liquibase seed inserts
-     * admin/analyst/viewer under tenant-1, so the approved procedures below were owned by
-     * a tenant nobody could log into. Every plan therefore fell through to the ungrounded
-     * LLM lane with NO_APPROVED_TENANT_SOP_MATCH — the SOP grounding, the tool allow-list
-     * and the unattended lane all looked broken when only this string was.
-     */
-    private static final String DEMO_TENANT = "tenant-1";
-
     @Bean
-    CommandLineRunner seedLocalDemoUser(UserRepository users, PasswordEncoder encoder,
-                                       BootstrapPassword bootstrapPassword) {
+    CommandLineRunner seedLocalDemoUser(UserRepository users, PasswordEncoder encoder) {
         return args -> {
             if (users.findByUsername("admin").isPresent()) return;
 
+            // Same rule as BootstrapPassword and AuthController: initial password is the
+            // username, and it cannot be used for anything until it is replaced.
             AppUser admin = new AppUser();
             admin.setUsername("admin");
             admin.setEmail("admin@localhost");
-            admin.setPasswordHash(encoder.encode(bootstrapPassword.value()));
-            admin.setRole("ADMIN");
-            admin.setTenantId(DEMO_TENANT);
-            admin.setTenantName("Local Demo Workspace");
+            admin.setPasswordHash(encoder.encode("admin"));
+            admin.setMustChangePassword(true);
+            admin.setRole("OWNER");
             admin.setEnabled(true);
             admin.setCreatedAt(OffsetDateTime.now());
             admin.setUpdatedAt(OffsetDateTime.now());
@@ -57,13 +46,13 @@ public class LocalDemoDataConfig {
      * no operator granted — which is the exact failure the SOP-evidence mock had.
      *
      * Deliberately incomplete: there is no procedure for a network outage or a database
-     * failure, so those incidents produce NO_APPROVED_TENANT_SOP_MATCH and escalate. A
+     * failure, so those incidents produce NO_APPROVED_SOP_MATCH and escalate. A
      * demo where every incident is automatable does not demonstrate the gate.
      */
     @Bean
     CommandLineRunner seedLocalSopProcedures(SopProcedureRepository procedures) {
         return args -> {
-            if (!procedures.findByTenantIdOrderBySopIdAscStepNumberAsc(DEMO_TENANT).isEmpty()) return;
+            if (!procedures.findAllByOrderBySopIdAscStepNumberAsc().isEmpty()) return;
 
             procedures.saveAll(List.of(
                     procedure("SOP-PRINT-01", 1, "Store printer offline — clear queue and restart spooler",
@@ -108,7 +97,6 @@ public class LocalDemoDataConfig {
                                          String keywords, String actionKey, double reliability) {
         SopProcedure p = new SopProcedure();
         p.setId(UUID.randomUUID());
-        p.setTenantId(DEMO_TENANT);
         p.setSopId(sopId);
         p.setStepNumber(step);
         p.setTitle(title);

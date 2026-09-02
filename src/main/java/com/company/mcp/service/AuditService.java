@@ -3,6 +3,7 @@ package com.company.mcp.service;
 import com.company.mcp.model.AuditEvent;
 import com.company.mcp.repository.AuditEventRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.Metrics;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -19,15 +20,19 @@ public class AuditService {
     public AuditService(AuditEventRepository events, ObjectMapper objectMapper) { this.events = events; this.objectMapper = objectMapper; }
 
     @Transactional
-    public void record(String tenantId, String aggregateType, UUID aggregateId, String eventType, String actor, Map<String, ?> payload) {
+    public void record(String aggregateType, UUID aggregateId, String eventType, String actor, Map<String, ?> payload) {
         try {
             String body = objectMapper.writeValueAsString(payload);
-            String previous = events.findFirstByTenantIdOrderByCreatedAtDesc(tenantId).map(AuditEvent::getEventHash).orElse("");
+            String previous = events.findFirstByOrderByCreatedAtDesc().map(AuditEvent::getEventHash).orElse("");
             AuditEvent event = new AuditEvent();
-            event.setTenantId(tenantId); event.setAggregateType(aggregateType); event.setAggregateId(aggregateId);
+            event.setAggregateType(aggregateType); event.setAggregateId(aggregateId);
             event.setEventType(eventType); event.setActor(actor); event.setPayload(body); event.setPreviousHash(previous);
-            event.setEventHash(sha256(previous + "|" + tenantId + "|" + aggregateType + "|" + aggregateId + "|" + eventType + "|" + actor + "|" + body));
+            event.setEventHash(sha256(previous + "|" + aggregateType + "|" + aggregateId + "|" + eventType + "|" + actor + "|" + body));
             events.save(event);
+            // Every business event worth a metric already passes through here — intake, plan
+            // created, escalated, approval requested, approved, rejected, dry run, execution — so
+            // one counter tagged by type covers them without an increment at each call site.
+            Metrics.counter("mcp.audit.events", "aggregate", aggregateType, "event", eventType).increment();
         } catch (Exception e) {
             throw new IllegalStateException("Audit event could not be recorded", e);
         }

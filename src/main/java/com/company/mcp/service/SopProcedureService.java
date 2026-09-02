@@ -22,7 +22,7 @@ import java.util.UUID;
  * keys off that flag, the mock meant NO_APPROVED_SOP_EVIDENCE could never fire and any
  * incident looked SOP-backed. A real lookup that can return "no match" is the point.
  *
- * ponytail: keyword overlap scored in Java over the tenant's approved rows. An approved
+ * ponytail: keyword overlap scored in Java over the approved rows. An approved
  * SOP set is operator-curated and small (tens to low hundreds). Past a few thousand
  * rows, move the scoring into Postgres full-text search or pgvector — the return type
  * stays the same, so only this class changes.
@@ -38,18 +38,18 @@ public class SopProcedureService {
     }
 
     /**
-     * @return the best-matching approved procedure for this tenant, or empty when
-     *         nothing clears the minimum overlap.
+     * @return the best-matching approved procedures, or empty when nothing clears the
+     *         minimum overlap.
      */
-    public List<SopProcedure> findApprovedMatches(String tenantId, String incidentText) {
-        if (tenantId == null || tenantId.isBlank() || incidentText == null || incidentText.isBlank()) {
+    public List<SopProcedure> findApprovedMatches(String incidentText) {
+        if (incidentText == null || incidentText.isBlank()) {
             return List.of();
         }
         Set<String> queryTerms = tokenize(incidentText);
         if (queryTerms.isEmpty()) return List.of();
 
         List<Scored> scored = new ArrayList<>();
-        for (SopProcedure procedure : procedures.findByTenantIdAndApprovalStatus(tenantId, "APPROVED")) {
+        for (SopProcedure procedure : procedures.findByApprovalStatus("APPROVED")) {
             double score = overlap(queryTerms, procedure);
             if (score > 0) scored.add(new Scored(procedure, score));
         }
@@ -64,11 +64,11 @@ public class SopProcedureService {
      * Builds the evidence record the guardrails and confidence stages consume.
      * Returns a no-match result rather than inventing evidence when nothing applies.
      */
-    public SopEvidence toEvidence(String tenantId, String incidentText) {
-        List<SopProcedure> matches = findApprovedMatches(tenantId, incidentText);
+    public SopEvidence toEvidence(String incidentText) {
+        List<SopProcedure> matches = findApprovedMatches(incidentText);
         if (matches.isEmpty()) {
-            log.debug("[SOP] No approved procedure matched for tenant {}", tenantId);
-            return SopEvidence.noMatch("NO_APPROVED_TENANT_SOP_MATCH");
+            log.debug("[SOP] No approved procedure matched the incident text");
+            return SopEvidence.noMatch("NO_APPROVED_SOP_MATCH");
         }
 
         SopProcedure best = matches.get(0);
@@ -79,13 +79,13 @@ public class SopProcedureService {
         }
         excerpt.append("\nApproved action: ").append(best.getActionKey());
 
-        return new SopEvidence(true, true, ids, excerpt.toString(),
-                best.observedSuccessRate(), "APPROVED_TENANT_SOP_MATCH", best.getActionKey());
+        return new SopEvidence(true, ids, excerpt.toString(),
+                best.observedSuccessRate(), "APPROVED_SOP_MATCH", best.getActionKey());
     }
 
     /** Records the outcome of an execution so confidence reflects reality over time. */
-    public void recordOutcome(UUID procedureId, String tenantId, boolean success) {
-        procedures.findByIdAndTenantId(procedureId, tenantId).ifPresent(procedure -> {
+    public void recordOutcome(UUID procedureId, boolean success) {
+        procedures.findById(procedureId).ifPresent(procedure -> {
             if (success) procedure.setSuccessCount(procedure.getSuccessCount() + 1);
             else procedure.setFailureCount(procedure.getFailureCount() + 1);
             procedure.setUpdatedAt(java.time.OffsetDateTime.now());

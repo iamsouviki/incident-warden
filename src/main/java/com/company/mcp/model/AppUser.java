@@ -32,12 +32,6 @@ public class AppUser {
     @Column(nullable = false)
     private String role;
 
-    @Column(name = "tenant_id", nullable = false)
-    private String tenantId;
-
-    @Column(name = "tenant_name")
-    private String tenantName;
-
     @Column(name = "sso_provider")
     private String ssoProvider;
 
@@ -79,12 +73,6 @@ public class AppUser {
 
     public String getRole()            { return role; }
     public void setRole(String role)   { this.role = role; }
-
-    public String getTenantId()                { return tenantId; }
-    public void setTenantId(String tenantId)   { this.tenantId = tenantId; }
-
-    public String getTenantName()                  { return tenantName; }
-    public void setTenantName(String tenantName)   { this.tenantName = tenantName; }
 
     public String getSsoProvider()                     { return ssoProvider; }
     public void setSsoProvider(String ssoProvider)     { this.ssoProvider = ssoProvider; }

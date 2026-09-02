@@ -36,28 +36,22 @@ public class AuthController {
     private final PasswordEncoder encoder;
     private final OidcTokenValidator oidc;
     private final RateLimiterService rateLimiter;
-    private final com.company.mcp.config.BootstrapPassword bootstrapPassword;
     private final com.company.mcp.service.TokenRevocationService tokenRevocationService;
     private final Set<String> ssoAllowedDomains;
-    private final String ssoDefaultTenant;
 
     public AuthController(UserRepository users, JwtService jwtService, PasswordEncoder encoder, OidcTokenValidator oidc,
             RateLimiterService rateLimiter,
-            com.company.mcp.config.BootstrapPassword bootstrapPassword,
             com.company.mcp.service.TokenRevocationService tokenRevocationService,
-            @Value("${mcp.sso.allowed-email-domains:}") String ssoAllowedDomains,
-            @Value("${mcp.sso.default-tenant-id:tenant-1}") String ssoDefaultTenant) {
+            @Value("${mcp.sso.allowed-email-domains:}") String ssoAllowedDomains) {
         this.users = users;
         this.jwtService = jwtService;
         this.encoder = encoder;
         this.oidc = oidc;
         this.rateLimiter = rateLimiter;
-        this.bootstrapPassword = bootstrapPassword;
         this.tokenRevocationService = tokenRevocationService;
         this.ssoAllowedDomains = java.util.Arrays.stream(ssoAllowedDomains.split(","))
                 .map(String::trim).map(String::toLowerCase).filter(d -> !d.isBlank())
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
-        this.ssoDefaultTenant = ssoDefaultTenant;
     }
 
     /** POST /api/auth/login { username, password } */
@@ -89,9 +83,9 @@ public class AuthController {
 
         String role = user.getRole();
         String token = jwtService.generate(user.getUsername(),
-                Map.of("role", role, "tenantId", user.getTenantId(), "tokenType", "access"), ACCESS_TTL);
+                Map.of("role", role, "tokenType", "access"), ACCESS_TTL);
         String refreshToken = jwtService.generate(user.getUsername(),
-                Map.of("role", role, "tenantId", user.getTenantId(), "tokenType", "refresh"), REFRESH_TTL);
+                Map.of("role", role, "tokenType", "refresh"), REFRESH_TTL);
 
         return ResponseEntity.ok(Map.ofEntries(
                 Map.entry("token", token),
@@ -100,8 +94,6 @@ public class AuthController {
                 Map.entry("fullName", user.getFullName() != null ? user.getFullName() : user.getUsername()),
                 Map.entry("role", role),
                 Map.entry("department", user.getDepartment() != null ? user.getDepartment() : ""),
-                Map.entry("tenantId", user.getTenantId()),
-                Map.entry("tenantName", user.getTenantName() != null ? user.getTenantName() : "Primary Workspace"),
                 Map.entry("expiresIn", ACCESS_TTL),
                 Map.entry("refreshExpiresIn", REFRESH_TTL),
                 // The client blocks on this until POST /api/auth/password succeeds. Reported at
@@ -140,8 +132,6 @@ public class AuthController {
             u.setRole("VIEWER");
             u.setSsoProvider(providerClaims.getIssuer());
             u.setSsoSubject(subject);
-            u.setTenantId(ssoDefaultTenant);
-            u.setTenantName("Primary Workspace");
             u.setEnabled(true);
             return users.save(u);
         });
@@ -153,11 +143,11 @@ public class AuthController {
                     .body(Map.of("error", "This account is bound to a different provider identity"));
 
         String token = jwtService.generate(user.getUsername(),
-                Map.of("role", user.getRole(), "tenantId", user.getTenantId(),
+                Map.of("role", user.getRole(),
                         "ssoProvider", providerClaims.getIssuer(), "tokenType", "access"),
                 ACCESS_TTL);
         String refreshToken = jwtService.generate(user.getUsername(),
-                Map.of("role", user.getRole(), "tenantId", user.getTenantId(),
+                Map.of("role", user.getRole(),
                         "ssoProvider", providerClaims.getIssuer(), "tokenType", "refresh", "rememberMe", false),
                 SESSION_REFRESH_TTL);
 
@@ -168,8 +158,6 @@ public class AuthController {
                 "fullName", user.getFullName() != null ? user.getFullName() : user.getUsername(),
                 "role", user.getRole(),
                 "department", user.getDepartment() != null ? user.getDepartment() : "",
-                "tenantId", user.getTenantId(),
-                "tenantName", user.getTenantName() != null ? user.getTenantName() : "Primary Workspace",
                 "expiresIn", ACCESS_TTL,
                 "refreshExpiresIn", SESSION_REFRESH_TTL));
     }
@@ -193,16 +181,15 @@ public class AuthController {
         // 30-minute access token and extend the refresh token by 3 hours.
         String role = user.getRole();
         String fresh = jwtService.generate(user.getUsername(),
-                Map.of("role", role, "tenantId", user.getTenantId(), "tokenType", "access"), ACCESS_TTL);
+                Map.of("role", role, "tokenType", "access"), ACCESS_TTL);
         String rotatedRefresh = jwtService.generate(user.getUsername(),
-                Map.of("role", role, "tenantId", user.getTenantId(), "tokenType", "refresh"), REFRESH_TTL);
+                Map.of("role", role, "tokenType", "refresh"), REFRESH_TTL);
         return ResponseEntity.ok(Map.of(
                 "token", fresh,
                 "refreshToken", rotatedRefresh,
                 "role", role,
                 "fullName", user.getFullName() != null ? user.getFullName() : user.getUsername(),
                 "department", user.getDepartment() != null ? user.getDepartment() : "",
-                "tenantId", user.getTenantId(),
                 "expiresIn", ACCESS_TTL,
                 "refreshExpiresIn", REFRESH_TTL));
     }
@@ -254,8 +241,6 @@ public class AuthController {
                 "email", user.getEmail() != null ? user.getEmail() : "",
                 "role", user.getRole(),
                 "department", user.getDepartment() != null ? user.getDepartment() : "",
-                "tenantId", user.getTenantId(),
-                "tenantName", user.getTenantName() != null ? user.getTenantName() : "Primary Workspace",
                 "ssoProvider", user.getSsoProvider() != null ? user.getSsoProvider() : ""));
     }
 
@@ -265,9 +250,7 @@ public class AuthController {
         String token = authHeader.startsWith("Bearer ") ? authHeader.substring(7) : authHeader;
         if (!jwtService.isValid(token))
             return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
-        var claims = jwtService.parse(token);
-        String tenantId = (String) claims.getOrDefault("tenantId", "tenant-1");
-        List<AppUser> list = users.findByTenantId(tenantId);
+        List<AppUser> list = users.findAll();
         List<Map<String, Object>> result = new ArrayList<>();
         for (AppUser u : list) {
             result.add(Map.of(
@@ -285,10 +268,8 @@ public class AuthController {
 
     /**
      * POST /api/auth/users — Admin creation of a new user. An omitted password
-     * falls back to
-     * {@link com.company.mcp.config.BootstrapPassword#starter()}, and the response
-     * states which
-     * password was actually set so the admin has something to hand over.
+     * falls back to the username, and the response states which password was actually
+     * set so the admin has something to hand over.
      */
     @PostMapping("/users")
     public ResponseEntity<?> createUser(@RequestHeader("Authorization") String authHeader,
@@ -313,12 +294,10 @@ public class AuthController {
         // replace it. An admin who types a password in is doing the same thing by hand,
         // so
         // that case is flagged too: neither of them is a password its owner picked.
-        if (password.isBlank())
-            password = bootstrapPassword.starter();
-
         if (username.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Username is required"));
         }
+        if (password.isBlank()) password = username;
         // An account with no usable address is an account no incident notification can
         // ever
         // reach — and the UI shows it as a person who was told. Same rule the sender
@@ -339,7 +318,6 @@ public class AuthController {
             return ResponseEntity.badRequest().body(Map.of("error", "Username already exists"));
         }
 
-        String tenantId = (String) claims.getOrDefault("tenantId", "tenant-1");
         AppUser u = new AppUser();
         u.setId(UUID.randomUUID());
         u.setUsername(username);
@@ -349,8 +327,6 @@ public class AuthController {
         u.setDepartment(department);
         u.setPasswordHash(encoder.encode(password));
         u.setMustChangePassword(true);
-        u.setTenantId(tenantId);
-        u.setTenantName("Primary Workspace");
         u.setEnabled(true);
         AppUser saved = users.save(u);
 
@@ -381,7 +357,7 @@ public class AuthController {
             return caller.error();
 
         AppUser u = users.findByUsername(username).orElse(null);
-        if (u == null || !u.getTenantId().equals(caller.tenantId()))
+        if (u == null)
             return ResponseEntity.status(404).body(Map.of("error", "No such user in this workspace"));
 
         if (body.get("role") != null) {
@@ -427,10 +403,10 @@ public class AuthController {
             return caller.error();
 
         AppUser u = users.findByUsername(username).orElse(null);
-        if (u == null || !u.getTenantId().equals(caller.tenantId()))
+        if (u == null)
             return ResponseEntity.status(404).body(Map.of("error", "No such user in this workspace"));
 
-        u.setPasswordHash(encoder.encode(bootstrapPassword.starter()));
+        u.setPasswordHash(encoder.encode(u.getUsername()));
         u.setMustChangePassword(true);
         u.setUpdatedAt(OffsetDateTime.now());
         users.save(u);
@@ -438,7 +414,7 @@ public class AuthController {
         return ResponseEntity.ok(Map.of(
                 "message", "Password reset. " + u.getUsername() + " signs in with this and is asked "
                         + "to replace it immediately.",
-                "defaultPassword", bootstrapPassword.starter()));
+                "defaultPassword", u.getUsername()));
     }
 
     /**
@@ -473,7 +449,7 @@ public class AuthController {
         if (next.length() < MIN_PASSWORD_LENGTH)
             return ResponseEntity.badRequest().body(Map.of("error",
                     "Choose a password of at least " + MIN_PASSWORD_LENGTH + " characters."));
-        if (next.equals(bootstrapPassword.starter()) || encoder.matches(next, u.getPasswordHash()))
+        if (next.equals(u.getUsername()) || encoder.matches(next, u.getPasswordHash()))
             return ResponseEntity.badRequest().body(Map.of("error",
                     "Choose a password that is not the one you were given."));
 
@@ -485,22 +461,19 @@ public class AuthController {
         return ResponseEntity.ok(Map.of("message", "Password updated.", "mustChangePassword", false));
     }
 
-    /**
-     * Token parsed once, with the two things every admin-only route above needs off
-     * it.
-     */
+    /** Token parsed once, role checked once, for every admin-only route above. */
     private Caller requireAdmin(String authHeader) {
         String token = authHeader.startsWith("Bearer ") ? authHeader.substring(7) : authHeader;
         if (!jwtService.isValid(token))
-            return new Caller(null, null, ResponseEntity.status(401).body(Map.of("error", "Unauthorized")));
+            return new Caller(null, ResponseEntity.status(401).body(Map.of("error", "Unauthorized")));
         var claims = jwtService.parse(token);
         String role = (String) claims.getOrDefault("role", "");
         if (!"ADMIN".equalsIgnoreCase(role) && !"OWNER".equalsIgnoreCase(role))
-            return new Caller(null, null, ResponseEntity.status(403)
+            return new Caller(null, ResponseEntity.status(403)
                     .body(Map.of("error", "Only administrators and owners can manage users")));
-        return new Caller(claims.getSubject(), (String) claims.getOrDefault("tenantId", "tenant-1"), null);
+        return new Caller(claims.getSubject(), null);
     }
 
-    private record Caller(String username, String tenantId, ResponseEntity<?> error) {
+    private record Caller(String username, ResponseEntity<?> error) {
     }
 }

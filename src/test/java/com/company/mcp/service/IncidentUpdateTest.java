@@ -32,7 +32,6 @@ class IncidentUpdateTest {
         ReflectionTestUtils.setField(service, "incidentRepository", incidents);
         ReflectionTestUtils.setField(service, "notificationService", notifications);
         ReflectionTestUtils.setField(service, "currentUser", currentUser);
-        when(currentUser.tenantId()).thenReturn("tenant-a");
         when(incidents.save(any(Incident.class))).thenAnswer(call -> call.getArgument(0));
     }
 
@@ -83,7 +82,7 @@ class IncidentUpdateTest {
     }
 
     private Incident existing() {
-        Incident incident = Incident.builder().id(id).tenantId("tenant-a")
+        Incident incident = Incident.builder().id(id)
                 .subject("Printer queue stuck").description("Nothing prints")
                 .priority("P2").status("ESCALATED").externalId("INC000000006")
                 .assignee("analyst").assignedGteam("Store Ops")

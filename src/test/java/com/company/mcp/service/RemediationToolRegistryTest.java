@@ -3,6 +3,7 @@ package com.company.mcp.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.Map;
 
@@ -102,7 +103,7 @@ class RemediationToolRegistryTest {
     @Test
     void aToolTableLoadedFromTheDatabaseIsGuardedExactlyLikeTheBuiltInOne() {
         SkillService skills = mock(SkillService.class);
-        when(skills.executionTools(null)).thenReturn(Map.of(
+        when(skills.executionTools()).thenReturn(Map.of(
                 "RESTART_SERVICE", new SkillService.ToolRow("RESTART_SERVICE", 2, true, "Restart a service."),
                 "ROLL_STORE", new SkillService.ToolRow("ROLL_STORE", 1, true, "An admin-authored tool.")));
         RemediationToolRegistry dbBacked =
@@ -123,7 +124,7 @@ class RemediationToolRegistryTest {
     @Test
     void anEmptySkillsTableFallsBackToTheBuiltInTools() {
         SkillService skills = mock(SkillService.class);
-        when(skills.executionTools(null)).thenReturn(Map.of());
+        when(skills.executionTools()).thenReturn(Map.of());
 
         assertTrue(new RemediationToolRegistry(new ObjectMapper(), new GuardrailService(), skills)
                 .parse("RESTART_SERVICE:tomcat:linux").valid());
@@ -133,7 +134,7 @@ class RemediationToolRegistryTest {
     @Test
     void anUnreadableSkillsTableFallsBackToTheBuiltInTools() {
         SkillService skills = mock(SkillService.class);
-        when(skills.executionTools(null)).thenThrow(new RuntimeException("relation does not exist"));
+        when(skills.executionTools()).thenThrow(new RuntimeException("relation does not exist"));
 
         assertTrue(new RemediationToolRegistry(new ObjectMapper(), new GuardrailService(), skills)
                 .parse("RESTART_SERVICE:tomcat:linux").valid());
@@ -202,6 +203,38 @@ class RemediationToolRegistryTest {
         assertFalse(outcome.succeeded());
         assertTrue("UNSAFE_ACTION_ARGUMENT".equals(outcome.reason()) || "UNSUPPORTED_SCHEME".equals(outcome.reason()),
                 () -> "unexpected reason: " + outcome.reason());
+    }
+
+    /**
+     * A remote executor with no bearer token is an unauthenticated shell endpoint. Dispatching to
+     * it would also mean this application cannot tell the executor from anything else that answers
+     * on that address, so it simulates and says why instead.
+     */
+    @Test
+    void aRemoteExecutorWithNoTokenIsNotDispatchedTo() {
+        ReflectionTestUtils.setField(registry, "executionEnabled", true);
+        ReflectionTestUtils.setField(registry, "executorUrl", "https://executor.internal:9099");
+
+        RemediationToolRegistry.Outcome outcome = registry.execute("RESTART_SERVICE:tomcat:linux",
+                "systemctl restart tomcat", "bash", "FS-1001", false);
+
+        assertEquals("SIMULATED", outcome.mode());
+        assertEquals("EXECUTOR_TOKEN_MISSING", outcome.reason());
+        assertEquals("UNKNOWN", registry.reachable("store-0042-pos-01", "").status());
+    }
+
+    /** Loopback crosses no network, so the token-less local demo executor still runs. */
+    @Test
+    void aLoopbackExecutorNeedsNoToken() {
+        ReflectionTestUtils.setField(registry, "executionEnabled", true);
+        ReflectionTestUtils.setField(registry, "executorUrl", "http://localhost:9099");
+
+        RemediationToolRegistry.Outcome outcome = registry.execute("RESTART_SERVICE:tomcat:linux",
+                "systemctl restart tomcat", "bash", "FS-1001", false);
+
+        // Nothing is listening in a unit test, so this fails on connection — the point is that it
+        // was attempted rather than refused on configuration.
+        assertFalse("EXECUTOR_TOKEN_MISSING".equals(outcome.reason()));
     }
 
     /**

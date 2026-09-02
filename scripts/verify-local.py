@@ -15,10 +15,10 @@ def request(path, method="GET", payload=None, token=None):
 
 health = request("/api/health")
 assert health["status"] == "UP", health
-# The admin password comes from the environment, never from this file: MCP_DEFAULT_PASSWORD as
-# the backend reads it, or the value it logged on first start.
-admin_password = os.environ.get("MCP_DEFAULT_PASSWORD", "")
-assert admin_password, "set MCP_DEFAULT_PASSWORD to the admin password before running this"
+# The admin password comes from the environment, never from this file. On a fresh database it is
+# the username ('admin'); after the forced first-sign-in change it is whatever the operator chose.
+admin_password = os.environ.get("MCP_ADMIN_PASSWORD", "")
+assert admin_password, "set MCP_ADMIN_PASSWORD to the admin password before running this"
 login = request("/api/auth/login", "POST", {"username": "admin", "password": admin_password, "rememberMe": True})
 assert login.get("token") and login.get("refreshToken"), login
 assert login["refreshExpiresIn"] == 7 * 24 * 60 * 60 * 1000, login

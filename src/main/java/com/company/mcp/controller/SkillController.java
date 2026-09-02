@@ -23,7 +23,7 @@ import java.util.UUID;
  * route and again in {@link SkillService} for the {@code mutating} field specifically, since
  * that field is the only one that changes what may run rather than what may be recognised.
  *
- * One POST for create and update: the natural key is (tenant, kind, key), so re-posting a
+ * One POST for create and update: the natural key is (kind, key), so re-posting a
  * key edits that row. A separate PUT would only add a way for the two to disagree.
  */
 @RestController

@@ -36,9 +36,8 @@ class IncidentIntakeBulkTest {
 
     @BeforeEach
     void stubs() {
-        when(currentUser.tenantId()).thenReturn("default");
         when(currentUser.username()).thenReturn("analyst");
-        when(incidents.findFirstByTenantIdAndExternalSourceAndExternalId(anyString(), anyString(), anyString()))
+        when(incidents.findFirstByExternalSourceAndExternalId(anyString(), anyString()))
                 .thenReturn(Optional.empty());
         when(incidentService.createIncident(any())).thenAnswer(call -> {
             Incident incident = call.getArgument(0);

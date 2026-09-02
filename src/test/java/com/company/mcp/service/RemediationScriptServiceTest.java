@@ -39,14 +39,14 @@ class RemediationScriptServiceTest {
     }
 
     private Incident incident() {
-        return Incident.builder().id(UUID.randomUUID()).tenantId("tenant-a")
+        return Incident.builder().id(UUID.randomUUID())
                 .subject("Service unavailable").description("tomcat is not responding")
                 .priority("P3").externalId("FS-1001").build();
     }
 
     private SopEvidence evidence(String actionKey) {
-        return new SopEvidence(true, true, List.of(UUID.randomUUID()), "SOP: restart the service", 0.9,
-                "APPROVED_TENANT_SOP_MATCH", actionKey);
+        return new SopEvidence(true, List.of(UUID.randomUUID()), "SOP: restart the service", 0.9,
+                "APPROVED_SOP_MATCH", actionKey);
     }
 
     @Test

@@ -19,9 +19,8 @@ mvn -o spring-boot:run -Dspring-boot.run.profiles=local -Dmaven.test.skip=true
 npm run dev --prefix frontend
 ```
 
-Then <http://localhost:5173>, sign in as `admin`. The password is `MCP_DEFAULT_PASSWORD` if you set
-it before the backend started, otherwise the literal `admin` — and the first screen after login is a
-forced password change either way. The two dev stand-ins
+Then <http://localhost:5173>, sign in as `admin` / `admin` — the username is the starter password
+and the first screen after login is a forced password change. The two dev stand-ins
 (`scripts/dev-executor.mjs`, `scripts/dev-smtp.mjs`) make the execution and notification legs
 observable without anything leaving your machine — see [Quick start](README.md#quick-start).
 
@@ -107,7 +106,7 @@ most worth a contribution:
 - **MCP tool access.** The registry and `/api/v1/mcp/*` exist; nothing wires the agent to actually
   call an MCP server yet.
 - **A distributed lock on `IntegrationManagerService.scheduledSync`**, which currently runs on every
-  replica and hardcodes `tenant-1`.
+  replica.
 - **Timeouts on the three ITSM `RestTemplate`s**, none of which has one.
 - **A frontend test suite.** There is no `test` script and no framework, and the chat page is the
   product.

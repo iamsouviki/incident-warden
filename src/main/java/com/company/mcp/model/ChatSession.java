@@ -12,9 +12,6 @@ public class ChatSession {
     @GeneratedValue
     private UUID id;
 
-    @Column(name = "tenant_id", nullable = false)
-    private String tenantId = "tenant-1";
-
     @Column(nullable = false)
     private String username;
 
@@ -34,9 +31,6 @@ public class ChatSession {
 
     public UUID getId() { return id; }
     public void setId(UUID id) { this.id = id; }
-
-    public String getTenantId() { return tenantId; }
-    public void setTenantId(String tenantId) { this.tenantId = tenantId; }
 
     public String getUsername() { return username; }
     public void setUsername(String username) { this.username = username; }

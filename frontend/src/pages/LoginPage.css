@@ -201,18 +201,18 @@
   gap: 8px;
   border-radius: 8px;
   border: none;
-  background: #2563eb;
+  background: var(--accent);
   color: #ffffff;
   font-family: inherit;
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
   transition: background 0.15s ease, transform 0.15s ease;
-  box-shadow: 0 2px 10px rgba(37, 99, 235, 0.3);
+  box-shadow: 0 2px 10px var(--accent-glow);
 }
 
 .login-submit-btn:hover:not(:disabled) {
-  background: #1d4ed8;
+  background: var(--accent-hover);
   transform: translateY(-1px);
 }
 

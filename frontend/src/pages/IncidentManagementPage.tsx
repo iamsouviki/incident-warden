@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import './IncidentManagementPage.css';
-import { RefreshCw, Search, Calendar, Layers, Download, Server, AlertCircle, CheckCircle2, User, Building } from 'lucide-react';
+import { RefreshCw, Search, Calendar, Layers, Download, Server, AlertCircle, CheckCircle2, User, Building, Share2 } from 'lucide-react';
 import { authFetch } from '../services/api';
 
 export interface Incident {
@@ -35,6 +35,13 @@ export interface Comment {
   createdAt: string;
 }
 
+/** GET /api/v1/incidents/{id}/graph — see IncidentGraphService. */
+export interface IncidentGraph {
+  nodes: Array<{ key: string; type: string; label: string }>;
+  edges: Array<{ source: string; edge: string; target: string }>;
+  truncated: boolean;
+}
+
 export interface HistoryRecord {
   id: string;
   incidentId: string;
@@ -43,6 +50,82 @@ export interface HistoryRecord {
   newValue: string;
   updatedBy: string;
   updatedAt: string;
+}
+
+/** The edge names the view emits, in the words an operator uses. */
+const RELATION_WORDS: Record<string, string> = {
+  OCCURRED_ON: 'Host',
+  AT_STORE: 'Site',
+  CLASSIFIED_AS: 'Category',
+  PLANNED: 'Remediation planned',
+  GROUNDED_IN: 'Approved procedure',
+  PRECEDENT: 'Precedent incident',
+};
+
+/**
+ * The incident's neighbourhood, as a grouped list.
+ *
+ * ponytail: a list, not a diagram. The question the panel answers — "what is this attached
+ * to, and has it happened elsewhere?" — is answered by names, and a force-directed canvas
+ * would be a dependency plus a layout to tune for a dozen nodes. Swap in an <svg> if someone
+ * asks to see the shape rather than read the names.
+ */
+function IncidentGraphPanel({ graph, rootKey }: { graph: IncidentGraph | null; rootKey: string }) {
+  const empty = (text: string) => (
+    <div style={{ padding: '30px', textAlign: 'center', color: 'var(--text-muted)', background: 'var(--surface2)', borderRadius: '8px', border: '1px dashed var(--border)', fontSize: '13px' }}>
+      {text}
+    </div>
+  );
+  if (!graph) return empty('Loading relationships…');
+  if (!graph.edges.length) return empty('No mapped relationships yet. A host, a site, an approved procedure or a plan creates them.');
+
+  const label = (key: string) => graph.nodes.find(n => n.key === key)?.label || key;
+  const direct = graph.edges.filter(e => e.source === rootKey || e.target === rootKey);
+  const indirect = graph.edges.filter(e => e.source !== rootKey && e.target !== rootKey);
+
+  // touchesRoot: one end is this incident, so naming the other end is enough. Otherwise the
+  // edge is between two other things and both ends have to be named.
+  const group = (edges: IncidentGraph['edges'], touchesRoot: boolean) => {
+    const byRelation = new Map<string, string[]>();
+    for (const e of edges) {
+      const other = e.source === rootKey ? e.target : e.source;
+      const text = touchesRoot ? label(other) : `${label(e.source)} → ${label(e.target)}`;
+      const bucket = byRelation.get(e.edge) || [];
+      if (!bucket.includes(text)) bucket.push(text);
+      byRelation.set(e.edge, bucket);
+    }
+    return [...byRelation.entries()];
+  };
+
+  const section = (title: string, edges: IncidentGraph['edges'], touchesRoot: boolean) => edges.length > 0 && (
+    <div>
+      <h4 style={{ margin: '0 0 8px', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)', fontWeight: 700 }}>{title}</h4>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        {group(edges, touchesRoot).map(([relation, items]) => (
+          <div key={relation} style={{ padding: '10px 14px', borderRadius: '8px', background: 'var(--surface2)', border: '1px solid var(--border)' }}>
+            <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--accent)', marginBottom: '5px' }}>
+              {RELATION_WORDS[relation] || relation}
+            </div>
+            <ul style={{ margin: 0, padding: '0 0 0 16px', fontSize: '12.5px', lineHeight: 1.6 }}>
+              {items.map(item => <li key={item}>{item}</li>)}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      {section('This incident', direct, true)}
+      {section('Shared with other incidents', indirect, false)}
+      {graph.truncated && (
+        <p style={{ margin: 0, fontSize: '11.5px', color: 'var(--warn, #b45309)' }}>
+          Showing the first 500 relationships. This incident sits on a busy host or site.
+        </p>
+      )}
+    </div>
+  );
 }
 
 const IncidentManagementPage: React.FC = () => {
@@ -60,10 +143,11 @@ const IncidentManagementPage: React.FC = () => {
   const [sourceFilter, setSourceFilter] = useState('');
 
   // Tab & Details state
-  const [detailTab, setDetailTab] = useState<'details' | 'notes' | 'history'>('details');
+  const [detailTab, setDetailTab] = useState<'details' | 'notes' | 'history' | 'graph'>('details');
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [historyRecords, setHistoryRecords] = useState<HistoryRecord[]>([]);
+  const [graph, setGraph] = useState<IncidentGraph | null>(null);
 
   // CSV/Dump Import state
   const [showImportModal, setShowImportModal] = useState(false);
@@ -80,6 +164,7 @@ const IncidentManagementPage: React.FC = () => {
     if (selectedIncident) {
       fetchComments(selectedIncident.id);
       fetchHistory(selectedIncident.id);
+      fetchGraph(selectedIncident.id);
     }
   }, [selectedIncident]);
 
@@ -125,6 +210,16 @@ const IncidentManagementPage: React.FC = () => {
       }
     } catch (err) {
       console.error('Failed to fetch history:', err);
+    }
+  };
+
+  const fetchGraph = async (id: string) => {
+    setGraph(null);
+    try {
+      const res = await authFetch(`/api/v1/incidents/${id}/graph`);
+      if (res.ok) setGraph(await res.json());
+    } catch (err) {
+      console.error('Failed to fetch incident graph:', err);
     }
   };
 
@@ -461,6 +556,25 @@ const IncidentManagementPage: React.FC = () => {
                 >
                   Audit History
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setDetailTab('graph')}
+                  style={{
+                    padding: '10px 16px',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    border: 'none',
+                    background: 'transparent',
+                    borderBottom: `2px solid ${detailTab === 'graph' ? 'var(--accent)' : 'transparent'}`,
+                    color: detailTab === 'graph' ? 'var(--accent)' : 'var(--text-muted)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                >
+                  <Share2 size={13} /> Relationships
+                </button>
               </div>
 
               {/* TAB CONTENTS */}
@@ -560,6 +674,10 @@ const IncidentManagementPage: React.FC = () => {
                       ))
                     )}
                   </div>
+                )}
+
+                {detailTab === 'graph' && (
+                  <IncidentGraphPanel graph={graph} rootKey={`INCIDENT:${selectedIncident.id}`} />
                 )}
               </div>
             </div>

@@ -23,9 +23,6 @@ public class IntegrationManagerService {
     private final JiraIntegrationService jiraService;
     private final com.company.mcp.service.DistributedLockService distributedLockService;
 
-    private OffsetDateTime lastSyncTime;
-    private String lastSyncStatus = "Idle";
-
     public IntegrationManagerService(SystemConfigRepository configRepository,
                                      IncidentRepository incidentRepository,
                                      ServiceNowIntegrationService serviceNowService,
@@ -50,7 +47,6 @@ public class IntegrationManagerService {
         // Freshservice
         settings.put("freshserviceEnabled", getBooleanConfig("freshservice_enabled", true));
         settings.put("freshserviceUrl", getConfig("freshservice_url", "https://company.freshservice.com"));
-        settings.put("freshserviceApiKey", maskSecret(getConfig("freshservice_api_key", "")));
 
         // Jira
         settings.put("jiraEnabled", getBooleanConfig("jira_enabled", true));
@@ -58,34 +54,50 @@ public class IntegrationManagerService {
         settings.put("jiraEmail", getConfig("jira_email", "ops-lead@company.com"));
         settings.put("jiraJql", getConfig("jira_jql", "statusCategory != Done ORDER BY created DESC"));
 
+        // Secrets live in the environment. The UI gets to know whether each one is set, and
+        // nothing else — not a masked value, which only ever tells an attacker the length.
+        settings.put("serviceNowSecretSet", secretPresent("servicenow_password"));
+        settings.put("freshserviceSecretSet", secretPresent("freshservice_api_key"));
+        settings.put("jiraSecretSet", secretPresent("jira_api_token"));
+
         // General Sync Config
         settings.put("syncIntervalHours", getIntConfig("integration_sync_interval_hours", 1));
-        settings.put("lastSyncTime", lastSyncTime);
-        settings.put("lastSyncStatus", lastSyncStatus);
+        settings.put("lastSyncTime", lastSyncTime());
+        settings.put("lastSyncStatus", getConfig("integration_last_sync_status", "Idle"));
 
         return settings;
+    }
+
+    /** Last successful run, shared across replicas via {@code system_config}. */
+    private OffsetDateTime lastSyncTime() {
+        String raw = getConfig("integration_last_sync_at", "");
+        if (raw.isBlank()) return null;
+        try {
+            return OffsetDateTime.parse(raw);
+        } catch (java.time.format.DateTimeParseException e) {
+            return null;
+        }
     }
 
     public void updateIntegrationSettings(Map<String, Object> payload) {
         if (payload.containsKey("serviceNowEnabled")) setConfig("servicenow_enabled", String.valueOf(payload.get("serviceNowEnabled")));
         if (payload.containsKey("serviceNowUrl")) setConfig("servicenow_url", String.valueOf(payload.get("serviceNowUrl")));
         if (payload.containsKey("serviceNowUsername")) setConfig("servicenow_username", String.valueOf(payload.get("serviceNowUsername")));
-        if (payload.containsKey("serviceNowPassword") && !String.valueOf(payload.get("serviceNowPassword")).isBlank() && !String.valueOf(payload.get("serviceNowPassword")).contains("****")) {
-            setConfig("servicenow_password", String.valueOf(payload.get("serviceNowPassword")));
-        }
 
         if (payload.containsKey("freshserviceEnabled")) setConfig("freshservice_enabled", String.valueOf(payload.get("freshserviceEnabled")));
         if (payload.containsKey("freshserviceUrl")) setConfig("freshservice_url", String.valueOf(payload.get("freshserviceUrl")));
-        if (payload.containsKey("freshserviceApiKey") && !String.valueOf(payload.get("freshserviceApiKey")).isBlank() && !String.valueOf(payload.get("freshserviceApiKey")).contains("****")) {
-            setConfig("freshservice_api_key", String.valueOf(payload.get("freshserviceApiKey")));
-        }
 
         if (payload.containsKey("jiraEnabled")) setConfig("jira_enabled", String.valueOf(payload.get("jiraEnabled")));
         if (payload.containsKey("jiraUrl")) setConfig("jira_url", String.valueOf(payload.get("jiraUrl")));
         if (payload.containsKey("jiraEmail")) setConfig("jira_email", String.valueOf(payload.get("jiraEmail")));
         if (payload.containsKey("jiraJql")) setConfig("jira_jql", String.valueOf(payload.get("jiraJql")));
-        if (payload.containsKey("jiraApiToken") && !String.valueOf(payload.get("jiraApiToken")).isBlank() && !String.valueOf(payload.get("jiraApiToken")).contains("****")) {
-            setConfig("jira_api_token", String.valueOf(payload.get("jiraApiToken")));
+
+        // Credential fields are deliberately not read from this payload. An operator who posts one
+        // gets told why rather than silently having it dropped.
+        for (String field : List.of("serviceNowPassword", "freshserviceApiKey", "jiraApiToken")) {
+            if (payload.containsKey(field) && !String.valueOf(payload.get(field)).isBlank()) {
+                log.warn("[INTEGRATION] Ignored '{}' in settings payload: credentials are set via MCP_* environment variables only", field);
+            }
         }
 
         if (payload.containsKey("syncIntervalHours")) {
@@ -99,104 +111,143 @@ public class IntegrationManagerService {
             return serviceNowService.testConnection(
                     getConfig("servicenow_url", ""),
                     getConfig("servicenow_username", ""),
-                    getConfig("servicenow_password", "")
+                    getSecret("servicenow_password")
             );
         } else if ("Freshservice".equalsIgnoreCase(serviceName)) {
             return freshserviceService.testConnection(
                     getConfig("freshservice_url", ""),
-                    getConfig("freshservice_api_key", "")
+                    getSecret("freshservice_api_key")
             );
         } else if ("Jira".equalsIgnoreCase(serviceName)) {
             return jiraService.testConnection(
                     getConfig("jira_url", ""),
                     getConfig("jira_email", ""),
-                    getConfig("jira_api_token", "")
+                    getSecret("jira_api_token")
             );
         }
         return false;
     }
 
     /**
-     * Periodic scheduled sync (runs every hour; checks configured interval).
+     * Periodic scheduled sync. Fires often; the interval gate is evaluated <em>inside</em> the
+     * distributed lock and reads the last run from {@code system_config}, so a deployment with
+     * several replicas performs one sync per interval rather than one per replica.
      */
-    @Scheduled(fixedDelay = 3600000, initialDelay = 10000)
+    @Scheduled(fixedDelay = 300000, initialDelay = 10000)
     public void scheduledSync() {
-        int intervalHours = getIntConfig("integration_sync_interval_hours", 1);
-        if (lastSyncTime != null && OffsetDateTime.now().isBefore(lastSyncTime.plusHours(intervalHours))) {
-            return;
-        }
         distributedLockService.executeWithLock("itsm-scheduled-sync", java.time.Duration.ofMinutes(15), () -> {
-            syncAllEnabled("tenant-1");
+            int intervalHours = getIntConfig("integration_sync_interval_hours", 1);
+            OffsetDateTime last = lastSyncTime();
+            if (last != null && OffsetDateTime.now().isBefore(last.plusHours(intervalHours))) {
+                return;
+            }
+            syncAllEnabled();
         });
     }
 
-    public Map<String, Object> syncAllEnabled(String tenantId) {
+    /**
+     * Pulls from every enabled provider. Each provider is isolated: one unreachable vendor is
+     * reported as failed for that provider and does not discard rows already imported from the
+     * others, and a disabled provider is reported as disabled rather than as a success.
+     */
+    public Map<String, Object> syncAllEnabled() {
         Map<String, Object> summary = new LinkedHashMap<>();
-        int total = 0;
-        lastSyncTime = OffsetDateTime.now();
+        Map<String, Object> providers = new LinkedHashMap<>();
+        int total = 0, enabled = 0, failed = 0;
+        OffsetDateTime startedAt = OffsetDateTime.now();
 
-        try {
-            if (getBooleanConfig("servicenow_enabled", true)) {
-                List<Incident> sn = serviceNowService.fetchOpenIncidents(
-                        getConfig("servicenow_url", ""),
-                        getConfig("servicenow_username", ""),
-                        getConfig("servicenow_password", ""),
-                        tenantId
-                );
-                summary.put("ServiceNow", sn.size());
-                total += sn.size();
-            }
-
-            if (getBooleanConfig("freshservice_enabled", true)) {
-                List<Incident> fs = freshserviceService.fetchOpenIncidents(
-                        getConfig("freshservice_url", ""),
-                        getConfig("freshservice_api_key", ""),
-                        tenantId
-                );
-                summary.put("Freshservice", fs.size());
-                total += fs.size();
-            }
-
-            if (getBooleanConfig("jira_enabled", true)) {
-                List<Incident> jr = jiraService.fetchOpenIncidents(
-                        getConfig("jira_url", ""),
-                        getConfig("jira_email", ""),
-                        getConfig("jira_api_token", ""),
-                        getConfig("jira_jql", ""),
-                        tenantId
-                );
-                summary.put("Jira", jr.size());
-                total += jr.size();
-            }
-
-            lastSyncStatus = "Success (" + total + " incidents synced)";
-            summary.put("status", "SUCCESS");
-            summary.put("totalSynced", total);
-            summary.put("syncedAt", lastSyncTime);
-        } catch (Exception e) {
-            log.error("[INTEGRATION] Sync failed: {}", e.getMessage());
-            lastSyncStatus = "Error: " + e.getMessage();
-            summary.put("status", "ERROR");
-            summary.put("error", e.getMessage());
+        if (getBooleanConfig("servicenow_enabled", true)) {
+            enabled++;
+            int n = syncProvider(providers, "ServiceNow", () -> serviceNowService.fetchOpenIncidents(
+                    getConfig("servicenow_url", ""),
+                    getConfig("servicenow_username", ""),
+                    getSecret("servicenow_password")));
+            if (n < 0) failed++; else total += n;
+        } else {
+            providers.put("ServiceNow", Map.of("status", "DISABLED"));
         }
 
+        if (getBooleanConfig("freshservice_enabled", true)) {
+            enabled++;
+            int n = syncProvider(providers, "Freshservice", () -> freshserviceService.fetchOpenIncidents(
+                    getConfig("freshservice_url", ""),
+                    getSecret("freshservice_api_key")));
+            if (n < 0) failed++; else total += n;
+        } else {
+            providers.put("Freshservice", Map.of("status", "DISABLED"));
+        }
+
+        if (getBooleanConfig("jira_enabled", true)) {
+            enabled++;
+            int n = syncProvider(providers, "Jira", () -> jiraService.fetchOpenIncidents(
+                    getConfig("jira_url", ""),
+                    getConfig("jira_email", ""),
+                    getSecret("jira_api_token"),
+                    getConfig("jira_jql", "")));
+            if (n < 0) failed++; else total += n;
+        } else {
+            providers.put("Jira", Map.of("status", "DISABLED"));
+        }
+
+        String status = enabled == 0 ? "NO_PROVIDER_ENABLED"
+                : failed == 0 ? "SUCCESS"
+                : failed < enabled ? "PARTIAL" : "FAILED";
+        summary.put("status", status);
+        summary.put("providers", providers);
+        summary.put("totalSynced", total);
+        summary.put("syncedAt", startedAt);
+
+        setConfig("integration_last_sync_at", startedAt.toString());
+        setConfig("integration_last_sync_status", status + " (" + total + " imported)");
         return summary;
     }
 
-    public boolean updateExternalStatus(Incident incident, String newStatus) {
+    /** @return rows imported, or -1 when the provider failed. Vendor error text stays in the log. */
+    private int syncProvider(Map<String, Object> providers, String name,
+                             java.util.function.Supplier<List<Incident>> fetch) {
+        try {
+            int n = fetch.get().size();
+            providers.put(name, Map.of("status", "OK", "synced", n));
+            return n;
+        } catch (Exception e) {
+            log.error("[INTEGRATION] {} sync failed", name, e);
+            providers.put(name, Map.of("status", "FAILED", "reason", "PROVIDER_UNREACHABLE"));
+            return -1;
+        }
+    }
+
+    public SourceUpdate updateExternalStatus(Incident incident, String newStatus) {
+        return counted("status", dispatchStatus(incident, newStatus));
+    }
+
+    public SourceUpdate addExternalWorkNote(Incident incident, String note) {
+        return counted("note", dispatchNote(incident, note));
+    }
+
+    /**
+     * NOT_CONFIGURED is a distinct tag value, not folded into failure: an operator watching this
+     * needs to tell "the vendor refused the write" apart from "nobody wired a vendor up".
+     */
+    private static SourceUpdate counted(String kind, SourceUpdate outcome) {
+        io.micrometer.core.instrument.Metrics
+                .counter("mcp.source.ticket.writes", "kind", kind, "outcome", outcome.name()).increment();
+        return outcome;
+    }
+
+    private SourceUpdate dispatchStatus(Incident incident, String newStatus) {
         String service = resolveServiceName(incident);
         if ("ServiceNow".equalsIgnoreCase(service)) {
             return serviceNowService.updateStatus(
                     getConfig("servicenow_url", ""),
                     getConfig("servicenow_username", ""),
-                    getConfig("servicenow_password", ""),
+                    getSecret("servicenow_password"),
                     incident.getExternalId(),
                     newStatus
             );
         } else if ("Freshservice".equalsIgnoreCase(service)) {
             return freshserviceService.updateStatus(
                     getConfig("freshservice_url", ""),
-                    getConfig("freshservice_api_key", ""),
+                    getSecret("freshservice_api_key"),
                     incident.getExternalId(),
                     newStatus
             );
@@ -204,28 +255,28 @@ public class IntegrationManagerService {
             return jiraService.updateStatus(
                     getConfig("jira_url", ""),
                     getConfig("jira_email", ""),
-                    getConfig("jira_api_token", ""),
+                    getSecret("jira_api_token"),
                     incident.getExternalId(),
                     newStatus
             );
         }
-        return true;
+        return SourceUpdate.NOT_CONFIGURED;
     }
 
-    public boolean addExternalWorkNote(Incident incident, String note) {
+    private SourceUpdate dispatchNote(Incident incident, String note) {
         String service = resolveServiceName(incident);
         if ("ServiceNow".equalsIgnoreCase(service)) {
             return serviceNowService.addWorkNote(
                     getConfig("servicenow_url", ""),
                     getConfig("servicenow_username", ""),
-                    getConfig("servicenow_password", ""),
+                    getSecret("servicenow_password"),
                     incident.getExternalId(),
                     note
             );
         } else if ("Freshservice".equalsIgnoreCase(service)) {
             return freshserviceService.addNote(
                     getConfig("freshservice_url", ""),
-                    getConfig("freshservice_api_key", ""),
+                    getSecret("freshservice_api_key"),
                     incident.getExternalId(),
                     note
             );
@@ -233,38 +284,39 @@ public class IntegrationManagerService {
             return jiraService.addComment(
                     getConfig("jira_url", ""),
                     getConfig("jira_email", ""),
-                    getConfig("jira_api_token", ""),
+                    getSecret("jira_api_token"),
                     incident.getExternalId(),
                     note
             );
         }
-        return true;
+        return SourceUpdate.NOT_CONFIGURED;
     }
 
+    /** @return the attachment bytes, or {@code null} when unavailable or not configured. */
     public byte[] downloadExternalAttachment(Incident incident, String attachmentId) {
         String service = resolveServiceName(incident);
         if ("ServiceNow".equalsIgnoreCase(service)) {
             return serviceNowService.downloadAttachment(
                     getConfig("servicenow_url", ""),
                     getConfig("servicenow_username", ""),
-                    getConfig("servicenow_password", ""),
+                    getSecret("servicenow_password"),
                     attachmentId
             );
         } else if ("Freshservice".equalsIgnoreCase(service)) {
             return freshserviceService.downloadAttachment(
                     getConfig("freshservice_url", ""),
-                    getConfig("freshservice_api_key", ""),
+                    getSecret("freshservice_api_key"),
                     attachmentId
             );
         } else if ("Jira".equalsIgnoreCase(service)) {
             return jiraService.downloadAttachment(
                     getConfig("jira_url", ""),
                     getConfig("jira_email", ""),
-                    getConfig("jira_api_token", ""),
+                    getSecret("jira_api_token"),
                     attachmentId
             );
         }
-        return "Default diagnostic log report content".getBytes();
+        return null;
     }
 
     private String resolveServiceName(Incident incident) {
@@ -285,6 +337,30 @@ public class IntegrationManagerService {
         return configRepository.findById(key).map(SystemConfig::getConfigValue).orElse(fallback);
     }
 
+    /**
+     * ITSM credentials come from the environment and are never persisted. {@code servicenow_password}
+     * reads {@code MCP_SERVICENOW_PASSWORD}.
+     *
+     * <p>This is the only reader of a secret in this class, so there is exactly one place that could
+     * ever reach for the database instead — and it does not. Returning blank when the variable is
+     * unset makes the failure a 401 from the vendor, which is the correct and visible outcome; a
+     * silent fall back to a stale row in {@code system_config} is not.
+     */
+    private String getSecret(String key) {
+        String value = System.getenv("MCP_" + key.toUpperCase(Locale.ROOT));
+        if (value == null || value.isBlank()) {
+            log.warn("[INTEGRATION] Secret MCP_{} is not set; calls needing it will fail to authenticate",
+                    key.toUpperCase(Locale.ROOT));
+            return "";
+        }
+        return value;
+    }
+
+    private boolean secretPresent(String key) {
+        String value = System.getenv("MCP_" + key.toUpperCase(Locale.ROOT));
+        return value != null && !value.isBlank();
+    }
+
     private boolean getBooleanConfig(String key, boolean fallback) {
         return configRepository.findById(key)
                 .map(c -> Boolean.parseBoolean(c.getConfigValue()))
@@ -301,10 +377,5 @@ public class IntegrationManagerService {
 
     private void setConfig(String key, String value) {
         configRepository.save(new SystemConfig(key, value));
-    }
-
-    private String maskSecret(String val) {
-        if (val == null || val.isBlank()) return "";
-        return "********";
     }
 }

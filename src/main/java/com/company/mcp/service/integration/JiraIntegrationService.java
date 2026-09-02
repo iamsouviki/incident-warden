@@ -18,15 +18,11 @@ public class JiraIntegrationService {
     private final IncidentRepository incidentRepository;
     private final RestTemplate restTemplate;
 
-    public JiraIntegrationService(IncidentRepository incidentRepository) {
-        this(incidentRepository, new RestTemplate());
-    }
 
-    @org.springframework.beans.factory.annotation.Autowired
     public JiraIntegrationService(IncidentRepository incidentRepository,
                                   @org.springframework.beans.factory.annotation.Qualifier("integrationRestTemplate") RestTemplate restTemplate) {
         this.incidentRepository = incidentRepository;
-        this.restTemplate = restTemplate != null ? restTemplate : new RestTemplate();
+        this.restTemplate = java.util.Objects.requireNonNull(restTemplate, "integrationRestTemplate");
     }
 
     public boolean testConnection(String jiraUrl, String email, String apiToken) {
@@ -43,7 +39,7 @@ public class JiraIntegrationService {
         }
     }
 
-    public List<Incident> fetchOpenIncidents(String jiraUrl, String email, String apiToken, String jql, String tenantId) {
+    public List<Incident> fetchOpenIncidents(String jiraUrl, String email, String apiToken, String jql) {
         List<Incident> synced = new ArrayList<>();
         if (jiraUrl == null || jiraUrl.isBlank() || email == null || email.isBlank()) {
             log.info("[JIRA] No Jira API credentials configured.");
@@ -74,7 +70,6 @@ public class JiraIntegrationService {
                             created.setExternalId(key);
                             created.setExternalSource("Jira");
                             created.setExternalServiceName("Jira");
-                            created.setTenantId(tenantId != null ? tenantId : "tenant-1");
                             created.setCreatedAt(OffsetDateTime.now());
                             return created;
                         });
@@ -103,13 +98,14 @@ public class JiraIntegrationService {
                 }
             }
         } catch (Exception e) {
-            log.error("[JIRA] Failed to fetch issues: {}", e.getMessage());
+            log.error("[JIRA] Fetch failed", e);
+            throw new IntegrationUnavailableException("Jira", e);
         }
         return synced;
     }
 
-    public boolean updateStatus(String jiraUrl, String email, String apiToken, String issueKey, String transitionId) {
-        if (jiraUrl == null || jiraUrl.isBlank()) return true;
+    public SourceUpdate updateStatus(String jiraUrl, String email, String apiToken, String issueKey, String transitionId) {
+        if (jiraUrl == null || jiraUrl.isBlank()) return SourceUpdate.NOT_CONFIGURED;
         try {
             String url = jiraUrl.replaceAll("/+$", "") + "/rest/api/3/issue/" + issueKey + "/transitions";
             HttpHeaders headers = createAuthHeaders(email, apiToken);
@@ -118,15 +114,15 @@ public class JiraIntegrationService {
             Map<String, Object> body = Map.of("transition", Map.of("id", transitionId != null ? transitionId : "21"));
             HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
             ResponseEntity<Void> response = restTemplate.exchange(url, HttpMethod.POST, entity, Void.class);
-            return response.getStatusCode().is2xxSuccessful();
+            return response.getStatusCode().is2xxSuccessful() ? SourceUpdate.UPDATED : SourceUpdate.FAILED;
         } catch (Exception e) {
             log.error("[JIRA] Failed to transition issue {}: {}", issueKey, e.getMessage());
-            return false;
+            return SourceUpdate.FAILED;
         }
     }
 
-    public boolean addComment(String jiraUrl, String email, String apiToken, String issueKey, String commentText) {
-        if (jiraUrl == null || jiraUrl.isBlank()) return true;
+    public SourceUpdate addComment(String jiraUrl, String email, String apiToken, String issueKey, String commentText) {
+        if (jiraUrl == null || jiraUrl.isBlank()) return SourceUpdate.NOT_CONFIGURED;
         try {
             String url = jiraUrl.replaceAll("/+$", "") + "/rest/api/3/issue/" + issueKey + "/comment";
             HttpHeaders headers = createAuthHeaders(email, apiToken);
@@ -139,16 +135,16 @@ public class JiraIntegrationService {
 
             HttpEntity<Map<String, Object>> entity = new HttpEntity<>(Map.of("body", doc), headers);
             ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.POST, entity, Map.class);
-            return response.getStatusCode().is2xxSuccessful();
+            return response.getStatusCode().is2xxSuccessful() ? SourceUpdate.UPDATED : SourceUpdate.FAILED;
         } catch (Exception e) {
             log.error("[JIRA] Failed to add comment for {}: {}", issueKey, e.getMessage());
-            return false;
+            return SourceUpdate.FAILED;
         }
     }
 
     public byte[] downloadAttachment(String jiraUrl, String email, String apiToken, String attachmentId) {
         if (jiraUrl == null || jiraUrl.isBlank() || attachmentId == null) {
-            return "Jira diagnostic attachment content".getBytes();
+            return null;
         }
         try {
             String url = jiraUrl.replaceAll("/+$", "") + "/rest/api/3/attachment/content/" + attachmentId;
@@ -158,7 +154,7 @@ public class JiraIntegrationService {
             return response.getBody();
         } catch (Exception e) {
             log.error("[JIRA] Failed to download attachment {}: {}", attachmentId, e.getMessage());
-            return "Attachment content could not be retrieved from Jira.".getBytes();
+            return null;
         }
     }
 

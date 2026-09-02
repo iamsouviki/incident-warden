@@ -51,8 +51,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 }
                 String username = claims.getSubject();
                 String role = String.valueOf(claims.getOrDefault("role", "VIEWER")).toUpperCase();
-                String tenantId = String.valueOf(claims.get("tenantId"));
-                if (username == null || username.isBlank() || tenantId == null || tenantId.isBlank() || "null".equals(tenantId)) {
+                if (username == null || username.isBlank()) {
                     throw new JwtException("JWT is missing required identity claims");
                 }
                 if (!ROLES.contains(role)) {
@@ -66,7 +65,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                     throw new JwtException("Token has been revoked");
                 }
 
-                var principal = new AuthenticatedUser(username, tenantId, role);
+                var principal = new AuthenticatedUser(username, role);
                 var auth = new UsernamePasswordAuthenticationToken(
                         principal, null,
                         List.of(new SimpleGrantedAuthority("ROLE_" + role)));

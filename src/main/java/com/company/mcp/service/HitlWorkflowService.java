@@ -90,22 +90,21 @@ public class HitlWorkflowService {
 
     @Transactional
     public Map<String, Object> createPlan(UUID incidentId) {
-        String tenant = currentUser.tenantId();
-        Incident incident = incidents.findById(incidentId).filter(i -> tenant.equals(i.getTenantId()))
+        Incident incident = incidents.findById(incidentId)
                 .orElseThrow(() -> new NoSuchElementException("Incident not found"));
         boolean active = plans.findByIncidentIdOrderByCreatedAtDesc(incidentId).stream()
                 .anyMatch(p -> Set.of("PENDING_APPROVAL", "APPROVED", "EXECUTING").contains(p.getStatus()));
 
-        // Agent stages: tenant-scoped SOP matcher -> past-incident matcher -> classifier/pattern
+        // Agent stages: SOP matcher -> past-incident matcher -> classifier/pattern
         // matcher -> confidence/risk -> deterministic guardrails.
-        SopEvidence evidence = rag.findApprovedSopEvidence(tenant, incident.getSubject() + "\n" + incident.getDescription());
-        // "Have we fixed this before?" — a resolved ticket in this tenant whose remediation a
-        // human approved and watched succeed. Advisory here: it raises confidence and is put
-        // in front of the reviewer, but the approval gate is unchanged.
-        java.util.Optional<IncidentPrecedentService.Precedent> precedent = precedents.findPrecedent(tenant, incident);
+        SopEvidence evidence = rag.findApprovedSopEvidence(incident.getSubject() + "\n" + incident.getDescription());
+        // "Have we fixed this before?" — a resolved ticket whose remediation a human approved
+        // and watched succeed. Advisory here: it raises confidence and is put in front of the
+        // reviewer, but the approval gate is unchanged.
+        java.util.Optional<IncidentPrecedentService.Precedent> precedent = precedents.findPrecedent(incident);
         double precedentSimilarity = precedent.map(IncidentPrecedentService.Precedent::similarity).orElse(0.0);
         // The procedure's observed success rate is passed as the historical prior, so a
-        // procedure that has actually failed in this tenant scores lower next time. This
+        // procedure that has actually failed here scores lower next time. This
         // is the learning loop; the counters are written back after a real execution.
         AgentAssessmentService.Assessment assessment = agents.assess(incident, evidence,
                 evidence.approvedEvidencePresent() ? evidence.reliability() : agents.defaultPrior(),
@@ -153,7 +152,7 @@ public class HitlWorkflowService {
                 : scripts.generate(incident, evidence, parsedAction, platform);
 
         // ── Eligibility ──────────────────────────────────────────────────────────────
-        // Grounded: an APPROVED procedure for this tenant backs the plan. The full
+        // Grounded: an APPROVED procedure backs the plan. The full
         // deterministic boundary applies and a WARN-level script is tolerated, because an
         // operator curated the procedure it came from.
         //
@@ -178,14 +177,12 @@ public class HitlWorkflowService {
         if (needsHost && host.known() && !reach.known()) findings.add("TARGET_REACHABILITY_UNKNOWN");
 
         RemediationPlan plan = new RemediationPlan();
-        plan.setTenantId(tenant);
         plan.setIncidentId(incidentId);
         plan.setStatus(eligible ? "PENDING_APPROVAL" : "BLOCKED");
         plan.setActionName(assessment.action().isBlank() ? "none" : assessment.action());
         plan.setTarget(assessment.target());
         plan.setParametersJson(parameters(assessment, evidence, script, precedent.orElse(null), platform));
         plan.setSopEvidence(evidence.approvedEvidencePresent() ? evidence.excerpt() : "SOP evidence unavailable: " + evidence.reason());
-        plan.setConfidenceScore(assessment.confidenceScore());
         plan.setRiskScore(assessment.riskPenalty() * 100.0);
         plan.setGuardrailStatus(eligible ? "PASS" : "BLOCK");
         plan.setGuardrailFindings(String.join(";", findings));
@@ -196,7 +193,7 @@ public class HitlWorkflowService {
         plan.setRollbackPlan(rollbackFor(parsedAction, script));
         // The script is inside the hash. Edit one character of it and the approval no
         // longer matches, so it cannot execute.
-        plan.setPlanHash(hash(tenant + "|" + incidentId + "|" + plan.getActionName() + "|" + plan.getTarget()
+        plan.setPlanHash(hash(incidentId + "|" + plan.getActionName() + "|" + plan.getTarget()
                 + "|" + evidence.procedureIds() + "|" + plan.getParametersJson() + "|" + script.script()));
         plans.save(plan);
 
@@ -205,9 +202,7 @@ public class HitlWorkflowService {
         assessmentAudit.put("patternSimilarity", assessment.patternSimilarity());
         assessmentAudit.put("historicalSuccess", assessment.historicalSuccess());
         assessmentAudit.put("sopReliability", assessment.sopReliability());
-        assessmentAudit.put("systemHealth", assessment.systemHealth());
         assessmentAudit.put("riskPenalty", assessment.riskPenalty());
-        assessmentAudit.put("confidenceScore", assessment.confidenceScore());
         assessmentAudit.put("sopEvidenceReason", evidence.reason());
         assessmentAudit.put("procedureIds", evidence.procedureIds());
         assessmentAudit.put("precedentIncident", precedent.map(IncidentPrecedentService.Precedent::reference).orElse("NONE"));
@@ -225,7 +220,7 @@ public class HitlWorkflowService {
         assessmentAudit.put("scriptScanLevel", script.scanLevel());
         assessmentAudit.put("scriptFindings", script.findings());
         assessmentAudit.put("status", plan.getStatus());
-        audit.record(tenant, "REMEDIATION_PLAN", plan.getId(), "PLAN_CREATED", currentUser.username(), assessmentAudit);
+        audit.record("REMEDIATION_PLAN", plan.getId(), "PLAN_CREATED", currentUser.username(), assessmentAudit);
 
         if (!eligible) {
             // The reason an approver or operator actually needs: whichever gate closed.
@@ -240,12 +235,11 @@ public class HitlWorkflowService {
                     : !targetReason.isBlank() ? targetReason
                     : !script.reason().isBlank() ? script.reason()
                     : !grounded ? evidence.reason()
-                    // Named separately from GUARDRAIL_BLOCKED, which it used to be reported
-                    // as. The guardrails had passed; the score had not reached the band. An
-                    // operator reading "GUARDRAIL_BLOCKED" next to two advisory findings goes
-                    // looking for a dangerous script that isn't there.
+                    // What is left once the score is gone. The route can only fail here for one
+                    // reason — an approved procedure matched but the classifier could not name a
+                    // tool — and saying that is more use to an operator than any percentage was.
                     : !"HITL_REQUIRED".equals(assessment.route())
-                            ? "CONFIDENCE_BELOW_HITL_BAND:" + Math.round(assessment.confidenceScore())
+                            ? "NO_TOOL_FOR_THIS_INCIDENT"
                             : "GUARDRAIL_BLOCKED";
             // A rejected duplicate is not an escalation. Without this guard, asking to plan an
             // incident that already had a plan in the queue flipped it from PENDING_APPROVAL to
@@ -254,10 +248,9 @@ public class HitlWorkflowService {
             // the incident's own state is not this call's to change.
             if (!active) {
                 incident.setStatus("ESCALATED");
-                incident.setConfidenceScore(assessment.confidenceScore());
                 incidents.save(incident);
             }
-            audit.record(tenant, "INCIDENT", incidentId, "PLAN_ESCALATED", currentUser.username(), Map.of("planId", plan.getId(), "reason", reason));
+            audit.record("INCIDENT", incidentId, "PLAN_ESCALATED", currentUser.username(), Map.of("planId", plan.getId(), "reason", reason));
             Map<String, Object> escalation = new LinkedHashMap<>();
             escalation.put("plan", plan);
             escalation.put("hitlRequest", "");
@@ -271,26 +264,24 @@ public class HitlWorkflowService {
                     : !host.known() ? host.prompt()
                     : reach.unreachable() ? reach.detail()
                             + " Confirm the server name and the connection method on this incident, then plan again."
-                    : reason.startsWith("CONFIDENCE_BELOW_HITL_BAND")
-                            ? "This scored %d%% against the %.0f%% this workspace requires before a plan may be offered for approval. %s A person works this one by hand — the evidence, script and score above are still here to work from."
-                                    .formatted(Math.round(assessment.confidenceScore()), agents.hitlBandPercent(),
-                                            "P1".equalsIgnoreCase(incident.getPriority()) || "P2".equalsIgnoreCase(incident.getPriority())
-                                                    ? incident.getPriority() + " carries a risk penalty that holds it below the band deliberately."
-                                                    : "Raise the score by approving a matching procedure, or by resolving a similar incident so this one has a precedent.")
+                    : "NO_TOOL_FOR_THIS_INCIDENT".equals(reason)
+                            ? "An approved procedure matches this incident, but no automated tool covers the action it "
+                                    + "describes, so there is nothing to run. The remediation steps below come from that "
+                                    + "procedure — work them by hand, or add a tool for this action and plan again."
                     : "");
             return escalation;
         }
 
         HitlRequest request = new HitlRequest();
-        request.setTenantId(tenant); request.setIncidentId(incidentId); request.setPlanId(plan.getId());
+        request.setIncidentId(incidentId); request.setPlanId(plan.getId());
         request.setStatus("PENDING"); request.setRequestedBy(currentUser.username()); requests.save(request);
-        incident.setStatus("PENDING_APPROVAL"); incident.setConfidenceScore(assessment.confidenceScore()); incidents.save(incident);
-        audit.record(tenant, "HITL_REQUEST", request.getId(), "APPROVAL_REQUESTED", currentUser.username(), Map.of("planId", plan.getId(), "planHash", plan.getPlanHash()));
+        incident.setStatus("PENDING_APPROVAL"); incidents.save(incident);
+        audit.record("HITL_REQUEST", request.getId(), "APPROVAL_REQUESTED", currentUser.username(), Map.of("planId", plan.getId(), "planHash", plan.getPlanHash()));
         return Map.of("plan", plan, "hitlRequest", request, "route", "HITL_REQUIRED");
     }
 
     public java.util.List<HitlRequest> pending() {
-        return requests.findByTenantIdAndStatusOrderByCreatedAtAsc(currentUser.tenantId(), "PENDING");
+        return requests.findByStatusOrderByCreatedAtAsc("PENDING");
     }
 
     private Map<String, Object> resolveUserInfo(String username) {
@@ -307,13 +298,12 @@ public class HitlWorkflowService {
     }
 
     public java.util.List<Map<String, Object>> pendingReviewItems() {
-        String tenant = currentUser.tenantId();
         return java.util.stream.Stream.concat(
                 pending().stream(),
-                requests.findByTenantIdAndStatusOrderByCreatedAtAsc(tenant, "APPROVED").stream()
+                requests.findByStatusOrderByCreatedAtAsc("APPROVED").stream()
             ).sorted(java.util.Comparator.comparing(HitlRequest::getCreatedAt)).map(request -> {
-            RemediationPlan plan = plans.findById(request.getPlanId()).filter(p -> tenant.equals(p.getTenantId())).orElse(null);
-            Incident incident = incidents.findById(request.getIncidentId()).filter(i -> tenant.equals(i.getTenantId())).orElse(null);
+            RemediationPlan plan = plans.findById(request.getPlanId()).orElse(null);
+            Incident incident = incidents.findById(request.getIncidentId()).orElse(null);
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("request", request); 
             item.put("plan", plan); 
@@ -329,8 +319,7 @@ public class HitlWorkflowService {
 
     @Transactional
     public Map<String, Object> decide(UUID requestId, String decision, String reason) {
-        String tenant = currentUser.tenantId();
-        HitlRequest request = requests.findByIdAndTenantId(requestId, tenant).orElseThrow(() -> new NoSuchElementException("Approval request not found"));
+        HitlRequest request = requests.findById(requestId).orElseThrow(() -> new NoSuchElementException("Approval request not found"));
         if (!"PENDING".equals(request.getStatus())) throw new IllegalStateException("Approval request is already decided");
         // Separation of duties: the analyst who raised a plan cannot also approve it.
         // Without this, one compromised account is enough to move a plan from draft to
@@ -338,7 +327,7 @@ public class HitlWorkflowService {
         if (separationOfDuties() && currentUser.username().equals(request.getRequestedBy())) {
             throw new AccessDeniedException("The requester of a plan cannot approve it. A second reviewer is required.");
         }
-        RemediationPlan plan = plans.findById(request.getPlanId()).filter(p -> tenant.equals(p.getTenantId())).orElseThrow(() -> new NoSuchElementException("Plan not found"));
+        RemediationPlan plan = plans.findById(request.getPlanId()).orElseThrow(() -> new NoSuchElementException("Plan not found"));
         if (!"PENDING_APPROVAL".equals(plan.getStatus()) || !"PASS".equals(plan.getGuardrailStatus())) throw new IllegalStateException("Only a guardrail-passing pending plan may be decided");
         boolean approve = "APPROVE".equalsIgnoreCase(decision);
         request.setStatus(approve ? "APPROVED" : "REJECTED"); request.setReviewer(currentUser.username());
@@ -346,7 +335,7 @@ public class HitlWorkflowService {
         request.setApprovedPlanHash(approve ? plan.getPlanHash() : null); requests.save(request);
         plan.setStatus(approve ? "APPROVED" : "REJECTED"); plans.save(plan);
         Incident incident = incidents.findById(request.getIncidentId()).orElseThrow(); incident.setStatus(approve ? "APPROVED" : "REJECTED"); incidents.save(incident);
-        audit.record(tenant, "HITL_REQUEST", request.getId(), approve ? "APPROVED" : "REJECTED", currentUser.username(), Map.of("planId", plan.getId(), "reason", request.getDecisionReason()));
+        audit.record("HITL_REQUEST", request.getId(), approve ? "APPROVED" : "REJECTED", currentUser.username(), Map.of("planId", plan.getId(), "reason", request.getDecisionReason()));
         return Map.of("request", request, "plan", plan);
     }
 
@@ -358,16 +347,14 @@ public class HitlWorkflowService {
      * no free-text comment history, no assignee contact details.
      */
     public java.util.List<Map<String, Object>> openIncidentsForAgent() {
-        String tenant = currentUser.tenantId();
-        return incidents.findTop50ByTenantIdOrderByUpdatedAtDesc(tenant).stream()
+        return incidents.findTop50ByOrderByUpdatedAtDesc().stream()
                 .filter(i -> !Set.of("RESOLVED", "CLOSED", "REJECTED").contains(String.valueOf(i.getStatus()).toUpperCase(java.util.Locale.ROOT)))
                 .map(this::agentView)
                 .toList();
     }
 
     public Map<String, Object> incidentForAgent(UUID incidentId) {
-        String tenant = currentUser.tenantId();
-        Incident incident = incidents.findById(incidentId).filter(i -> tenant.equals(i.getTenantId()))
+        Incident incident = incidents.findById(incidentId)
                 .orElseThrow(() -> new NoSuchElementException("Incident not found"));
         return agentView(incident);
     }
@@ -380,7 +367,6 @@ public class HitlWorkflowService {
         view.put("description", incident.getDescription());
         view.put("status", incident.getStatus());
         view.put("priority", incident.getPriority());
-        view.put("confidenceScore", incident.getConfidenceScore());
         view.put("createdAt", incident.getCreatedAt());
         return view;
     }
@@ -393,12 +379,11 @@ public class HitlWorkflowService {
      * something they cannot fully see.
      */
     public Map<String, Object> reviewDetail(UUID requestId) {
-        String tenant = currentUser.tenantId();
-        HitlRequest request = requests.findByIdAndTenantId(requestId, tenant)
+        HitlRequest request = requests.findById(requestId)
                 .orElseThrow(() -> new NoSuchElementException("Approval request not found"));
-        RemediationPlan plan = plans.findById(request.getPlanId()).filter(p -> tenant.equals(p.getTenantId()))
+        RemediationPlan plan = plans.findById(request.getPlanId())
                 .orElseThrow(() -> new NoSuchElementException("Plan not found"));
-        Incident incident = incidents.findById(request.getIncidentId()).filter(i -> tenant.equals(i.getTenantId()))
+        Incident incident = incidents.findById(request.getIncidentId())
                 .orElseThrow(() -> new NoSuchElementException("Incident not found"));
 
         String actionKey = approvedActionKey(plan);
@@ -425,7 +410,7 @@ public class HitlWorkflowService {
                 ? 0 : plan.getRemediationScript().split("\n", -1).length);
         script.put("provenance", switch (String.valueOf(plan.getScriptSource())) {
             case "SOP_TEMPLATE" -> "Rendered from a fixed template using the approved procedure's action key. No model wrote this text.";
-            case "SOP_GROUNDED" -> "Written by the model, constrained to an APPROVED procedure for this tenant.";
+            case "SOP_GROUNDED" -> "Written by the model, constrained to an APPROVED procedure.";
             case "LLM_KNOWLEDGE" -> "Written by the model from general knowledge. No approved procedure authorises it — you are the only gate.";
             default -> "No script was produced for this plan.";
         });
@@ -484,10 +469,9 @@ public class HitlWorkflowService {
     }
 
     private Map<String, Object> runApprovedPlan(UUID requestId, boolean dryRun) {
-        String tenant = currentUser.tenantId();
-        HitlRequest request = requests.findByIdAndTenantId(requestId, tenant).orElseThrow(() -> new NoSuchElementException("Approval request not found"));
+        HitlRequest request = requests.findById(requestId).orElseThrow(() -> new NoSuchElementException("Approval request not found"));
         if (!"APPROVED".equals(request.getStatus())) throw new IllegalStateException("Only an approved request can execute");
-        RemediationPlan plan = plans.findById(request.getPlanId()).filter(p -> tenant.equals(p.getTenantId())).orElseThrow(() -> new NoSuchElementException("Plan not found"));
+        RemediationPlan plan = plans.findById(request.getPlanId()).orElseThrow(() -> new NoSuchElementException("Plan not found"));
         if (!Objects.equals(request.getApprovedPlanHash(), plan.getPlanHash()) || !"PASS".equals(plan.getGuardrailStatus())) {
             throw new IllegalStateException("Plan changed since approval and is no longer eligible for execution");
         }
@@ -510,7 +494,7 @@ public class HitlWorkflowService {
                 plan.getScriptLanguage(), plan.getTarget(), IncidentTarget.connection(incident), dryRun);
 
         ActionExecution execution = new ActionExecution();
-        execution.setTenantId(tenant); execution.setIncidentId(request.getIncidentId()); execution.setPlanId(plan.getId()); execution.setHitlRequestId(request.getId());
+        execution.setIncidentId(request.getIncidentId()); execution.setPlanId(plan.getId()); execution.setHitlRequestId(request.getId());
         execution.setMode(outcome.mode()); execution.setStatus(outcome.status());
         execution.setValidationResult("Plan hash matches the approved hash, so the script is byte-for-byte the text "
                 + "that was approved. It was re-scanned against the guardrail block list at execution time"
@@ -532,7 +516,7 @@ public class HitlWorkflowService {
         // simulation as a success would inflate confidence without evidence.
         if (!dryRun && !"SIMULATED".equals(outcome.mode())) {
             for (UUID procedureId : procedureIds(plan)) {
-                sopProcedures.recordOutcome(procedureId, tenant, outcome.succeeded());
+                sopProcedures.recordOutcome(procedureId, outcome.succeeded());
             }
         }
 
@@ -543,7 +527,7 @@ public class HitlWorkflowService {
         details.put("status", outcome.status());
         details.put("reason", outcome.reason());
         details.put("dryRun", dryRun);
-        audit.record(tenant, "ACTION_EXECUTION", execution.getId(),
+        audit.record("ACTION_EXECUTION", execution.getId(),
                 dryRun ? "DRY_RUN_COMPLETED" : "EXECUTION_COMPLETED", currentUser.username(), details);
 
         return Map.of("execution", execution, "message",

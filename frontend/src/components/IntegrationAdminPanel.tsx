@@ -1,20 +1,170 @@
 import React, { useEffect, useState } from 'react';
 import { authFetch } from '../services/api';
-import { Layers, RefreshCw, CheckCircle, AlertCircle, Clock } from 'lucide-react';
+import { Layers, RefreshCw, CheckCircle, AlertCircle, Clock, Mail } from 'lucide-react';
+
+/**
+ * Whether a credential is set — never the credential.
+ *
+ * These used to be editable password inputs, which meant every save posted the secret through
+ * the browser and the server ignored it anyway (credentials come from MCP_* environment
+ * variables). An input that cannot change anything but can leak the value is the worst of both,
+ * so the panel now reports state and names the variable to set.
+ */
+function SecretStatus({ label, envVar, set }: { label: string; envVar: string; set?: boolean }) {
+  return (
+    <div>
+      <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '4px' }}>{label}</label>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: '7px', height: '34px', padding: '0 9px',
+        borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--surface2)',
+        fontSize: '12px', color: set ? 'var(--ok, #16a34a)' : 'var(--warn, #b45309)',
+      }}>
+        {set ? <CheckCircle size={13} /> : <AlertCircle size={13} />}
+        <span>{set ? 'Set from environment' : 'Not set'}</span>
+      </div>
+      <code style={{ display: 'block', marginTop: '4px', fontSize: '10.5px', color: 'var(--text-muted)' }}>{envVar}</code>
+    </div>
+  );
+}
+
+/** Shared field shell, so the relay form matches the integration forms without repeating styles. */
+function Field({ id, label, children }: { id: string; label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <label htmlFor={id} style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '4px' }}>{label}</label>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * The SMTP relay behind escalation email.
+ *
+ * These three endpoints existed with nothing calling them, which meant the only way to point the
+ * platform at a mail relay was a SQL statement against config.system_config. Deleting them would
+ * have removed a working feature; this is the missing half.
+ */
+function NotificationRelay() {
+  const [relay, setRelay] = useState<{ enabled: boolean; host: string; port: number; from: string }>(
+    { enabled: false, host: '', port: 25, from: '' });
+  const [testTo, setTestTo] = useState('');
+  const [busy, setBusy] = useState<'save' | 'test' | null>(null);
+  const [note, setNote] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  useEffect(() => {
+    authFetch('/api/v1/ai/config/notifications')
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => data && setRelay({
+        enabled: !!data.enabled, host: data.host || '', port: Number(data.port) || 25, from: data.from || '' }))
+      .catch(() => setNote({ type: 'error', text: 'Could not load notification settings.' }));
+  }, []);
+
+  const post = async (path: string, body: unknown, kind: 'save' | 'test') => {
+    setBusy(kind);
+    setNote(null);
+    try {
+      const res = await authFetch(path, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const data = await res.json().catch(() => ({}));
+      // The server validates host/from/port too; this surfaces its message rather than guessing.
+      setNote({ type: res.ok ? 'success' : 'error', text: data.message || data.error || (res.ok ? 'Saved.' : 'Request failed.') });
+    } catch {
+      setNote({ type: 'error', text: 'Network error. Nothing was changed.' });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const invalid = relay.enabled && (!relay.host.trim() || !relay.from.trim());
+
+  return (
+    <div className="card" style={{ padding: '24px', marginTop: '24px', borderRadius: '12px' }}>
+      <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <Mail size={18} className="text-accent" />
+        Escalation Email Relay
+      </h3>
+      <p style={{ margin: '4px 0 16px', fontSize: '13px', color: 'var(--text-muted)' }}>
+        Where the platform sends notice when a plan needs review or an execution fails. The relay is
+        used unauthenticated, so it must be one that accepts mail from this host.
+      </p>
+
+      {note && (
+        <div role="status" style={{
+          padding: '10px 14px', borderRadius: '8px', marginBottom: '16px', fontSize: '13px',
+          display: 'flex', alignItems: 'center', gap: '8px',
+          background: note.type === 'success' ? 'var(--green-dim, rgba(34,197,94,0.15))' : 'var(--red-dim, rgba(239,68,68,0.15))',
+          color: note.type === 'success' ? 'var(--green, #22c55e)' : 'var(--red, #ef4444)',
+          border: `1px solid ${note.type === 'success' ? 'var(--green, #22c55e)' : 'var(--red, #ef4444)'}`,
+        }}>
+          {note.type === 'success' ? <CheckCircle size={16} /> : <AlertCircle size={16} />}
+          {note.text}
+        </div>
+      )}
+
+      <form onSubmit={e => { e.preventDefault(); post('/api/v1/ai/config/notifications', relay, 'save'); }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12.5px', cursor: 'pointer', marginBottom: '12px' }}>
+          <input type="checkbox" checked={relay.enabled} onChange={e => setRelay({ ...relay, enabled: e.target.checked })} />
+          Send escalation email
+        </label>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
+          <Field id="relay-host" label="SMTP host">
+            <input id="relay-host" type="text" placeholder="smtp.company.internal" value={relay.host}
+              onChange={e => setRelay({ ...relay, host: e.target.value })}
+              style={{ width: '100%', height: '34px', padding: '0 8px', fontSize: '12.5px' }} />
+          </Field>
+          <Field id="relay-port" label="Port">
+            <input id="relay-port" type="number" min={1} max={65535} value={relay.port}
+              onChange={e => setRelay({ ...relay, port: Number(e.target.value) })}
+              style={{ width: '100%', height: '34px', padding: '0 8px', fontSize: '12.5px' }} />
+          </Field>
+          <Field id="relay-from" label="From address">
+            <input id="relay-from" type="email" placeholder="incident-warden@company.com" value={relay.from}
+              onChange={e => setRelay({ ...relay, from: e.target.value })}
+              style={{ width: '100%', height: '34px', padding: '0 8px', fontSize: '12.5px' }} />
+          </Field>
+        </div>
+
+        {invalid && (
+          <p style={{ margin: '10px 0 0', fontSize: '12px', color: 'var(--red, #ef4444)' }}>
+            A host and a from address are required before email can be switched on.
+          </p>
+        )}
+
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', justifyContent: 'flex-end', marginTop: '16px', flexWrap: 'wrap' }}>
+          <Field id="relay-test-to" label="Send a test message to">
+            <input id="relay-test-to" type="email" placeholder="you@company.com" value={testTo}
+              onChange={e => setTestTo(e.target.value)}
+              style={{ width: '220px', height: '34px', padding: '0 8px', fontSize: '12.5px' }} />
+          </Field>
+          <button type="button" className="btn-secondary" disabled={busy !== null || !testTo.trim()}
+            onClick={() => post('/api/v1/ai/config/notifications/test', { to: testTo.trim() }, 'test')}
+            style={{ height: '34px', padding: '0 14px', fontSize: '12.5px' }}>
+            {busy === 'test' ? 'Sending…' : 'Send test'}
+          </button>
+          <button type="submit" className="btn-primary" disabled={busy !== null || invalid}
+            style={{ height: '38px', padding: '0 20px', fontSize: '13px' }}>
+            {busy === 'save' ? 'Saving…' : 'Save Relay Settings'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
 
 export default function IntegrationAdminPanel() {
   const [settings, setSettings] = useState<{
     serviceNowEnabled?: boolean;
     serviceNowUrl?: string;
     serviceNowUsername?: string;
-    serviceNowPassword?: string;
+    serviceNowSecretSet?: boolean;
     freshserviceEnabled?: boolean;
     freshserviceUrl?: string;
-    freshserviceApiKey?: string;
+    freshserviceSecretSet?: boolean;
     jiraEnabled?: boolean;
     jiraUrl?: string;
     jiraEmail?: string;
-    jiraApiToken?: string;
+    jiraSecretSet?: boolean;
     jiraJql?: string;
     syncIntervalHours?: number;
     lastSyncTime?: string;
@@ -106,6 +256,7 @@ export default function IntegrationAdminPanel() {
   };
 
   return (
+    <>
     <div className="card" style={{ padding: '24px', marginTop: '24px', borderRadius: '12px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
         <div>
@@ -221,16 +372,7 @@ export default function IntegrationAdminPanel() {
                 style={{ width: '100%', height: '34px', padding: '0 8px', fontSize: '12.5px' }}
               />
             </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '4px' }}>Password / API Key</label>
-              <input
-                type="password"
-                placeholder="••••••••••••"
-                value={settings.serviceNowPassword || ''}
-                onChange={e => setSettings({ ...settings, serviceNowPassword: e.target.value })}
-                style={{ width: '100%', height: '34px', padding: '0 8px', fontSize: '12.5px' }}
-              />
-            </div>
+            <SecretStatus label="Password / API Key" envVar="MCP_SERVICENOW_PASSWORD" set={settings.serviceNowSecretSet} />
           </div>
         </div>
 
@@ -273,16 +415,7 @@ export default function IntegrationAdminPanel() {
                 style={{ width: '100%', height: '34px', padding: '0 8px', fontSize: '12.5px' }}
               />
             </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '4px' }}>Freshservice API Key</label>
-              <input
-                type="password"
-                placeholder="••••••••••••"
-                value={settings.freshserviceApiKey || ''}
-                onChange={e => setSettings({ ...settings, freshserviceApiKey: e.target.value })}
-                style={{ width: '100%', height: '34px', padding: '0 8px', fontSize: '12.5px' }}
-              />
-            </div>
+            <SecretStatus label="Freshservice API Key" envVar="MCP_FRESHSERVICE_API_KEY" set={settings.freshserviceSecretSet} />
           </div>
         </div>
 
@@ -335,16 +468,7 @@ export default function IntegrationAdminPanel() {
                 style={{ width: '100%', height: '34px', padding: '0 8px', fontSize: '12.5px' }}
               />
             </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '4px' }}>API Token</label>
-              <input
-                type="password"
-                placeholder="••••••••••••"
-                value={settings.jiraApiToken || ''}
-                onChange={e => setSettings({ ...settings, jiraApiToken: e.target.value })}
-                style={{ width: '100%', height: '34px', padding: '0 8px', fontSize: '12.5px' }}
-              />
-            </div>
+            <SecretStatus label="API Token" envVar="MCP_JIRA_API_TOKEN" set={settings.jiraSecretSet} />
             <div style={{ gridColumn: '1 / -1' }}>
               <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '4px' }}>JQL Filter Query</label>
               <input
@@ -365,5 +489,7 @@ export default function IntegrationAdminPanel() {
         </div>
       </form>
     </div>
+    <NotificationRelay />
+    </>
   );
 }

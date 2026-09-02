@@ -2,10 +2,17 @@ package com.company.mcp;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.web.servlet.MockMvc;
+
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 
 /**
  * Boots the full application context.
@@ -26,6 +33,7 @@ import org.springframework.test.context.TestPropertySource;
  * valid. Migration correctness is proved by running the app against real Postgres.
  */
 @SpringBootTest
+@AutoConfigureMockMvc
 @ActiveProfiles("local")
 @TestPropertySource(properties = {
         "spring.datasource.url=jdbc:h2:mem:context-smoke-test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE",
@@ -49,8 +57,25 @@ class ApplicationContextSmokeTest {
     @MockBean
     private VectorStore vectorStore;
 
+    @Autowired
+    private MockMvc mvc;
+
     @Test
     void contextLoads() {
         // A failure to reach this line is the assertion: the context did not start.
+    }
+
+    /**
+     * The credential endpoints must not be storable. Spring Security's default header
+     * writers already send {@code no-store} on every response, so this is not a feature —
+     * it is the pin that fails the build if someone calls {@code http.headers(...)} and
+     * turns the defaults off while chasing a caching problem elsewhere.
+     */
+    @Test
+    void theLoginResponseIsNeverCached() throws Exception {
+        mvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"nobody\",\"password\":\"wrong\"}"))
+                .andExpect(header().string("Cache-Control", org.hamcrest.Matchers.containsString("no-store")));
     }
 }

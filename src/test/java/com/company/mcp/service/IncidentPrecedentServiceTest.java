@@ -52,8 +52,8 @@ class IncidentPrecedentServiceTest {
 
     @BeforeEach
     void wireRepositories() {
-        when(executions.findTop100ByTenantIdAndStatusAndHitlRequestIdIsNotNullOrderByCompletedAtDesc(
-                eq("tenant-a"), eq("SUCCEEDED"))).thenReturn(approvedSuccesses);
+        when(executions.findTop100ByStatusAndHitlRequestIdIsNotNullOrderByCompletedAtDesc("SUCCEEDED"))
+                .thenReturn(approvedSuccesses);
         when(incidents.findAllById(any())).thenAnswer(call -> {
             Set<UUID> ids = ids(call.getArgument(0));
             return pastIncidents.stream().filter(i -> ids.contains(i.getId())).toList();
@@ -70,13 +70,12 @@ class IncidentPrecedentServiceTest {
 
     @Test
     void withNoHumanApprovedSuccessThereIsNoPrecedent() {
-        Optional<IncidentPrecedentService.Precedent> found = service.findPrecedent("tenant-a", newIncident());
+        Optional<IncidentPrecedentService.Precedent> found = service.findPrecedent(newIncident());
 
         assertTrue(found.isEmpty());
         // The query itself is the human-approval filter: SUCCEEDED, and hitl_request_id
         // present. If this call ever loosens, an auto-run becomes its own authority.
-        verify(executions).findTop100ByTenantIdAndStatusAndHitlRequestIdIsNotNullOrderByCompletedAtDesc(
-                "tenant-a", "SUCCEEDED");
+        verify(executions).findTop100ByStatusAndHitlRequestIdIsNotNullOrderByCompletedAtDesc("SUCCEEDED");
     }
 
     @Test
@@ -84,7 +83,7 @@ class IncidentPrecedentServiceTest {
         resolved("Printer queue jammed", "", "CLEAR_CACHE:printer:spool:linux", null, "SOP_TEMPLATE");
         UUID exact = resolved("Printer queue stuck", "", "RESTART_SERVICE:spooler:windows", null, "SOP_TEMPLATE");
 
-        IncidentPrecedentService.Precedent best = service.findPrecedent("tenant-a", newIncident()).orElseThrow();
+        IncidentPrecedentService.Precedent best = service.findPrecedent(newIncident()).orElseThrow();
 
         assertEquals(exact, best.incidentId());
         assertEquals("RESTART_SERVICE:spooler:windows", best.actionKey());
@@ -102,7 +101,7 @@ class IncidentPrecedentServiceTest {
         UUID vague = resolved("Spooler fault", "Reported by floor two",
                 "RESTART_SERVICE:spooler:windows", "Printer queue stuck again; restarted the spooler.", "SOP_TEMPLATE");
 
-        IncidentPrecedentService.Precedent best = service.findPrecedent("tenant-a", newIncident()).orElseThrow();
+        IncidentPrecedentService.Precedent best = service.findPrecedent(newIncident()).orElseThrow();
 
         assertEquals(vague, best.incidentId());
         assertEquals(1.0, best.similarity(), 0.001);
@@ -118,25 +117,24 @@ class IncidentPrecedentServiceTest {
         RemediationPlan plan = plan(subject.getId(), "RESTART_SERVICE:spooler:windows", "SOP_TEMPLATE");
         approvedSuccesses.add(execution(subject.getId(), plan.getId()));
 
-        assertTrue(service.findPrecedent("tenant-a", subject).isEmpty());
+        assertTrue(service.findPrecedent(subject).isEmpty());
     }
 
     /** A plan with no pinned action key describes a fix; it does not contain one. */
     @Test
     void aPlanThatPinnedNoActionKeyIsNotRepeatable() {
         UUID incidentId = UUID.randomUUID();
-        pastIncidents.add(Incident.builder().id(incidentId).tenantId("tenant-a")
+        pastIncidents.add(Incident.builder().id(incidentId)
                 .subject("Printer queue stuck").externalId("INC-9").build());
         RemediationPlan plan = new RemediationPlan();
         ReflectionTestUtils.setField(plan, "id", UUID.randomUUID());
-        plan.setTenantId("tenant-a");
         plan.setIncidentId(incidentId);
         plan.setActionName("clear-printer-queue");
         plan.setParametersJson("{\"classification\":\"PRINTING\"}");
         pastPlans.add(plan);
         approvedSuccesses.add(execution(incidentId, plan.getId()));
 
-        assertTrue(service.findPrecedent("tenant-a", newIncident()).isEmpty());
+        assertTrue(service.findPrecedent(newIncident()).isEmpty());
     }
 
     /**
@@ -146,40 +144,27 @@ class IncidentPrecedentServiceTest {
     @Test
     void theNewestSuccessPerPastIncidentIsTheOneCited() {
         UUID incidentId = UUID.randomUUID();
-        pastIncidents.add(Incident.builder().id(incidentId).tenantId("tenant-a")
+        pastIncidents.add(Incident.builder().id(incidentId)
                 .subject("Printer queue stuck").externalId("INC-7").build());
         RemediationPlan newer = plan(incidentId, "RESTART_SERVICE:spooler:windows", "SOP_TEMPLATE");
         RemediationPlan older = plan(incidentId, "RESTART_SERVICE:oldspooler:windows", "SOP_TEMPLATE");
         approvedSuccesses.add(execution(incidentId, newer.getId()));   // repository order: newest first
         approvedSuccesses.add(execution(incidentId, older.getId()));
 
-        IncidentPrecedentService.Precedent best = service.findPrecedent("tenant-a", newIncident()).orElseThrow();
+        IncidentPrecedentService.Precedent best = service.findPrecedent(newIncident()).orElseThrow();
 
         assertEquals("RESTART_SERVICE:spooler:windows", best.actionKey());
     }
 
-    /** A precedent from another tenant is not this tenant's permission. */
-    @Test
-    void anotherTenantsResolvedIncidentIsInvisible() {
-        UUID incidentId = UUID.randomUUID();
-        pastIncidents.add(Incident.builder().id(incidentId).tenantId("tenant-b")
-                .subject("Printer queue stuck").externalId("OTHER-1").build());
-        RemediationPlan plan = plan(incidentId, "RESTART_SERVICE:spooler:windows", "SOP_TEMPLATE");
-        ReflectionTestUtils.setField(plan, "tenantId", "tenant-b");
-        approvedSuccesses.add(execution(incidentId, plan.getId()));
-
-        assertTrue(service.findPrecedent("tenant-a", newIncident()).isEmpty());
-    }
-
     private Incident newIncident() {
         return Incident.builder().id(UUID.fromString("00000000-0000-0000-0000-0000000000aa"))
-                .tenantId("tenant-a").subject("Printer queue stuck").description("")
+                .subject("Printer queue stuck").description("")
                 .priority("P3").externalId("INC-NEW").build();
     }
 
     private UUID resolved(String subject, String description, String actionKey, String note, String scriptSource) {
         UUID incidentId = UUID.randomUUID();
-        pastIncidents.add(Incident.builder().id(incidentId).tenantId("tenant-a").subject(subject)
+        pastIncidents.add(Incident.builder().id(incidentId).subject(subject)
                 .description(description).externalId("INC-" + pastIncidents.size()).build());
         RemediationPlan plan = plan(incidentId, actionKey, scriptSource);
         approvedSuccesses.add(execution(incidentId, plan.getId()));
@@ -192,7 +177,6 @@ class IncidentPrecedentServiceTest {
     private RemediationPlan plan(UUID incidentId, String actionKey, String scriptSource) {
         RemediationPlan plan = new RemediationPlan();
         ReflectionTestUtils.setField(plan, "id", UUID.randomUUID());
-        plan.setTenantId("tenant-a");
         plan.setIncidentId(incidentId);
         plan.setActionName("restart-approved-service");
         plan.setParametersJson("{\"approvedActionKey\":\"" + actionKey + "\",\"procedureIds\":[]}");
@@ -206,7 +190,6 @@ class IncidentPrecedentServiceTest {
     private ActionExecution execution(UUID incidentId, UUID planId) {
         ActionExecution execution = new ActionExecution();
         ReflectionTestUtils.setField(execution, "id", UUID.randomUUID());
-        execution.setTenantId("tenant-a");
         execution.setIncidentId(incidentId);
         execution.setPlanId(planId);
         execution.setHitlRequestId(UUID.randomUUID());   // a person approved this one

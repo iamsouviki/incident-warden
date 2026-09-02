@@ -24,9 +24,6 @@
 .hitl-expand:hover { background: var(--border); color: var(--text-1); }
 .hitl-subject { max-width: 330px; overflow: hidden; color: var(--text-1); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .hitl-id { margin-top: 3px; color: var(--text-3); font-family: var(--font-mono); font-size: 10px; }
-.hitl-confidence { display: flex; align-items: center; gap: 8px; min-width: 130px; }
-.hitl-confidence-bar { width: 66px; height: 5px; overflow: hidden; border-radius: 99px; background: var(--border); }
-.hitl-confidence-bar span { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
 .hitl-sla { display: inline-flex; align-items: center; gap: 5px; color: var(--text-2); white-space: nowrap; }
 .hitl-sla.overdue { color: var(--crit); }
 .hitl-row-actions { display: flex; align-items: center; gap: 6px; }

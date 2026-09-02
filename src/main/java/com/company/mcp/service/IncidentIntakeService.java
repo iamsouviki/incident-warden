@@ -40,20 +40,19 @@ public class IncidentIntakeService {
     /** One ticket pushed by a third-party system. Waits for a human plan, like every ticket. */
     public Map<String, Object> ingest(NormalizedIncidentRequest request) {
         validate(request);
-        String tenant = currentUser.tenantId();
         String source = canonicalSource(request.sourceSystem());
         String reference = Optional.ofNullable(request.sourceReference()).filter(v -> !v.isBlank()).orElse(fingerprint(request));
-        Optional<Incident> existing = incidents.findFirstByTenantIdAndExternalId(tenant, reference);
+        Optional<Incident> existing = incidents.findByExternalId(reference);
         if (existing.isEmpty()) {
-            existing = incidents.findFirstByTenantIdAndExternalSourceAndExternalId(tenant, source, reference);
+            existing = incidents.findFirstByExternalSourceAndExternalId(source, reference);
         }
         if (existing.isPresent()) return Map.of("status", "DEDUPLICATED", "incident", existing.get());
         Incident created = incidentService.createIncident(Incident.builder()
-                .tenantId(tenant).subject(request.subject().trim()).description(limit(request.description(), 8_000))
+                .subject(request.subject().trim()).description(limit(request.description(), 8_000))
                 .priority(priority(source, request.priority(), request.severity())).category(blankDefault(request.category(), "Universal"))
                 .externalSource(source).externalId(reference).assignedGteam("IT Ops").assignee("Unassigned")
                 .reporterEmail(request.reporterEmail()).build());
-        audit.record(tenant, "INCIDENT", created.getId(), "INTAKE_ACCEPTED", currentUser.username(), Map.of("source", source, "reference", reference));
+        audit.record("INCIDENT", created.getId(), "INTAKE_ACCEPTED", currentUser.username(), Map.of("source", source, "reference", reference));
         return Map.of("status", "CREATED", "incident", created);
     }
 

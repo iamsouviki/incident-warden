@@ -6,11 +6,10 @@ import java.util.UUID;
 /**
  * Trusted evidence supplied to the remediation planner. A free-form assistant
  * answer is never sufficient for plan eligibility: the evidence must come from
- * one or more approved procedures in the active tenant.
+ * one or more approved procedures.
  */
 public record SopEvidence(
         boolean serviceAvailable,
-        boolean tenantScoped,
         List<UUID> procedureIds,
         String excerpt,
         double reliability,
@@ -33,20 +32,20 @@ public record SopEvidence(
     }
 
     /** Evidence with no executable action attached — the planner can still assess it. */
-    public SopEvidence(boolean serviceAvailable, boolean tenantScoped, List<UUID> procedureIds,
+    public SopEvidence(boolean serviceAvailable, List<UUID> procedureIds,
                        String excerpt, double reliability, String reason) {
-        this(serviceAvailable, tenantScoped, procedureIds, excerpt, reliability, reason, "");
+        this(serviceAvailable, procedureIds, excerpt, reliability, reason, "");
     }
 
     public boolean approvedEvidencePresent() {
-        return serviceAvailable && tenantScoped && !procedureIds.isEmpty() && !excerpt.isBlank() && reliability > 0.0;
+        return serviceAvailable && !procedureIds.isEmpty() && !excerpt.isBlank() && reliability > 0.0;
     }
 
     public static SopEvidence unavailable(String reason) {
-        return new SopEvidence(false, false, List.of(), "", 0.0, reason);
+        return new SopEvidence(false, List.of(), "", 0.0, reason);
     }
 
     public static SopEvidence noMatch(String reason) {
-        return new SopEvidence(true, true, List.of(), "", 0.0, reason);
+        return new SopEvidence(true, List.of(), "", 0.0, reason);
     }
 }

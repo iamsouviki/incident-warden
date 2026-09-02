@@ -33,14 +33,12 @@ class TokenRotationTest {
     private final RateLimiterService rateLimiter = mock(RateLimiterService.class);
     private final com.company.mcp.service.TokenRevocationService tokenRevocationService = new com.company.mcp.service.TokenRevocationService(null);
     private final AuthController controller = new AuthController(
-            users, jwt, encoder, mock(OidcTokenValidator.class), rateLimiter,
-            mock(com.company.mcp.config.BootstrapPassword.class), tokenRevocationService, "", "tenant-1");
+            users, jwt, encoder, mock(OidcTokenValidator.class), rateLimiter, tokenRevocationService, "");
 
     TokenRotationTest() {
         AppUser user = new AppUser();
         user.setUsername("admin");
         user.setRole("ADMIN");
-        user.setTenantId("tenant-1");
         user.setEnabled(true);
         user.setPasswordHash("$2a$10$hash");
         when(users.findByUsername("admin")).thenReturn(Optional.of(user));

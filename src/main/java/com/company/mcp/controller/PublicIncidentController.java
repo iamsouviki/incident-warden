@@ -13,7 +13,7 @@ import java.util.Map;
 
 /**
  * The unauthenticated surface. Two GETs, no writes, no model call, no {@code CurrentUser} —
- * the tenant comes from configuration because there is no principal to read it from.
+ * there is no principal to read one from.
  *
  * Rate limited per caller address: this is the one route that can be hit without an account,
  * so it is the one route that can be used to walk the ticket table 20 rows at a time.
