@@ -207,7 +207,7 @@ class RemediationToolRegistryTest {
 
         assertEquals("SUCCEEDED", outcome.status());
         assertEquals("LIVE", outcome.mode());
-        assertTrue(outcome.detail().contains("postgres is running"));
+        assertTrue(outcome.output().contains("postgres is running"));
     }
 
     @Test
