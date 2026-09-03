@@ -5,7 +5,7 @@ services:
     environment:
       POSTGRES_DB: incident_warden_db
       POSTGRES_USER: warden_user
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-warden_pass}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -19,7 +19,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: warden-redis
-    command: redis-server --requirepass ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+    command: redis-server --requirepass ${REDIS_PASSWORD:-redis_pass}
     ports:
       - "6379:6379"
     volumes:
@@ -40,9 +40,9 @@ services:
       KC_DB_URL: jdbc:postgresql://postgres:5432/incident_warden_db
       KC_DB_SCHEMA: keycloak
       KC_DB_USERNAME: warden_user
-      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-warden_pass}
       KEYCLOAK_ADMIN: admin
-      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin_pass}
     ports:
       - "8180:8080"
     depends_on:
@@ -57,7 +57,7 @@ services:
       - IPC_LOCK
     command: server
     environment:
-      VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_DEV_ROOT_TOKEN_ID:?set VAULT_DEV_ROOT_TOKEN_ID}
+      VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_DEV_ROOT_TOKEN_ID:-root}
       VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
     ports:
       - "8200:8200"
@@ -74,12 +74,12 @@ services:
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/incident_warden_db
       SPRING_DATASOURCE_USERNAME: warden_user
-      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-warden_pass}
       SPRING_DATA_REDIS_HOST: redis
-      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_pass}
       KEYCLOAK_URL: http://keycloak:8080
       VAULT_ADDR: http://vault:8200
-      VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN_ID:?set VAULT_DEV_ROOT_TOKEN_ID}
+      VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN_ID:-root}
       VAULT_ENABLED: "false"
       SPRING_PROFILES_ACTIVE: docker
       # application.yml gives this no default on purpose, so the container cannot boot without it.
