@@ -65,7 +65,7 @@ the product, and it is in this repository.
 | **Deterministic guardrails** | Allowlisted action keys, blocked terms, hash pinning at approval, re-scan at dispatch, and `dryRun:false` refused on the public execute endpoint. |
 | **AI guardrails** | A scope gate before any model call, a 4 000-character input cap, prompt-injection refusal, a per-user LLM rate limit, and provider failures excluded from the answer cache so one bad minute cannot break a question permanently. |
 | **Target credentials stay with the executor** | `connection_method` records *how* to reach a host; the secret for that method lives with the executor agent, not here. The LLM provider key is environment-only (`MCP_LLM_API_KEY`) and is never returned by an API. Login passwords are BCrypt hashes. **One exception, and it is a known defect:** ITSM secrets can still be read from legacy `config.system_config` rows through a reversible Base64 fallback. |
-| **Operated from the UI** | Provider and model, users and roles, agent skills, SOP procedures, ITSM integrations — all database-backed and editable in the browser, with no properties-file edit needed to run it. Two settings fall short of this today and are listed as defects rather than claimed: the notification relay and the HITL confidence band are API-only, their forms having been removed from the Settings page. |
+| **Operated from the UI** | Provider and model, users and roles, agent skills, SOP procedures, ITSM integrations — all database-backed and editable in the browser, with no properties-file edit needed to run it. One setting falls short of this today and is listed as a defect rather than claimed: the notification relay is API-only, its form having been removed from the Settings page. |
 | **JWT access control** | A role matrix over every endpoint, fail-closed on unmapped writes, refresh tokens, and a rate-limited login. |
 | **Runs fully offline** | Postgres + pgvector + Ollama, plus two dev stand-ins (executor, SMTP) that make the whole loop observable with nothing leaving the machine. |
 
@@ -138,10 +138,9 @@ hash, which cannot authenticate, and `BootstrapPassword` enrols it on first boot
 every account an administrator creates or resets afterwards. To recover a lost admin password,
 `UPDATE auth.users SET password_hash = NULL WHERE username = 'admin';` and restart.
 
-The `local` profile ships a committed dev JWT key, disables Redis/Vault, sets
-`hitl-threshold: 0.70` and turns **separation of duties off** so the single seeded account can both
-request and approve. Every other profile requires `MCP_JWT_SECRET` (≥32 bytes) and refuses to start
-without it.
+The `local` profile ships a committed dev JWT key, disables Redis/Vault, and turns
+**separation of duties off** so the single seeded account can both request and approve.
+Every other profile requires `MCP_JWT_SECRET` (≥32 bytes) and refuses to start without it.
 
 With Ollama down, the deterministic `SOP_TEMPLATE` path still produces scripts; the two
 model-backed tiers return `SCRIPT_GENERATION_UNAVAILABLE`. Enable them with Ollama running and
@@ -213,7 +212,7 @@ Liquibase owns the schema as **one squashed changeset**, `1.0-baseline` →
 checksum. The 26-changeset history it replaced described a product that no longer exists — three of
 those changesets added an autonomy surface that a later one deleted.
 
-17 tables:
+19 tables:
 
 | Schema | Tables |
 |---|---|
@@ -222,7 +221,7 @@ those changesets added an autonomy surface that a later one deleted.
 | `sop` | `vector_store`, `sop_procedure` |
 | `tools` | `saved_scripts`, `execution_logs`, `skills` |
 | `config` | `system_config` |
-| `ai` | `ai_config` |
+| `ai` | `ai_config`, `chat_sessions`, `chat_messages` |
 
 **Never edit an existing changeset** — add a new one. A changed checksum stops every database that
 already ran it.
@@ -340,50 +339,33 @@ explained in one clause, and never a hostname or path the ticket did not supply.
    new ticket's words against the past ticket's subject, description and up to 2 000 chars of its
    resolution notes. A past ticket only qualifies if its execution was `SUCCEEDED`, carried a
    `hitlRequestId` (a human approved it), and its plan pinned a parseable action key.
-3. **Assessment** (`AgentAssessmentService.assess`):
+   3. **Assessment** (`AgentAssessmentService.assess`):
+    classification = classify(subject + description) against approved SOP keywords/title, then admin skills, then the built-in vocabulary (PRINTING → `clear-printer-queue`, NETWORK → `refresh-network-session`, APPLICATION → `restart-approved-service`)
+    keywordSimilarity = 0.9 if the excerpt shares a term with the classification, else 0.0
+    patternSimilarity = max(keywordSimilarity, precedentSimilarity)
+    riskPenalty = blank action 0.40, else P1 0.60 / P2 0.30 / P3+ 0.10
 
-   ```
-   patternSimilarity = max(keywordSimilarity, precedentSimilarity)   // the stronger signal, never a sum
-   score = clamp(100 * ( 0.35*patternSimilarity
-                       + 0.25*historicalSuccess
-                       + 0.20*sopReliability
-                       + 0.15*systemHealth
-                       − riskPenalty ))
-   systemHealth = P1 0.30 | P2 0.55 | P3+ 0.80
-   riskPenalty  = blank action 0.40, else P1 0.60 | P2 0.30 | P3+ 0.10
-   route = HITL_REQUIRED  iff  approved SOP evidence  AND  action ≠ blank  AND  score ≥ threshold
-           otherwise ESCALATE
-   ```
+    The route is a binary gate, not a score:
+    ```
+    route = HITL_REQUIRED   if approved SOP evidence present AND action is not blank
+            ESCALATE        otherwise
+    ```
+    The values above are returned in the `Assessment` record as **evidence** for the reviewer to weigh,
+    but none of them gates the route. Precedent raises the reviewer's confidence; it never grants
+    authority — that comes only from an approved procedure.
 
-   Precedent raises confidence; it never grants the route. Authority comes from an approved
-   procedure, not from resembling an old ticket.
+    **A P1 or P2 is no longer suppressed for its priority.** `riskPenalty` still reports the
+    priority-adjusted risk so the reviewer sees it in the evidence, but it does not block the plan.
+    The reviewer gets the script, the SOP excerpt, the precedent, and the risk figure, and decides.
+    The code comment at `AgentAssessmentService.java:79-82` records the rationale: suppressing the plan
+    meant the operator got a refusal instead of the script, evidence and rollback they needed.
 
-   **Read the arithmetic before you demo a P1.** With the shipped weights, the score a ticket can
-   reach is capped by its priority, and the cap is below the band on purpose:
-
-   | Priority | best achievable score | vs `local` 70 % | vs prod 80 % |
-   |---|---|:---:|:---:|
-   | P3 | **82 %** (all inputs perfect); ≈ 73.75 % for a typical grounded ticket | reachable | only a near-perfect ticket |
-   | P2 | **58.25 %** | never | never |
-   | P1 | **24.5 %** | never | never |
-
-   So at the shipped bands a P1 or P2 is *always* escalated to a person, no matter how good the
-   evidence — the risk penalty is doing exactly what it was put there to do. The escalation says so
-   in words (`CONFIDENCE_BELOW_HITL_BAND:<score>`) instead of blaming a guardrail, and
-   `AgentAssessmentServiceTest.aP1OrP2CannotReachTheApprovalBandNoMatterHowGoodTheEvidence` fails the
-   moment someone re-weights `riskPenalty`/`systemHealth`, so this table cannot quietly go stale.
-
-   **The band is not a constant, though.** `hitlBandPercent()` reads the `hitl_threshold` config row,
-   falling back to the property only when no row exists — and that row is writable through
-   `POST /api/v1/ai/config` with `{"hitlThreshold":"0.40"}`. So an admin setting the band below
-   **58.25 %** *does* make a P2 reviewable, and below 24.5 % a P1.
-   `AgentAssessmentServiceTest.theBandAnAdminSetsOnTheConfigPageIsTheBandThePlannerUses` pins that
-   behaviour deliberately: the band is the operator's risk appetite, expressed in one audited row
-   rather than a code change. What no value of it does is skip the human — a lower band changes which
-   plans reach a reviewer, never whether one is asked.
-
-   ⚠️ **The slider that used to write that row is gone**, so the band is API-only today, exactly like
-   the notification relay. Same defect, same list.
+    The old six-factor weighted `confidence_score` column and `mcp.confidence.*` config namespace were
+    deleted in the `1.2` changeset (`drop_confidence.sql`); the columns and the `config.system_config`
+    rows under that prefix are gone irreversibly. The current test suite is
+    `AgentAssessmentServiceTest` with `routesToApprovalWhenAnApprovedSopAndAKnownToolBothExist`,
+    `escalatesWhenSopEvidenceIsUnavailable`, `escalatesWhenAnSopExistsButNoToolCoversTheIncident`, and
+    `priorityChangesTheRiskItReportsAndNotTheRoute`.
 4. **Classification → action key.** `classify()` first walks the **approved** rows in
    `sop.sop_procedure` and matches their `match_keywords` (and title) against the ticket wording,
    deriving the category and action key from the procedure's own `action_key`. Only if nothing
@@ -425,12 +407,8 @@ act on rather than the code:
 | `TARGET_HOST_UNKNOWN` / probe reason | mutating action with no confirmed, reachable machine |
 | `SCRIPT_GENERATION_UNAVAILABLE` | no SOP template matched and no model was reachable |
 | `TOOL_NOT_ALLOWLISTED:x` | the procedure declares an action key no tool answers to |
-| `NO_APPROVED_SOP_MATCH` | no approved procedure, with ungrounded scripts switched off |
-| `CONFIDENCE_BELOW_HITL_BAND:nn` | the guardrails passed; the score did not reach the band |
-| `GUARDRAIL_BLOCKED` | the action/target/script boundary refused it |
-
-`CONFIDENCE_BELOW_HITL_BAND` is named separately from `GUARDRAIL_BLOCKED` deliberately. It used to
-be reported as the latter, which sent operators looking for a dangerous script that did not exist.
+   | `NO_APPROVED_SOP_MATCH` | no approved procedure, with ungrounded scripts switched off |
+   | `GUARDRAIL_BLOCKED` | the action/target/script boundary refused it |
 
 ---
 
@@ -464,8 +442,7 @@ prefix to render the question inline with the fields to answer it:
 | `TARGET_HOST_UNKNOWN` | "No server is named on this incident or in its description. Enter the server this affects, then create the plan again." | ⚠️ **nowhere — see below** |
 | `TARGET_HOST_INVALID:<value>` | the rejected value, so a typo is obvious | ⚠️ nowhere, same reason |
 | `TARGET_UNREACHABLE:<host>` | "Confirm the server name and the connection method on this incident, then plan again." | ⚠️ nowhere, same reason |
-| `TARGET_REACHABILITY_UNKNOWN` | advisory — "a dry run may be the first thing to find out" | HITL review console, non-blocking |
-| `CONFIDENCE_BELOW_HITL_BAND:<score>` | the score, the required band, and why a P1/P2 sits below it by design | not operator-fixable by design |
+   | `TARGET_REACHABILITY_UNKNOWN` | advisory — "a dry run may be the first thing to find out" | HITL review console, non-blocking |
 
 The answer panel is `HitlReviewConsole.tsx:426-470`, titled **"We need one answer from you"**: a
 hostname box, a connection select (`Executor default` / SSH / WinRM / Local agent), an OS select, and
@@ -750,7 +727,7 @@ All routes need `Authorization: Bearer <token>` except login/refresh/SSO and hea
 
 **Auth** — `POST /api/auth/login` `{username, password, rememberMe, role?}` → `{token,
 refreshToken, username, fullName, role, department, expiresIn, refreshExpiresIn,
-mustChangePassword}` · `POST /api/auth/refresh` · `POST /api/auth/sso` · `GET /api/auth/me`
+mustChangePassword}` · `POST /api/auth/refresh` · `POST /api/auth/logout` · `POST /api/auth/sso` · `GET /api/auth/me`
 
 **HITL** — `POST /api/v1/hitl/incidents/{id}/plan` (ANALYST) · `GET /api/v1/hitl/requests` ·
 `GET /api/v1/hitl/requests/{id}` · `POST /api/v1/hitl/requests/{id}/decision`
@@ -759,7 +736,10 @@ mustChangePassword}` · `POST /api/auth/refresh` · `POST /api/auth/sso` · `GET
 
 **Incidents** — `POST|GET /api/v1/incidents` · `GET|PUT /api/v1/incidents/{id}` (PUT also saves
 `storeNumber` / `targetHost` / `connectionMethod`) · `/{id}/comments` · `/{id}/history` ·
-`/{id}/decision` · `POST /api/v1/incidents/sync` · `POST /api/v1/incidents/analyze`
+`/{id}/decision` · `/{id}/graph` · `POST /api/v1/incidents/sync` · `POST /api/v1/incidents/analyze`
+· `GET /api/v1/incidents/history`
+
+**Chat sessions** — `GET|POST /api/v1/chat/sessions` · `POST /api/v1/chat/sessions/{id}/messages`
 
 **Intake** — `POST /api/v1/intake/incidents` · `POST /api/v1/intake/incidents/import` (multipart)
 
@@ -774,7 +754,7 @@ procedures and their action keys) · `PUT|DELETE /api/v1/rag/sops/{id}` (ADMIN)
 **Skills** — `GET /api/v1/skills` (any signed-in user) · `POST` (upsert) · `DELETE /{id}` — both ADMIN
 
 **Scripts** — `GET|POST /api/v1/scripts` · `/{id}` · `POST /api/v1/scripts/generate` · `/validate` ·
-`/execute` (dry-run only — `409` otherwise)
+`/execute` (dry-run only — `409` otherwise) · `/bundle` · `/explain`
 
 **Accounts** (ADMIN) — `GET|POST /api/auth/users` · `PUT /api/auth/users/{id}/role` ·
 `POST /api/auth/password` (any signed-in user, own password only)
@@ -800,19 +780,18 @@ YAML holds only deployment facts:
 | Key | Default | Meaning |
 |---|---|---|
 | `mcp.jwt.secret` | *(required)* | HS256 key ≥32 bytes. No default outside `local`. |
-| `mcp.hitl.separation-of-duties` | `true` | Requester cannot approve their own plan. |
-| `mcp.hitl.allow-ungrounded-scripts` | `true` | Let `LLM_KNOWLEDGE` scripts reach review. |
+| `mcp.hitl.separation-of-duties` | `true` | Requester cannot approve their own plan. `local` sets this `false`. |
+| `mcp.hitl.allow-ungrounded-scripts` | `true` | Let `LLM_KNOWLEDGE` scripts reach review. Set `false` for strict posture: no approved SOP, no plan, escalate. |
+| `mcp.sop.default-prior-success-rate` | `0.85` | Assumed success rate for a remediation with no execution history yet. Recorded as evidence for the reviewer; does not gate the route. |
 | `mcp.script-gen.max-lines` | `100` | Longer scripts blocked. |
 | `mcp.executor.enabled` | `false` | The only switch that lets a script leave this process. |
 | `mcp.executor.url` | *(empty)* | Empty ⇒ approved scripts simulate and change nothing. |
 | `mcp.executor.token` | *(empty)* | Bearer token for the executor. |
 | `mcp.executor.timeout-seconds` | `30` | Probe and dispatch timeout. |
-| `mcp.confidence.hitl-threshold` | `0.80` (`0.70` local) | The band a plan must reach to be offered for approval at all. Reaching it grants nothing. |
-| `mcp.confidence.default-prior-success-rate` | `0.85` | Assumed success rate with no execution history yet. |
 | `mcp.security.rate-limit.login-per-minute` | `10` | Per username **and** per IP. |
 | `mcp.security.rate-limit.llm-per-minute` | `20` | Per authenticated user. |
 | `mcp.security.cors.allowed-origins` | localhost | Explicit list, never `*`. |
-| `mcp.rag.top-k` / `similarity-threshold` | `5` / `0.60` | Retrieval tuning. |
+| `mcp.rag.top-k` / `similarity-threshold` | `5` / `0.30` | Retrieval tuning. |
 | `mcp.sso.*` | disabled | All four keys required, or 503. |
 | `mcp.servicenow.*` / `mcp.freshservice.*` | disabled | Ticket import. Also reachable from **Settings → Integrations**, which is where the credential-in-the-DB defect lives. |
 
@@ -885,12 +864,12 @@ MCP_JWT_SECRET=local-development-only-key-min-32-bytes mvn -o test
 | `HitlWorkflowServiceTest` | 7 | plan/approve/dispatch gating, and that a duplicate plan names the open one instead of escalating the incident |
 | `GuardrailServiceTest` | 7 | allow-lists, destructive signatures, injection |
 | `ScriptExplainerTest` | 6 | every script line is explained or reported verbatim — never silently dropped |
-| `RagServiceScopeTest` | 5 | out-of-scope questions are refused, not answered |
+| `RagServiceScopeTest` | 6 | out-of-scope questions are refused, not answered |
 | `PublicReadServiceTest` | 5 | the anonymous projection is exactly six fields — no assignee, reporter address or host — and `maskSensitive` strips IPs, emails, credentials and card numbers from the description it *does* expose |
-| `AgentAssessmentServiceTest` | 5 | routing arithmetic, classifier vocabulary, and that a P1/P2 cannot reach the approval band |
-| `UserAdminTest` | 4 | account creation, role validation, email requirement |
+| `AgentAssessmentServiceTest` | 5 | `HITL_REQUIRED` iff approved-SOP-plus-action-key; `ESCALATE` when no SOP matches (including a P1 with no SOP match); riskPenalty evidence values per severity |
+| `UserAdminTest` | 5 | account creation, role validation, email requirement |
 | `BootstrapPasswordTest` | 4 | the seeded admin credential and the forced change |
-| `TokenRotationTest` | 3 | refresh rotation keeps the original session deadline |
+| `TokenRotationTest` | 5 | refresh rotation keeps the original session deadline |
 | `IncidentUpdateTest` | 3 | field updates incl. target |
 | `NotificationServiceRecipientsTest` | 2 | recipient resolution and dedup |
 | `IncidentIntakeBulkTest` | 2 | a bulk import creates rows and runs nothing |
@@ -947,10 +926,13 @@ Read [SECURITY.md](SECURITY.md) before deploying this anywhere that matters. The
   never evicted.
 - **No LLM token accounting.** Provider spend is invisible to the platform that causes it; see
   [SECURITY.md](SECURITY.md).
-- **Two settings are API-only.** The notification relay and the HITL confidence band still have live
-  endpoints, but the forms that drove them were deleted from the Settings page and never replaced —
-  so changing either needs an authenticated `curl`. That breaks this project's own rule that operator
-  settings live in the UI.
+- **One setting is API-only.** The notification relay still has a live endpoint
+  (`POST /api/v1/ai/config/notifications`), but the form that drove it was deleted from the Settings
+  page and never replaced — so changing it needs an authenticated `curl`. That breaks this project's
+  own rule that operator settings live in the UI. The old "HITL confidence band" defect is closed:
+  the `mcp.confidence.*` keys and `hitl_threshold` config row were deleted in the `1.2` changeset along
+  with the score that used them (`drop_confidence.sql`), and the route gate is now a binary check on
+  approved-SOP-plus-action-key, not a configurable band.
 
 ### Closed since the last review
 
