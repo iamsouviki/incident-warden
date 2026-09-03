@@ -54,6 +54,10 @@ jobs:
     env:
       # Throwaway, generated per run: this is a disposable container that is torn down below.
       MCP_JWT_SECRET: ci-only-jwt-signing-key-not-used-by-any-deployment-32
+      POSTGRES_PASSWORD: ci_warden_pass
+      REDIS_PASSWORD: ci_redis_pass
+      VAULT_DEV_ROOT_TOKEN_ID: ci_vault_root_token
+      KEYCLOAK_ADMIN_PASSWORD: ci_admin_pass
     steps:
       - uses: actions/checkout@v4
       - name: Start Postgres, Redis and the application
