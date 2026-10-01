@@ -102,7 +102,7 @@ jobs:
       - run: npm run build --prefix frontend
       - run: test -f frontend/dist/index.html
       - run: mvn -B -DskipTests package
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: incident-warden-jar
           # Spring Boot's pre-repackage copy is target/*.jar.original, which this does not match.
